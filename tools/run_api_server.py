@@ -748,6 +748,21 @@ def stripe_webhook():
             _mark_booked(slot_id)
             print(f"[WEBHOOK] Booking confirmed: {confirmation}")
 
+            # Persist booking record for cancellation / verification
+            booking_record_id = f"bk_{slot_id[:12]}"
+            _save_booking_record(booking_record_id, {
+                "booking_id":       booking_record_id,
+                "confirmation":     str(confirmation or ""),
+                "platform":         platform,
+                "service_name":     metadata.get("service_name", ""),
+                "price_charged":    session.get("amount_total", 0) / 100,
+                "status":           "booked",
+                "executed_at":      datetime.now(timezone.utc).isoformat(),
+                "customer_email":   customer["email"],
+                "payment_intent_id": payment_intent,
+                "slot_id":          slot_id,
+            })
+
             # ── Send confirmation email ────────────────────────────────────────
             try:
                 from send_booking_email import send_booking_email
@@ -1948,6 +1963,131 @@ def verify_booking(booking_id: str):
     signature_valid = hmac.compare_digest(stored_sig, expected_sig)
 
     return jsonify({**record, "verified": signature_valid}), 200
+
+
+# ── Booking cancellation ──────────────────────────────────────────────────────
+
+def _cancel_octo_booking(platform: str, confirmation: str) -> dict:
+    """
+    Cancel a booking on an OCTO supplier (Ventrata, Zaui, Peek Pro).
+    OCTO spec: DELETE /bookings/{uuid}
+    Returns {"success": True/False, "detail": str}
+    """
+    from tools.seeds import octo_suppliers  # noqa: resolved at runtime
+    import json as _json
+
+    seeds_path = Path(__file__).parent / "seeds" / "octo_suppliers.json"
+    try:
+        suppliers = _json.loads(seeds_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"success": False, "detail": "Could not load OCTO supplier config"}
+
+    supplier = next((s for s in suppliers if s.get("supplier_id") == platform and s.get("enabled")), None)
+    if not supplier:
+        return {"success": False, "detail": f"No enabled OCTO supplier found for platform '{platform}'"}
+
+    api_key = os.getenv(supplier["api_key_env"], "").strip()
+    if not api_key:
+        return {"success": False, "detail": f"API key env var {supplier['api_key_env']} not set"}
+
+    base_url = supplier["base_url"].rstrip("/")
+    try:
+        r = requests.delete(
+            f"{base_url}/bookings/{confirmation}",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Octo-Capabilities": "octo/content",
+            },
+            timeout=15,
+        )
+        if r.status_code in (200, 204):
+            return {"success": True, "detail": f"Cancelled on {platform} (HTTP {r.status_code})"}
+        else:
+            body = r.text[:200]
+            return {"success": False, "detail": f"Supplier returned HTTP {r.status_code}: {body}"}
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
+
+@app.route("/bookings/<booking_id>", methods=["DELETE"])
+def cancel_booking(booking_id: str):
+    """
+    Cancel a booking by ID.
+
+    OCTO-compatible cancellation endpoint.
+    Required by Ventrata and other OCTO suppliers for reseller approval.
+
+    Flow:
+      1. Look up booking record by booking_id
+      2. Cancel on source platform (OCTO DELETE /bookings/{uuid})
+      3. Refund Stripe payment if already captured, or cancel hold if not
+      4. Update booking record status to 'cancelled'
+      5. Return cancellation confirmation
+
+    DELETE /bookings/{booking_id}
+    → { "success": true, "booking_id": "bk_...", "status": "cancelled",
+        "refund_id": "re_...", "platform_result": "..." }
+    """
+    bookings = _load_bookings()
+    record = bookings.get(booking_id)
+    if not record:
+        return jsonify({"success": False, "error": "Booking not found"}), 404
+
+    if record.get("status") == "cancelled":
+        return jsonify({"success": True, "booking_id": booking_id, "status": "cancelled",
+                        "message": "Booking was already cancelled"}), 200
+
+    platform     = record.get("platform", "")
+    confirmation = record.get("confirmation", "")
+    payment_intent = record.get("payment_intent_id", "")
+
+    results = {}
+
+    # ── Step 1: Cancel on source platform ────────────────────────────────────
+    octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+    if platform in octo_platforms and confirmation:
+        results["platform"] = _cancel_octo_booking(platform, confirmation)
+    elif confirmation:
+        # Non-OCTO platform — log for manual processing
+        results["platform"] = {"success": None, "detail": f"Manual cancellation required on {platform} for confirmation {confirmation}"}
+    else:
+        results["platform"] = {"success": True, "detail": "No platform confirmation to cancel"}
+
+    # ── Step 2: Refund or cancel Stripe payment ───────────────────────────────
+    stripe = _stripe()
+    if stripe.api_key and payment_intent:
+        try:
+            pi = stripe.PaymentIntent.retrieve(payment_intent)
+            if pi.status == "requires_capture":
+                # Hold not yet captured — just cancel it
+                stripe.PaymentIntent.cancel(payment_intent)
+                results["stripe"] = {"success": True, "action": "hold_cancelled"}
+            elif pi.status == "succeeded":
+                # Already captured — issue a full refund
+                refund = stripe.Refund.create(payment_intent=payment_intent)
+                results["stripe"] = {"success": True, "action": "refunded", "refund_id": refund.id}
+            else:
+                results["stripe"] = {"success": True, "action": "no_action", "pi_status": pi.status}
+        except Exception as e:
+            results["stripe"] = {"success": False, "detail": str(e)}
+    else:
+        results["stripe"] = {"success": True, "action": "no_payment_on_record"}
+
+    # ── Step 3: Update booking record ─────────────────────────────────────────
+    record["status"] = "cancelled"
+    record["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+    record["cancellation_details"] = results
+    _save_booking_record(booking_id, record)
+
+    return jsonify({
+        "success": True,
+        "booking_id": booking_id,
+        "status": "cancelled",
+        "platform_result": results.get("platform", {}).get("detail"),
+        "stripe_result": results.get("stripe", {}).get("action"),
+        "refund_id": results.get("stripe", {}).get("refund_id"),
+        "cancelled_at": record["cancelled_at"],
+    }), 200
 
 
 # ── Agent wallet routes ───────────────────────────────────────────────────────
