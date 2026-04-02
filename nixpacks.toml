@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["python311", "chromium", "nss", "at-spi2-atk", "cups", "libdrm", "mesa", "libxkbcommon", "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext", "xorg.libXfixes", "xorg.libXrandr", "libgbm"]
+nixPkgs = ["python311"]
 
 [phases.install]
 cmds = [
