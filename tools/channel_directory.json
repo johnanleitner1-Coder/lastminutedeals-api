@@ -1,0 +1,266 @@
+{
+  "_comment": "City -> channel mapping for location-aware deal distribution. Keys are lowercase city names.",
+
+  "new york": {
+    "subreddits": ["nyc", "newyorkcity", "AskNYC"],
+    "twitter_hashtags": ["NYC", "NewYork"],
+    "telegram_channels": []
+  },
+  "los angeles": {
+    "subreddits": ["LosAngeles", "LAlist", "California"],
+    "twitter_hashtags": ["LosAngeles", "LA"],
+    "telegram_channels": []
+  },
+  "chicago": {
+    "subreddits": ["chicago", "chicagofood"],
+    "twitter_hashtags": ["Chicago"],
+    "telegram_channels": []
+  },
+  "houston": {
+    "subreddits": ["houston"],
+    "twitter_hashtags": ["Houston", "HTX"],
+    "telegram_channels": []
+  },
+  "phoenix": {
+    "subreddits": ["phoenix", "arizona"],
+    "twitter_hashtags": ["Phoenix", "AZ"],
+    "telegram_channels": []
+  },
+  "philadelphia": {
+    "subreddits": ["philadelphia", "phillysports"],
+    "twitter_hashtags": ["Philadelphia", "Philly"],
+    "telegram_channels": []
+  },
+  "san antonio": {
+    "subreddits": ["sanantonio"],
+    "twitter_hashtags": ["SanAntonio", "SATX"],
+    "telegram_channels": []
+  },
+  "san diego": {
+    "subreddits": ["sandiego"],
+    "twitter_hashtags": ["SanDiego", "SD"],
+    "telegram_channels": []
+  },
+  "dallas": {
+    "subreddits": ["Dallas", "FortWorth"],
+    "twitter_hashtags": ["Dallas", "DFW"],
+    "telegram_channels": []
+  },
+  "san jose": {
+    "subreddits": ["SanJose", "bayarea"],
+    "twitter_hashtags": ["SanJose", "SiliconValley"],
+    "telegram_channels": []
+  },
+  "austin": {
+    "subreddits": ["Austin"],
+    "twitter_hashtags": ["Austin", "ATX"],
+    "telegram_channels": []
+  },
+  "jacksonville": {
+    "subreddits": ["jacksonville"],
+    "twitter_hashtags": ["Jacksonville", "Jax"],
+    "telegram_channels": []
+  },
+  "fort worth": {
+    "subreddits": ["FortWorth", "Dallas"],
+    "twitter_hashtags": ["FortWorth", "DFW"],
+    "telegram_channels": []
+  },
+  "columbus": {
+    "subreddits": ["Columbus", "ohio"],
+    "twitter_hashtags": ["Columbus", "Cbus"],
+    "telegram_channels": []
+  },
+  "charlotte": {
+    "subreddits": ["Charlotte"],
+    "twitter_hashtags": ["Charlotte", "CLT"],
+    "telegram_channels": []
+  },
+  "indianapolis": {
+    "subreddits": ["indianapolis", "Indiana"],
+    "twitter_hashtags": ["Indianapolis", "Indy"],
+    "telegram_channels": []
+  },
+  "san francisco": {
+    "subreddits": ["sanfrancisco", "bayarea", "AskSF"],
+    "twitter_hashtags": ["SanFrancisco", "SF", "BayArea"],
+    "telegram_channels": []
+  },
+  "seattle": {
+    "subreddits": ["Seattle", "seattlewa"],
+    "twitter_hashtags": ["Seattle", "SEA"],
+    "telegram_channels": []
+  },
+  "denver": {
+    "subreddits": ["Denver", "colorado"],
+    "twitter_hashtags": ["Denver", "Colorado"],
+    "telegram_channels": []
+  },
+  "washington": {
+    "subreddits": ["washingtondc", "nova", "DMV"],
+    "twitter_hashtags": ["WashingtonDC", "DMV"],
+    "telegram_channels": []
+  },
+  "nashville": {
+    "subreddits": ["Nashville"],
+    "twitter_hashtags": ["Nashville", "615"],
+    "telegram_channels": []
+  },
+  "oklahoma city": {
+    "subreddits": ["okc"],
+    "twitter_hashtags": ["OklahomaCity", "OKC"],
+    "telegram_channels": []
+  },
+  "el paso": {
+    "subreddits": ["elpaso"],
+    "twitter_hashtags": ["ElPaso"],
+    "telegram_channels": []
+  },
+  "boston": {
+    "subreddits": ["boston", "BostonSocialClub"],
+    "twitter_hashtags": ["Boston"],
+    "telegram_channels": []
+  },
+  "portland": {
+    "subreddits": ["Portland", "pdx"],
+    "twitter_hashtags": ["Portland", "PDX"],
+    "telegram_channels": []
+  },
+  "las vegas": {
+    "subreddits": ["LasVegas"],
+    "twitter_hashtags": ["LasVegas", "Vegas"],
+    "telegram_channels": []
+  },
+  "memphis": {
+    "subreddits": ["memphis"],
+    "twitter_hashtags": ["Memphis"],
+    "telegram_channels": []
+  },
+  "louisville": {
+    "subreddits": ["Louisville", "Louisville"],
+    "twitter_hashtags": ["Louisville"],
+    "telegram_channels": []
+  },
+  "baltimore": {
+    "subreddits": ["baltimore"],
+    "twitter_hashtags": ["Baltimore", "Bmore"],
+    "telegram_channels": []
+  },
+  "milwaukee": {
+    "subreddits": ["milwaukee"],
+    "twitter_hashtags": ["Milwaukee", "MKE"],
+    "telegram_channels": []
+  },
+  "albuquerque": {
+    "subreddits": ["Albuquerque"],
+    "twitter_hashtags": ["Albuquerque", "ABQ"],
+    "telegram_channels": []
+  },
+  "tucson": {
+    "subreddits": ["Tucson", "arizona"],
+    "twitter_hashtags": ["Tucson", "AZ"],
+    "telegram_channels": []
+  },
+  "fresno": {
+    "subreddits": ["Fresno", "California"],
+    "twitter_hashtags": ["Fresno", "CA"],
+    "telegram_channels": []
+  },
+  "sacramento": {
+    "subreddits": ["Sacramento"],
+    "twitter_hashtags": ["Sacramento", "Sac"],
+    "telegram_channels": []
+  },
+  "atlanta": {
+    "subreddits": ["Atlanta", "Atlanta"],
+    "twitter_hashtags": ["Atlanta", "ATL"],
+    "telegram_channels": []
+  },
+  "miami": {
+    "subreddits": ["miami", "Miami"],
+    "twitter_hashtags": ["Miami", "MIA"],
+    "telegram_channels": []
+  },
+  "minneapolis": {
+    "subreddits": ["minneapolis", "TwinCities"],
+    "twitter_hashtags": ["Minneapolis", "MN"],
+    "telegram_channels": []
+  },
+  "cleveland": {
+    "subreddits": ["Cleveland"],
+    "twitter_hashtags": ["Cleveland", "CLE"],
+    "telegram_channels": []
+  },
+  "pittsburgh": {
+    "subreddits": ["pittsburgh"],
+    "twitter_hashtags": ["Pittsburgh"],
+    "telegram_channels": []
+  },
+  "tampa": {
+    "subreddits": ["tampa"],
+    "twitter_hashtags": ["Tampa", "TampaBay"],
+    "telegram_channels": []
+  },
+  "orlando": {
+    "subreddits": ["orlando"],
+    "twitter_hashtags": ["Orlando"],
+    "telegram_channels": []
+  },
+  "new orleans": {
+    "subreddits": ["NewOrleans"],
+    "twitter_hashtags": ["NewOrleans", "NOLA"],
+    "telegram_channels": []
+  },
+  "detroit": {
+    "subreddits": ["Detroit"],
+    "twitter_hashtags": ["Detroit"],
+    "telegram_channels": []
+  },
+  "kansas city": {
+    "subreddits": ["kansascity"],
+    "twitter_hashtags": ["KansasCity", "KC"],
+    "telegram_channels": []
+  },
+  "raleigh": {
+    "subreddits": ["raleigh", "triangle"],
+    "twitter_hashtags": ["Raleigh", "NC"],
+    "telegram_channels": []
+  },
+  "salt lake city": {
+    "subreddits": ["SaltLakeCity", "Utah"],
+    "twitter_hashtags": ["SaltLakeCity", "SLC", "Utah"],
+    "telegram_channels": []
+  },
+  "richmond": {
+    "subreddits": ["rva"],
+    "twitter_hashtags": ["Richmond", "RVA"],
+    "telegram_channels": []
+  },
+  "virginia beach": {
+    "subreddits": ["norfolk", "hamptonroads"],
+    "twitter_hashtags": ["VirginiaBeach", "VA"],
+    "telegram_channels": []
+  },
+  "colorado springs": {
+    "subreddits": ["ColoradoSprings"],
+    "twitter_hashtags": ["ColoradoSprings", "COS"],
+    "telegram_channels": []
+  },
+
+  "_national": {
+    "comment": "Always included regardless of city",
+    "subreddits": ["deals", "Frugal", "solotravel"],
+    "twitter_hashtags": ["LastMinute", "Deals"],
+    "telegram_channels": []
+  },
+
+  "_category_subreddits": {
+    "comment": "Category-specific subreddits added when category matches",
+    "events":                ["ConcertTickets", "theaternerds"],
+    "wellness":              ["massage", "yoga", "fitness"],
+    "beauty":                ["femalehairadvice", "beauty"],
+    "hospitality":           ["AirBnB", "travel", "solotravel"],
+    "home_services":         ["HomeImprovement"],
+    "professional_services": ["freelance"]
+  }
+}

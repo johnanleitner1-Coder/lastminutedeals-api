@@ -1,0 +1,47 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+python-dotenv
+requests
+
+# ── Google APIs (Sheets, Business Profile, Gmail) ─────────────────────────────
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+
+# ── Data handling ─────────────────────────────────────────────────────────────
+pandas
+
+# ── iCal parsing (Airbnb feeds) ───────────────────────────────────────────────
+icalendar
+
+# ── Browser automation (booking completion, scraping fallbacks) ───────────────
+playwright
+
+# ── Social distribution ───────────────────────────────────────────────────────
+tweepy                  # Twitter/X API v2
+praw                    # Reddit API
+python-telegram-bot     # Telegram Bot API
+
+# ── Web server (booking API + MCP server) ─────────────────────────────────────
+flask                   # Booking API server (run_api_server.py)
+fastapi
+uvicorn[standard]
+
+# ── Payments ──────────────────────────────────────────────────────────────────
+stripe
+
+# ── SMS alerts ────────────────────────────────────────────────────────────────
+twilio
+
+# ── Templating (landing page HTML generation) ─────────────────────────────────
+jinja2
+
+# ── Image/visual generation (deal graphics for Instagram, TikTok) ─────────────
+Pillow
+
+# ── MCP server ────────────────────────────────────────────────────────────────
+mcp
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dateutil         # Flexible datetime parsing
+pytz                    # Timezone handling
