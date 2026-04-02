@@ -382,15 +382,19 @@ def health():
     if sb_url and sb_secret:
         try:
             r = requests.get(f"{sb_url}/rest/v1/slots",
-                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
-                params={"select": "slot_id", "limit": 1, "Prefer": "count=exact"},
+                headers={
+                    "apikey": sb_secret,
+                    "Authorization": f"Bearer {sb_secret}",
+                    "Prefer": "count=exact",
+                    "Range": "0-0",
+                },
+                params={"select": "slot_id"},
                 timeout=5)
-            if r.status_code == 200:
-                content_range = r.headers.get("Content-Range", "")
-                if "/" in content_range:
-                    slot_count = int(content_range.split("/")[1])
-                else:
-                    slot_count = len(r.json())
+            content_range = r.headers.get("Content-Range", "")
+            if "/" in content_range:
+                slot_count = int(content_range.split("/")[1])
+            elif r.status_code == 200:
+                slot_count = len(r.json())
         except Exception:
             pass
     if slot_count == 0 and DATA_FILE.exists():
