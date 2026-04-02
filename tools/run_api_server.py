@@ -232,6 +232,22 @@ def _lazy_init():
 # Protected endpoints require X-API-Key header
 _PROTECTED_PATHS = {"/api/book", "/api/execute", "/execute/guaranteed"}  # /api/customers/<id>/book and wallet routes checked in route
 
+def _ensure_website_api_key() -> str:
+    """Auto-register a stable API key for the website's own booking requests."""
+    website_key = os.getenv("LMD_WEBSITE_API_KEY", "").strip()
+    if not website_key:
+        return ""
+    keys = _load_api_keys()
+    if website_key not in keys:
+        keys[website_key] = {
+            "name": "LastMinuteDeals Website",
+            "email": "system@lastminutedealshq.com",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "usage_count": 0,
+        }
+        _save_api_keys(keys)
+    return website_key
+
 @app.before_request
 def require_api_key():
     if request.path in _PROTECTED_PATHS and request.method == "POST":
@@ -2046,6 +2062,8 @@ if __name__ == "__main__":
     else:
         mode = "LIVE" if stripe_key.startswith("sk_live") else "TEST"
         print(f"Stripe: {mode} mode")
+
+    _ensure_website_api_key()
 
     print(f"Booking API starting on http://localhost:{PORT}")
     print(f"  Health check: http://localhost:{PORT}/health")
