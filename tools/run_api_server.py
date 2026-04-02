@@ -376,7 +376,29 @@ def get_slot_by_id(slot_id: str) -> dict | None:
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "slots": len(json.loads(DATA_FILE.read_text(encoding="utf-8"))) if DATA_FILE.exists() else 0})
+    slot_count = 0
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = requests.get(f"{sb_url}/rest/v1/slots",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
+                params={"select": "slot_id", "limit": 1, "Prefer": "count=exact"},
+                timeout=5)
+            if r.status_code == 200:
+                content_range = r.headers.get("Content-Range", "")
+                if "/" in content_range:
+                    slot_count = int(content_range.split("/")[1])
+                else:
+                    slot_count = len(r.json())
+        except Exception:
+            pass
+    if slot_count == 0 and DATA_FILE.exists():
+        try:
+            slot_count = len(json.loads(DATA_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return jsonify({"status": "ok", "slots": slot_count})
 
 
 @app.route("/metrics", methods=["GET"])
