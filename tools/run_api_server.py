@@ -99,23 +99,13 @@ def _sign_record(record: dict) -> str:
     payload = json.dumps(record, sort_keys=True, separators=(",", ":"))
     return hmac.new(_signing_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
 
-def _load_bookings() -> dict:
-    """Load all booking records. Supabase is primary; local file is fallback."""
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+def _sb_storage_headers() -> dict:
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if sb_url and sb_secret:
-        try:
-            r = requests.get(
-                f"{sb_url}/rest/v1/bookings",
-                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
-                params={"select": "*", "limit": "1000"},
-                timeout=5,
-            )
-            if r.status_code == 200:
-                return {row["booking_id"]: row for row in r.json()}
-        except Exception:
-            pass
-    # Local fallback
+    return {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+
+
+def _load_bookings() -> dict:
+    """Load all booking records from local file (full scan rarely needed)."""
     if _BOOKINGS_FILE.exists():
         try:
             return json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
@@ -125,21 +115,21 @@ def _load_bookings() -> dict:
 
 
 def _load_booking_record(booking_id: str) -> dict | None:
-    """Load a single booking record by ID. Supabase primary, local file fallback."""
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
-    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if sb_url and sb_secret:
+    """
+    Load a single booking record by ID.
+    Primary: Supabase Storage (shared across all Railway instances).
+    Fallback: local file (same-instance only, used if Storage unavailable).
+    """
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
         try:
             r = requests.get(
-                f"{sb_url}/rest/v1/bookings",
-                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
-                params={"booking_id": f"eq.{booking_id}", "select": "*", "limit": "1"},
+                f"{sb_url}/storage/v1/object/bookings/{booking_id}.json",
+                headers=_sb_storage_headers(),
                 timeout=5,
             )
             if r.status_code == 200:
-                rows = r.json()
-                if rows:
-                    return rows[0]
+                return r.json()
         except Exception:
             pass
     # Local fallback
@@ -153,34 +143,33 @@ def _load_booking_record(booking_id: str) -> dict | None:
 
 
 def _save_booking_record(booking_id: str, record: dict) -> None:
-    """Persist a booking record. Writes to Supabase (primary) and local file (backup)."""
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
-    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if sb_url and sb_secret:
+    """
+    Persist a booking record.
+    Primary: Supabase Storage — survives redeploys, visible to all Railway instances.
+    Backup: local .tmp/bookings.json — same-instance fallback if Storage unavailable.
+    """
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
         try:
             requests.post(
-                f"{sb_url}/rest/v1/bookings",
-                headers={
-                    "apikey":        sb_secret,
-                    "Authorization": f"Bearer {sb_secret}",
-                    "Content-Type":  "application/json",
-                    "Prefer":        "resolution=merge-duplicates",
-                },
-                json=record,
+                f"{sb_url}/storage/v1/object/bookings/{booking_id}.json",
+                headers={**_sb_storage_headers(), "Content-Type": "application/json",
+                         "x-upsert": "true"},
+                data=json.dumps(record),
                 timeout=8,
             )
         except Exception as e:
-            print(f"[BOOKINGS] Supabase write failed: {e} — falling back to local file")
-    # Always write local copy as backup
+            print(f"[BOOKINGS] Supabase Storage write failed: {e}")
+    # Always write local backup too
     try:
-        local_bookings = {}
+        local = {}
         if _BOOKINGS_FILE.exists():
             try:
-                local_bookings = json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
+                local = json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        local_bookings[booking_id] = record
-        _BOOKINGS_FILE.write_text(json.dumps(local_bookings, indent=2), encoding="utf-8")
+        local[booking_id] = record
+        _BOOKINGS_FILE.write_text(json.dumps(local, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -336,66 +325,10 @@ def _ensure_website_api_key() -> str:
 
 def _ensure_cancellation_queue_table() -> None:
     """
-    Create the Supabase `cancellation_queue` table if it doesn't exist.
-    Runs at server startup — safe to call multiple times (IF NOT EXISTS).
-    Requires psycopg2-binary and SUPABASE_DB_URL in .env.
-    Fails silently if the DB is unreachable (table likely already exists).
+    No-op: booking records and cancellation queue are now stored in Supabase Storage
+    (bucket: 'bookings') — no schema migration needed.
     """
-    db_url = os.getenv("SUPABASE_DB_URL", "").strip()
-    if not db_url:
-        return
-    try:
-        import psycopg2  # type: ignore
-        stripped  = db_url.replace("postgresql://", "").replace("postgres://", "")
-        userinfo, hostinfo = stripped.rsplit("@", 1)
-        user, password     = userinfo.split(":", 1)
-        host_port, dbname  = hostinfo.rsplit("/", 1)
-        host, port         = host_port.rsplit(":", 1)
-        conn = psycopg2.connect(
-            host=host, port=int(port), dbname=dbname,
-            user=user, password=password, sslmode="require",
-            connect_timeout=8,
-        )
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bookings (
-                booking_id        TEXT PRIMARY KEY,
-                confirmation      TEXT,
-                platform          TEXT,
-                supplier_id       TEXT,
-                booking_url       TEXT,
-                service_name      TEXT,
-                price_charged     FLOAT,
-                status            TEXT DEFAULT 'booked',
-                executed_at       TIMESTAMPTZ,
-                cancelled_at      TIMESTAMPTZ,
-                customer_email    TEXT,
-                payment_intent_id TEXT,
-                slot_id           TEXT,
-                cancellation_details JSONB,
-                signature         TEXT
-            );
-            CREATE TABLE IF NOT EXISTS cancellation_queue (
-                booking_id        TEXT PRIMARY KEY,
-                confirmation      TEXT NOT NULL,
-                supplier_id       TEXT NOT NULL,
-                payment_intent_id TEXT,
-                price_charged     FLOAT,
-                octo_cancelled    BOOLEAN DEFAULT FALSE,
-                attempts          INTEGER DEFAULT 0,
-                last_attempt_at   TIMESTAMPTZ,
-                created_at        TIMESTAMPTZ DEFAULT NOW(),
-                status            TEXT DEFAULT 'pending_octo',
-                error_detail      TEXT
-            );
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("cancellation_queue table ready")
-    except Exception as e:
-        # Non-fatal — table may already exist or DB is temporarily unreachable
-        print(f"cancellation_queue table setup skipped: {e}")
+    pass
 
 
 def _start_retry_scheduler() -> None:
@@ -2267,41 +2200,37 @@ def _refund_stripe(stripe_client, payment_intent_id: str, max_attempts: int = 3)
 def _queue_octo_retry(booking_id: str, supplier_id: str, confirmation: str,
                       payment_intent_id: str, price_charged: float) -> None:
     """
-    Persist a failed OCTO cancellation to Supabase `cancellation_queue`.
-    The retry_cancellations.py cron picks this up every 15 min and retries automatically.
+    Persist a failed OCTO cancellation to Supabase Storage `cancellation_queue/`.
+    The retry scheduler (APScheduler, every 15 min) picks this up via retry_cancellations.py
+    and retries automatically — no manual intervention needed.
     """
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
-    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if not sb_url or not sb_secret:
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if not sb_url:
         print(f"[CANCEL_QUEUE] Supabase not configured — cannot queue retry for {booking_id}")
         return
+    entry = {
+        "booking_id":        booking_id,
+        "confirmation":      confirmation,
+        "supplier_id":       supplier_id,
+        "payment_intent_id": payment_intent_id,
+        "price_charged":     price_charged,
+        "attempts":          0,
+        "created_at":        datetime.now(timezone.utc).isoformat(),
+        "status":            "pending_octo",
+        "error_detail":      None,
+    }
     try:
         r = requests.post(
-            f"{sb_url}/rest/v1/cancellation_queue",
-            headers={
-                "apikey":        sb_secret,
-                "Authorization": f"Bearer {sb_secret}",
-                "Content-Type":  "application/json",
-                "Prefer":        "resolution=merge-duplicates",
-            },
-            json={
-                "booking_id":        booking_id,
-                "confirmation":      confirmation,
-                "supplier_id":       supplier_id,
-                "payment_intent_id": payment_intent_id,
-                "price_charged":     price_charged,
-                "octo_cancelled":    False,
-                "attempts":          0,
-                "created_at":        datetime.now(timezone.utc).isoformat(),
-                "status":            "pending_octo",
-                "error_detail":      None,
-            },
+            f"{sb_url}/storage/v1/object/bookings/cancellation_queue/{booking_id}.json",
+            headers={**_sb_storage_headers(), "Content-Type": "application/json",
+                     "x-upsert": "true"},
+            data=json.dumps(entry),
             timeout=10,
         )
         if r.ok:
-            print(f"[CANCEL_QUEUE] Queued for automatic retry: {booking_id} | {supplier_id} | {confirmation}")
+            print(f"[CANCEL_QUEUE] Queued for auto-retry: {booking_id} | {supplier_id} | {confirmation}")
         else:
-            print(f"[CANCEL_QUEUE] Supabase upsert failed {r.status_code}: {r.text[:200]}")
+            print(f"[CANCEL_QUEUE] Storage write failed {r.status_code}: {r.text[:200]}")
     except Exception as e:
         print(f"[CANCEL_QUEUE] Could not queue {booking_id}: {e}")
 

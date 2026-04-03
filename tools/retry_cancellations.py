@@ -2,32 +2,25 @@
 """
 Automatic OCTO cancellation retry worker.
 
-Runs every 15 minutes (Railway cron: */15 * * * *).
-Picks up any bookings in the Supabase `cancellation_queue` table whose OCTO
-cancellation failed during the synchronous DELETE /bookings/{id} request, and
-retries them until they succeed.
+Runs every 15 minutes as a background thread inside run_api_server.py (APScheduler).
+Also executable standalone: python tools/retry_cancellations.py
 
-A cancellation can fail transiently (supplier timeout, 5xx) while Stripe has
-already refunded the customer. This worker ensures the booking is also cleaned
-up on the source platform — fully automated, no human intervention needed.
+Picks up any entries in the Supabase Storage `cancellation_queue/` prefix whose OCTO
+cancellation failed during the synchronous DELETE /bookings/{id} request, and retries
+them until they succeed.
 
-Retry limits:
-  - Up to 48 attempts (12 hours at 15-min intervals) before marking as 'exhausted'
-  - 404 from supplier = treated as success (booking already gone)
-  - 400/401/403 = permanent failure, stop retrying immediately
+Storage layout (Supabase Storage bucket: "bookings"):
+  bookings/{booking_id}.json          — individual booking record
+  cancellation_queue/{booking_id}.json — pending OCTO retries
 
-Table: cancellation_queue
-  booking_id        TEXT PRIMARY KEY
-  confirmation      TEXT   -- OCTO booking UUID
-  supplier_id       TEXT   -- e.g. ventrata_edinexplore
-  payment_intent_id TEXT
-  price_charged     FLOAT
-  octo_cancelled    BOOLEAN DEFAULT FALSE
-  attempts          INTEGER DEFAULT 0
-  last_attempt_at   TIMESTAMPTZ
-  created_at        TIMESTAMPTZ
-  status            TEXT   -- pending_octo | resolved | exhausted | permanent_error
-  error_detail      TEXT
+A cancellation can fail transiently (supplier timeout, 5xx) while Stripe has already
+refunded the customer. This worker ensures the booking is also cleaned up on the source
+platform — fully automated, zero human intervention.
+
+Retry policy:
+  - Up to 48 attempts (12 hours at 15-min intervals)
+  - 404 from supplier = success (booking already gone = desired state)
+  - 400/401/403/422 = permanent failure, stops retrying immediately
 """
 
 import json
@@ -44,74 +37,61 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 SB_URL    = os.getenv("SUPABASE_URL", "").rstrip("/")
 SB_SECRET = os.getenv("SUPABASE_SECRET_KEY", "")
+SEEDS_PATH = Path(__file__).parent / "seeds" / "octo_suppliers.json"
 
 MAX_ATTEMPTS = 48   # 12 hours at 15-min intervals
-SEEDS_PATH   = Path(__file__).parent / "seeds" / "octo_suppliers.json"
 
 
-def _sb_headers() -> dict:
-    return {
-        "apikey":        SB_SECRET,
-        "Authorization": f"Bearer {SB_SECRET}",
-        "Content-Type":  "application/json",
-        "Prefer":        "return=representation",
-    }
+def _headers() -> dict:
+    return {"apikey": SB_SECRET, "Authorization": f"Bearer {SB_SECRET}"}
 
 
-def _ensure_table() -> bool:
-    """
-    Create the cancellation_queue table if it doesn't exist.
-    Uses psycopg2 for the DDL — REST API can't run CREATE TABLE.
-    Falls back gracefully if psycopg2 isn't available.
-    """
-    db_url = os.getenv("SUPABASE_DB_URL", "")
-    if not db_url:
-        return True  # Can't create, assume it exists
-
+def _storage_get(path: str) -> dict | None:
+    """Read a JSON object from Supabase Storage. Returns None on 404."""
     try:
-        import psycopg2  # type: ignore
-    except ImportError:
-        print("[SETUP] psycopg2 not available — skipping table auto-creation")
-        return True
+        r = requests.get(f"{SB_URL}/storage/v1/object/bookings/{path}",
+                         headers=_headers(), timeout=8)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
 
+
+def _storage_put(path: str, data: dict) -> None:
+    """Write a JSON object to Supabase Storage."""
     try:
-        # Parse DB URL manually to handle special chars in password
-        # Format: postgresql://user:password@host:port/dbname
-        stripped = db_url.replace("postgresql://", "").replace("postgres://", "")
-        userinfo, hostinfo = stripped.rsplit("@", 1)
-        user, password = userinfo.split(":", 1)
-        host_port, dbname = hostinfo.rsplit("/", 1)
-        host, port = host_port.rsplit(":", 1)
-
-        conn = psycopg2.connect(
-            host=host, port=int(port), dbname=dbname,
-            user=user, password=password, sslmode="require",
-            connect_timeout=10,
+        requests.post(
+            f"{SB_URL}/storage/v1/object/bookings/{path}",
+            headers={**_headers(), "Content-Type": "application/json", "x-upsert": "true"},
+            data=json.dumps(data),
+            timeout=8,
         )
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cancellation_queue (
-                booking_id        TEXT PRIMARY KEY,
-                confirmation      TEXT NOT NULL,
-                supplier_id       TEXT NOT NULL,
-                payment_intent_id TEXT,
-                price_charged     FLOAT,
-                octo_cancelled    BOOLEAN DEFAULT FALSE,
-                attempts          INTEGER DEFAULT 0,
-                last_attempt_at   TIMESTAMPTZ,
-                created_at        TIMESTAMPTZ DEFAULT NOW(),
-                status            TEXT DEFAULT 'pending_octo',
-                error_detail      TEXT
-            );
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("[SETUP] cancellation_queue table ready")
-        return True
     except Exception as e:
-        print(f"[SETUP] Could not create table: {e}")
-        return True  # Still try to proceed — table may already exist
+        print(f"[STORAGE] Write failed for {path}: {e}")
+
+
+def _storage_delete(path: str) -> None:
+    """Delete a file from Supabase Storage."""
+    try:
+        requests.delete(f"{SB_URL}/storage/v1/object/bookings/{path}",
+                        headers=_headers(), timeout=8)
+    except Exception:
+        pass
+
+
+def _storage_list_prefix(prefix: str) -> list[str]:
+    """List all files under a prefix in the bookings bucket. Returns list of names."""
+    try:
+        r = requests.post(
+            f"{SB_URL}/storage/v1/object/list/bookings",
+            headers={**_headers(), "Content-Type": "application/json"},
+            json={"prefix": prefix, "limit": 500, "offset": 0},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return [item["name"] for item in r.json() if item.get("name")]
+    except Exception:
+        pass
+    return []
 
 
 def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
@@ -124,7 +104,8 @@ def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
     except Exception as e:
         return False, f"Could not load supplier config: {e}", True
 
-    supplier = next((s for s in suppliers if s.get("supplier_id") == supplier_id and s.get("enabled")), None)
+    supplier = next((s for s in suppliers if s.get("supplier_id") == supplier_id
+                     and s.get("enabled")), None)
     if not supplier:
         return False, f"No enabled supplier config for '{supplier_id}'", True
 
@@ -133,8 +114,6 @@ def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
         return False, f"API key env var not set: {supplier['api_key_env']}", True
 
     base_url = supplier["base_url"].rstrip("/")
-
-    # One attempt per cron cycle — the cron itself IS the retry loop
     try:
         r = requests.delete(
             f"{base_url}/bookings/{booking_uuid}",
@@ -145,53 +124,15 @@ def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
             },
             timeout=15,
         )
-
         if r.status_code in (200, 204):
             return True, f"Cancelled (HTTP {r.status_code})", False
-
         if r.status_code == 404:
-            # Booking no longer exists on supplier — desired state
             return True, "Not found on supplier (already cancelled or expired)", False
-
         if r.status_code in (400, 401, 403, 422):
-            return False, f"Permanent failure HTTP {r.status_code}: {r.text[:300]}", True
-
-        # 5xx or unexpected — transient, will retry next cycle
+            return False, f"Permanent HTTP {r.status_code}: {r.text[:300]}", True
         return False, f"HTTP {r.status_code}: {r.text[:200]}", False
-
     except requests.RequestException as e:
         return False, f"Request failed: {e}", False
-
-
-def _fetch_pending() -> list[dict]:
-    """Fetch entries that still need OCTO cancellation and haven't exhausted retries."""
-    r = requests.get(
-        f"{SB_URL}/rest/v1/cancellation_queue",
-        headers=_sb_headers(),
-        params={
-            "octo_cancelled": "eq.false",
-            "attempts":       f"lt.{MAX_ATTEMPTS}",
-            "status":         "eq.pending_octo",
-            "select":         "*",
-            "order":          "created_at.asc",
-        },
-        timeout=15,
-    )
-    if r.status_code != 200:
-        print(f"[RETRY] Failed to fetch queue: HTTP {r.status_code} — {r.text[:200]}")
-        return []
-    return r.json() or []
-
-
-def _update_entry(booking_id: str, patch: dict) -> None:
-    """PATCH a queue entry in Supabase."""
-    requests.patch(
-        f"{SB_URL}/rest/v1/cancellation_queue",
-        headers=_sb_headers(),
-        params={"booking_id": f"eq.{booking_id}"},
-        json=patch,
-        timeout=10,
-    )
 
 
 def main() -> None:
@@ -199,46 +140,51 @@ def main() -> None:
         print("[RETRY] SUPABASE_URL or SUPABASE_SECRET_KEY not set — exiting")
         sys.exit(1)
 
-    _ensure_table()
-
-    pending = _fetch_pending()
-    if not pending:
+    # List all pending entries in the cancellation_queue/ prefix
+    names = _storage_list_prefix("cancellation_queue/")
+    if not names:
         print("[RETRY] No pending OCTO cancellations.")
         return
 
-    print(f"[RETRY] Processing {len(pending)} pending cancellation(s)...")
+    print(f"[RETRY] Processing {len(names)} pending cancellation(s)...")
 
-    for entry in pending:
-        booking_id   = entry["booking_id"]
-        supplier_id  = entry["supplier_id"]
-        confirmation = entry["confirmation"]
+    for name in names:
+        path  = f"cancellation_queue/{name}"
+        entry = _storage_get(path)
+        if not entry:
+            continue
+
+        booking_id   = entry.get("booking_id", name.replace(".json", ""))
+        supplier_id  = entry.get("supplier_id", "")
+        confirmation = entry.get("confirmation", "")
         attempts     = entry.get("attempts", 0)
+
+        if not supplier_id or not confirmation:
+            print(f"  [{booking_id}] Missing supplier_id or confirmation — skipping")
+            continue
 
         print(f"  [{booking_id}] supplier={supplier_id} uuid={confirmation} attempt={attempts + 1}")
 
         success, detail, permanent = _cancel_octo(supplier_id, confirmation)
 
-        now   = datetime.now(timezone.utc).isoformat()
-        patch = {
-            "attempts":          attempts + 1,
-            "last_attempt_at":   now,
-            "error_detail":      detail,
-        }
+        entry["attempts"]         = attempts + 1
+        entry["last_attempt_at"]  = datetime.now(timezone.utc).isoformat()
+        entry["error_detail"]     = detail
 
         if success:
-            patch["octo_cancelled"] = True
-            patch["status"]         = "resolved"
+            entry["status"] = "resolved"
+            # Remove from queue — it's done
+            _storage_delete(path)
             print(f"  ✓ Resolved: {detail}")
-        elif permanent:
-            patch["status"] = "permanent_error"
-            print(f"  ✗ Permanent error (no more retries): {detail}")
-        elif attempts + 1 >= MAX_ATTEMPTS:
-            patch["status"] = "exhausted"
-            print(f"  ✗ Exhausted {MAX_ATTEMPTS} attempts. Final error: {detail}")
+        elif permanent or attempts + 1 >= MAX_ATTEMPTS:
+            entry["status"] = "exhausted" if attempts + 1 >= MAX_ATTEMPTS else "permanent_error"
+            # Keep the entry but mark terminal — stops future retries
+            _storage_put(path, entry)
+            print(f"  ✗ Terminal ({entry['status']}): {detail}")
         else:
+            # Update attempt count and retry next cycle
+            _storage_put(path, entry)
             print(f"  ↻ Will retry next cycle: {detail}")
-
-        _update_entry(booking_id, patch)
 
     print("[RETRY] Done.")
 
