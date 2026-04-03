@@ -27,6 +27,9 @@ flask                   # Booking API server (run_api_server.py)
 fastapi
 uvicorn[standard]
 
+# ── Database (direct Postgres for DDL) ───────────────────────────────────────
+psycopg2-binary
+
 # ── Payments ──────────────────────────────────────────────────────────────────
 stripe
 

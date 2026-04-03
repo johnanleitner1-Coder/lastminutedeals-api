@@ -40,6 +40,7 @@ import json
 import os
 import secrets
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -259,6 +260,54 @@ def _ensure_website_api_key() -> str:
         }
         _save_api_keys(keys)
     return website_key
+
+
+def _ensure_cancellation_queue_table() -> None:
+    """
+    Create the Supabase `cancellation_queue` table if it doesn't exist.
+    Runs at server startup — safe to call multiple times (IF NOT EXISTS).
+    Requires psycopg2-binary and SUPABASE_DB_URL in .env.
+    Fails silently if the DB is unreachable (table likely already exists).
+    """
+    db_url = os.getenv("SUPABASE_DB_URL", "").strip()
+    if not db_url:
+        return
+    try:
+        import psycopg2  # type: ignore
+        stripped  = db_url.replace("postgresql://", "").replace("postgres://", "")
+        userinfo, hostinfo = stripped.rsplit("@", 1)
+        user, password     = userinfo.split(":", 1)
+        host_port, dbname  = hostinfo.rsplit("/", 1)
+        host, port         = host_port.rsplit(":", 1)
+        conn = psycopg2.connect(
+            host=host, port=int(port), dbname=dbname,
+            user=user, password=password, sslmode="require",
+            connect_timeout=8,
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cancellation_queue (
+                booking_id        TEXT PRIMARY KEY,
+                confirmation      TEXT NOT NULL,
+                supplier_id       TEXT NOT NULL,
+                payment_intent_id TEXT,
+                price_charged     FLOAT,
+                octo_cancelled    BOOLEAN DEFAULT FALSE,
+                attempts          INTEGER DEFAULT 0,
+                last_attempt_at   TIMESTAMPTZ,
+                created_at        TIMESTAMPTZ DEFAULT NOW(),
+                status            TEXT DEFAULT 'pending_octo',
+                error_detail      TEXT
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("cancellation_queue table ready")
+    except Exception as e:
+        # Non-fatal — table may already exist or DB is temporarily unreachable
+        print(f"cancellation_queue table setup skipped: {e}")
+
 
 @app.before_request
 def require_api_key():
@@ -2000,11 +2049,13 @@ def verify_booking(booking_id: str):
 
 # ── Booking cancellation ──────────────────────────────────────────────────────
 
-def _cancel_octo_booking(platform: str, confirmation: str) -> dict:
+def _cancel_octo_booking(platform: str, confirmation: str, max_attempts: int = 3) -> dict:
     """
-    Cancel a booking on an OCTO supplier (Ventrata, Zaui, Peek Pro).
-    OCTO spec: DELETE /bookings/{uuid}
-    Returns {"success": True/False, "detail": str}
+    Cancel a booking on an OCTO supplier with automatic retry.
+    - Retries up to max_attempts times with exponential backoff (2s, 4s).
+    - Treats HTTP 404 as success (booking already gone = desired state).
+    - Returns {"success": bool, "detail": str, "permanent": bool}
+      permanent=True means retrying won't help (auth failure, bad request, etc.)
     """
     import json as _json
 
@@ -2012,34 +2063,121 @@ def _cancel_octo_booking(platform: str, confirmation: str) -> dict:
     try:
         suppliers = _json.loads(seeds_path.read_text(encoding="utf-8"))
     except Exception:
-        return {"success": False, "detail": "Could not load OCTO supplier config"}
+        return {"success": False, "detail": "Could not load OCTO supplier config", "permanent": True}
 
     supplier = next((s for s in suppliers if s.get("supplier_id") == platform and s.get("enabled")), None)
     if not supplier:
-        return {"success": False, "detail": f"No enabled OCTO supplier found for platform '{platform}'"}
+        return {"success": False, "detail": f"No enabled OCTO supplier for '{platform}'", "permanent": True}
 
     api_key = os.getenv(supplier["api_key_env"], "").strip()
     if not api_key:
-        return {"success": False, "detail": f"API key env var {supplier['api_key_env']} not set"}
+        return {"success": False, "detail": f"API key not set: {supplier['api_key_env']}", "permanent": True}
 
     base_url = supplier["base_url"].rstrip("/")
+    last_error = ""
+
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            time.sleep(2 ** attempt)   # 2s then 4s
+        try:
+            r = requests.delete(
+                f"{base_url}/bookings/{confirmation}",
+                headers={
+                    "Authorization":     f"Bearer {api_key}",
+                    "Octo-Capabilities": "octo/pricing",
+                    "Content-Type":      "application/json",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 204):
+                return {"success": True, "detail": f"Cancelled on {platform} (HTTP {r.status_code})"}
+            if r.status_code == 404:
+                # Booking not found = already cancelled or expired — desired state
+                return {"success": True, "detail": "Booking not found on supplier (already cancelled or expired)"}
+            if r.status_code in (400, 401, 403, 422):
+                # Permanent client error — retrying won't help
+                return {"success": False, "permanent": True,
+                        "detail": f"Permanent failure HTTP {r.status_code}: {r.text[:200]}"}
+            # 5xx or unexpected — log and retry
+            last_error = f"HTTP {r.status_code}: {r.text[:200]}"
+        except requests.RequestException as e:
+            last_error = str(e)
+
+    return {"success": False, "detail": f"Failed after {max_attempts} attempts: {last_error}"}
+
+
+def _refund_stripe(stripe_client, payment_intent_id: str, max_attempts: int = 3) -> dict:
+    """
+    Refund or cancel a Stripe PaymentIntent with automatic retry.
+    Treats 'already refunded' / 'already cancelled' as success.
+    Returns {"success": bool, "action": str, "refund_id": str (optional)}
+    """
+    last_error = ""
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            time.sleep(2 ** attempt)
+        try:
+            pi = stripe_client.PaymentIntent.retrieve(payment_intent_id)
+            if pi.status == "requires_capture":
+                stripe_client.PaymentIntent.cancel(payment_intent_id)
+                return {"success": True, "action": "hold_cancelled"}
+            elif pi.status == "succeeded":
+                refund = stripe_client.Refund.create(payment_intent=payment_intent_id)
+                return {"success": True, "action": "refunded", "refund_id": refund.id}
+            elif pi.status in ("canceled", "cancelled"):
+                return {"success": True, "action": "already_cancelled"}
+            else:
+                return {"success": True, "action": f"no_action (pi_status={pi.status})"}
+        except Exception as e:
+            err = str(e)
+            if "already been refunded" in err or "charge_already_refunded" in err:
+                return {"success": True, "action": "already_refunded"}
+            if "already canceled" in err or "already cancelled" in err:
+                return {"success": True, "action": "already_cancelled"}
+            last_error = err
+    return {"success": False, "action": "failed_after_retries", "error": last_error}
+
+
+def _queue_octo_retry(booking_id: str, supplier_id: str, confirmation: str,
+                      payment_intent_id: str, price_charged: float) -> None:
+    """
+    Persist a failed OCTO cancellation to Supabase `cancellation_queue`.
+    The retry_cancellations.py cron picks this up every 15 min and retries automatically.
+    """
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
+        print(f"[CANCEL_QUEUE] Supabase not configured — cannot queue retry for {booking_id}")
+        return
     try:
-        r = requests.delete(
-            f"{base_url}/bookings/{confirmation}",
+        r = requests.post(
+            f"{sb_url}/rest/v1/cancellation_queue",
             headers={
-                "Authorization": f"Bearer {api_key}",
-                "Octo-Capabilities": "octo/pricing",
-                "Content-Type": "application/json",
+                "apikey":        sb_secret,
+                "Authorization": f"Bearer {sb_secret}",
+                "Content-Type":  "application/json",
+                "Prefer":        "resolution=merge-duplicates",
             },
-            timeout=15,
+            json={
+                "booking_id":        booking_id,
+                "confirmation":      confirmation,
+                "supplier_id":       supplier_id,
+                "payment_intent_id": payment_intent_id,
+                "price_charged":     price_charged,
+                "octo_cancelled":    False,
+                "attempts":          0,
+                "created_at":        datetime.now(timezone.utc).isoformat(),
+                "status":            "pending_octo",
+                "error_detail":      None,
+            },
+            timeout=10,
         )
-        if r.status_code in (200, 204):
-            return {"success": True, "detail": f"Cancelled on {platform} (HTTP {r.status_code})"}
+        if r.ok:
+            print(f"[CANCEL_QUEUE] Queued for automatic retry: {booking_id} | {supplier_id} | {confirmation}")
         else:
-            body = r.text[:200]
-            return {"success": False, "detail": f"Supplier returned HTTP {r.status_code}: {body}"}
+            print(f"[CANCEL_QUEUE] Supabase upsert failed {r.status_code}: {r.text[:200]}")
     except Exception as e:
-        return {"success": False, "detail": str(e)}
+        print(f"[CANCEL_QUEUE] Could not queue {booking_id}: {e}")
 
 
 @app.route("/bookings/<booking_id>", methods=["DELETE"])
@@ -2073,57 +2211,53 @@ def cancel_booking(booking_id: str):
     platform       = record.get("platform", "")
     confirmation   = record.get("confirmation", "")
     payment_intent = record.get("payment_intent_id", "")
-    # supplier_id is the OCTO supplier key (e.g. "ventrata_edinexplore"); falls back to platform
-    supplier_id = record.get("supplier_id", platform)
+    supplier_id    = record.get("supplier_id", platform)
+    price_charged  = float(record.get("price_charged", 0))
 
-    results = {}
+    # ── Step 1: Stripe refund first (customer always gets their money back) ───
+    # Retried up to 3× with backoff. 'Already refunded' treated as success.
+    stripe_client = _stripe()
+    stripe_result = {"success": True, "action": "no_payment_on_record"}
+    if stripe_client.api_key and payment_intent:
+        stripe_result = _refund_stripe(stripe_client, payment_intent)
+        if not stripe_result["success"]:
+            # Stripe failure after all retries — still proceed, log prominently
+            print(f"[CANCEL] ⚠ Stripe refund failed for {booking_id}: {stripe_result.get('error')}")
 
-    # ── Step 1: Cancel on source platform ────────────────────────────────────
+    # ── Step 2: OCTO cancellation (retried up to 3×, then queued if still failing) ──
     octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
-    # Also handle generic "octo" platform stored before supplier_id field was added
     is_octo = supplier_id in octo_platforms or platform == "octo"
+    octo_result  = {"success": True, "detail": "No OCTO booking to cancel"}
+    octo_queued  = False
+
     if is_octo and confirmation:
-        results["platform"] = _cancel_octo_booking(supplier_id, confirmation)
-    elif confirmation:
-        # Non-OCTO platform — log for manual processing
-        results["platform"] = {"success": None, "detail": f"Manual cancellation required on {platform} for confirmation {confirmation}"}
-    else:
-        results["platform"] = {"success": True, "detail": "No platform confirmation to cancel"}
-
-    # ── Step 2: Refund or cancel Stripe payment ───────────────────────────────
-    stripe = _stripe()
-    if stripe.api_key and payment_intent:
-        try:
-            pi = stripe.PaymentIntent.retrieve(payment_intent)
-            if pi.status == "requires_capture":
-                # Hold not yet captured — just cancel it
-                stripe.PaymentIntent.cancel(payment_intent)
-                results["stripe"] = {"success": True, "action": "hold_cancelled"}
-            elif pi.status == "succeeded":
-                # Already captured — issue a full refund
-                refund = stripe.Refund.create(payment_intent=payment_intent)
-                results["stripe"] = {"success": True, "action": "refunded", "refund_id": refund.id}
+        octo_result = _cancel_octo_booking(supplier_id, confirmation)
+        if not octo_result["success"]:
+            if octo_result.get("permanent"):
+                # Auth failure / bad request — retrying won't help, log it
+                print(f"[CANCEL] ✗ Permanent OCTO failure for {booking_id}: {octo_result['detail']}")
             else:
-                results["stripe"] = {"success": True, "action": "no_action", "pi_status": pi.status}
-        except Exception as e:
-            results["stripe"] = {"success": False, "detail": str(e)}
-    else:
-        results["stripe"] = {"success": True, "action": "no_payment_on_record"}
+                # Transient failure — queue for automatic background retry every 15 min
+                _queue_octo_retry(booking_id, supplier_id, confirmation, payment_intent, price_charged)
+                octo_queued = True
+                print(f"[CANCEL] OCTO cancel queued for automatic retry: {booking_id}")
 
-    # ── Step 3: Update booking record ─────────────────────────────────────────
-    record["status"] = "cancelled"
-    record["cancelled_at"] = datetime.now(timezone.utc).isoformat()
-    record["cancellation_details"] = results
+    # ── Step 3: Update booking record ────────────────────────────────────────
+    cancelled_at = datetime.now(timezone.utc).isoformat()
+    record["status"]       = "cancelled"
+    record["cancelled_at"] = cancelled_at
+    record["cancellation_details"] = {"stripe": stripe_result, "octo": octo_result}
     _save_booking_record(booking_id, record)
 
     return jsonify({
-        "success": True,
-        "booking_id": booking_id,
-        "status": "cancelled",
-        "platform_result": results.get("platform", {}).get("detail"),
-        "stripe_result": results.get("stripe", {}).get("action"),
-        "refund_id": results.get("stripe", {}).get("refund_id"),
-        "cancelled_at": record["cancelled_at"],
+        "success":        True,
+        "booking_id":     booking_id,
+        "status":         "cancelled",
+        "stripe_result":  stripe_result.get("action"),
+        "refund_id":      stripe_result.get("refund_id"),
+        "platform_result": octo_result.get("detail"),
+        "octo_queued_for_retry": octo_queued,
+        "cancelled_at":   cancelled_at,
     }), 200
 
 
@@ -2253,6 +2387,7 @@ if __name__ == "__main__":
         print(f"Stripe: {mode} mode")
 
     _ensure_website_api_key()
+    _ensure_cancellation_queue_table()
 
     print(f"Booking API starting on http://localhost:{PORT}")
     print(f"  Health check: http://localhost:{PORT}/health")
