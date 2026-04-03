@@ -100,6 +100,22 @@ def _sign_record(record: dict) -> str:
     return hmac.new(_signing_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 def _load_bookings() -> dict:
+    """Load all booking records. Supabase is primary; local file is fallback."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = requests.get(
+                f"{sb_url}/rest/v1/bookings",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
+                params={"select": "*", "limit": "1000"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return {row["booking_id"]: row for row in r.json()}
+        except Exception:
+            pass
+    # Local fallback
     if _BOOKINGS_FILE.exists():
         try:
             return json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
@@ -107,10 +123,66 @@ def _load_bookings() -> dict:
             pass
     return {}
 
+
+def _load_booking_record(booking_id: str) -> dict | None:
+    """Load a single booking record by ID. Supabase primary, local file fallback."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = requests.get(
+                f"{sb_url}/rest/v1/bookings",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
+                params={"booking_id": f"eq.{booking_id}", "select": "*", "limit": "1"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                rows = r.json()
+                if rows:
+                    return rows[0]
+        except Exception:
+            pass
+    # Local fallback
+    bookings = {}
+    if _BOOKINGS_FILE.exists():
+        try:
+            bookings = json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return bookings.get(booking_id)
+
+
 def _save_booking_record(booking_id: str, record: dict) -> None:
-    bookings = _load_bookings()
-    bookings[booking_id] = record
-    _BOOKINGS_FILE.write_text(json.dumps(bookings, indent=2), encoding="utf-8")
+    """Persist a booking record. Writes to Supabase (primary) and local file (backup)."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            requests.post(
+                f"{sb_url}/rest/v1/bookings",
+                headers={
+                    "apikey":        sb_secret,
+                    "Authorization": f"Bearer {sb_secret}",
+                    "Content-Type":  "application/json",
+                    "Prefer":        "resolution=merge-duplicates",
+                },
+                json=record,
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[BOOKINGS] Supabase write failed: {e} — falling back to local file")
+    # Always write local copy as backup
+    try:
+        local_bookings = {}
+        if _BOOKINGS_FILE.exists():
+            try:
+                local_bookings = json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        local_bookings[booking_id] = record
+        _BOOKINGS_FILE.write_text(json.dumps(local_bookings, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 def _make_receipt(result_dict: dict, customer_email: str = "") -> dict:
     """
@@ -286,6 +358,23 @@ def _ensure_cancellation_queue_table() -> None:
         )
         cur = conn.cursor()
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS bookings (
+                booking_id        TEXT PRIMARY KEY,
+                confirmation      TEXT,
+                platform          TEXT,
+                supplier_id       TEXT,
+                booking_url       TEXT,
+                service_name      TEXT,
+                price_charged     FLOAT,
+                status            TEXT DEFAULT 'booked',
+                executed_at       TIMESTAMPTZ,
+                cancelled_at      TIMESTAMPTZ,
+                customer_email    TEXT,
+                payment_intent_id TEXT,
+                slot_id           TEXT,
+                cancellation_details JSONB,
+                signature         TEXT
+            );
             CREATE TABLE IF NOT EXISTS cancellation_queue (
                 booking_id        TEXT PRIMARY KEY,
                 confirmation      TEXT NOT NULL,
@@ -2071,8 +2160,7 @@ def verify_booking(booking_id: str):
         "verified": true
       }
     """
-    bookings = _load_bookings()
-    record = bookings.get(booking_id)
+    record = _load_booking_record(booking_id)
     if not record:
         return jsonify({"verified": False, "error": "Booking not found"}), 404
 
@@ -2237,8 +2325,7 @@ def cancel_booking(booking_id: str):
     → { "success": true, "booking_id": "bk_...", "status": "cancelled",
         "refund_id": "re_...", "platform_result": "..." }
     """
-    bookings = _load_bookings()
-    record = bookings.get(booking_id)
+    record = _load_booking_record(booking_id)
     if not record:
         return jsonify({"success": False, "error": "Booking not found"}), 404
 
