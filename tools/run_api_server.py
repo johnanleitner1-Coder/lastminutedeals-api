@@ -1996,7 +1996,8 @@ def _cancel_octo_booking(platform: str, confirmation: str) -> dict:
             f"{base_url}/bookings/{confirmation}",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Octo-Capabilities": "octo/content",
+                "Octo-Capabilities": "octo/pricing",
+                "Content-Type": "application/json",
             },
             timeout=15,
         )
