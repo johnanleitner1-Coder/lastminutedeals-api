@@ -2006,7 +2006,6 @@ def _cancel_octo_booking(platform: str, confirmation: str) -> dict:
     OCTO spec: DELETE /bookings/{uuid}
     Returns {"success": True/False, "detail": str}
     """
-    from tools.seeds import octo_suppliers  # noqa: resolved at runtime
     import json as _json
 
     seeds_path = Path(__file__).parent / "seeds" / "octo_suppliers.json"
