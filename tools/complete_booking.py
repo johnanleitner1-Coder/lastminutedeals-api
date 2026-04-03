@@ -1241,9 +1241,10 @@ class OCTOBooker(BasePlatformBooker):
             )
 
         headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type":  "application/json",
-            "Accept":        "application/json",
+            "Authorization":    f"Bearer {api_key}",
+            "Content-Type":     "application/json",
+            "Accept":           "application/json",
+            "Octo-Capabilities": "octo/pricing",
         }
 
         contact = {
@@ -1280,8 +1281,9 @@ class OCTOBooker(BasePlatformBooker):
         except req.RequestException as exc:
             raise BookingTimeoutError(f"OCTOBooker: reservation request failed: {exc}") from exc
 
-        # Some suppliers (Zaui) don't implement /reservations — fall back to /bookings
-        if resp.status_code in (400, 404, 405) and "invalid" in resp.text.lower():
+        # Some suppliers (Zaui, Ventrata) don't implement /reservations — fall back to /bookings
+        # Trigger fallback on any 400/404/405 from /reservations (endpoint may not exist)
+        if resp.status_code in (400, 404, 405):
             print(f"[OCTOBooker] /reservations not supported ({resp.status_code}) — trying POST /bookings")
             try:
                 resp = req.post(
