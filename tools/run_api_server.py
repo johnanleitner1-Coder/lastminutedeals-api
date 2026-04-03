@@ -1170,6 +1170,21 @@ def book_with_saved_card(customer_id: str):
         stripe.PaymentIntent.capture(pi.id)
         _mark_booked(slot_id)
 
+        # Persist booking record so DELETE /bookings/{id} can cancel it later
+        booking_record_id = f"bk_{slot_id[:12]}"
+        _save_booking_record(booking_record_id, {
+            "booking_id":        booking_record_id,
+            "confirmation":      str(confirmation or ""),
+            "platform":          slot.get("platform", ""),
+            "service_name":      slot.get("service_name", ""),
+            "price_charged":     float(our_price),
+            "status":            "booked",
+            "executed_at":       datetime.now(timezone.utc).isoformat(),
+            "customer_email":    customer_email,
+            "payment_intent_id": pi.id,
+            "slot_id":           slot_id,
+        })
+
         # Send confirmation email
         try:
             from send_booking_email import send_booking_email
@@ -1180,11 +1195,12 @@ def book_with_saved_card(customer_id: str):
 
         return jsonify(_with_context({
             "success": True,
+            "booking_id":        booking_record_id,
             "payment_intent_id": pi.id,
-            "confirmation": confirmation,
-            "status": "confirmed",
-            "amount_charged": our_price,
-            "currency": slot.get("currency", "USD"),
+            "confirmation":      confirmation,
+            "status":            "confirmed",
+            "amount_charged":    our_price,
+            "currency":          slot.get("currency", "USD"),
         }))
     except Exception as e:
         # Booking failed — cancel the hold
