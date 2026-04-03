@@ -1349,9 +1349,10 @@ class OCTOBooker(BasePlatformBooker):
                 f"OCTOBooker: unexpected booking status: {booking_status}"
             )
 
-        # Return the supplier reference if available, else fall back to booking UUID
-        confirmation = supplier_ref or f"OCTO-{booking_uuid}"
-        print(f"[OCTOBooker] Final confirmation: {confirmation}")
+        # Return UUID as confirmation (needed for OCTO DELETE /bookings/{uuid}).
+        # Supplier reference is included in the artifact log.
+        confirmation = booking_uuid
+        print(f"[OCTOBooker] Final confirmation: {confirmation} (supplier ref: {supplier_ref})")
 
         # Save JSON artifact for debugging
         try:

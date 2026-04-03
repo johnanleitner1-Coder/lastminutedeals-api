@@ -750,17 +750,25 @@ def stripe_webhook():
 
             # Persist booking record for cancellation / verification
             booking_record_id = f"bk_{slot_id[:12]}"
+            _burl_raw = metadata.get("booking_url", "")
+            try:
+                _burl_j = json.loads(_burl_raw) if isinstance(_burl_raw, str) and _burl_raw.startswith("{") else {}
+                _supplier_id = _burl_j.get("supplier_id", platform)
+            except Exception:
+                _supplier_id = platform
             _save_booking_record(booking_record_id, {
-                "booking_id":       booking_record_id,
-                "confirmation":     str(confirmation or ""),
-                "platform":         platform,
-                "service_name":     metadata.get("service_name", ""),
-                "price_charged":    session.get("amount_total", 0) / 100,
-                "status":           "booked",
-                "executed_at":      datetime.now(timezone.utc).isoformat(),
-                "customer_email":   customer["email"],
+                "booking_id":        booking_record_id,
+                "confirmation":      str(confirmation or ""),
+                "platform":          platform,
+                "supplier_id":       _supplier_id,
+                "booking_url":       _burl_raw,
+                "service_name":      metadata.get("service_name", ""),
+                "price_charged":     session.get("amount_total", 0) / 100,
+                "status":            "booked",
+                "executed_at":       datetime.now(timezone.utc).isoformat(),
+                "customer_email":    customer["email"],
                 "payment_intent_id": payment_intent,
-                "slot_id":          slot_id,
+                "slot_id":           slot_id,
             })
 
             # ── Send confirmation email ────────────────────────────────────────
@@ -1172,10 +1180,19 @@ def book_with_saved_card(customer_id: str):
 
         # Persist booking record so DELETE /bookings/{id} can cancel it later
         booking_record_id = f"bk_{slot_id[:12]}"
+        booking_url_raw = slot.get("booking_url", "")
+        try:
+            _burl = json.loads(booking_url_raw) if isinstance(booking_url_raw, str) else (booking_url_raw or {})
+            _supplier_id = _burl.get("supplier_id", slot.get("platform", ""))
+        except Exception:
+            _burl = {}
+            _supplier_id = slot.get("platform", "")
         _save_booking_record(booking_record_id, {
             "booking_id":        booking_record_id,
             "confirmation":      str(confirmation or ""),
             "platform":          slot.get("platform", ""),
+            "supplier_id":       _supplier_id,
+            "booking_url":       booking_url_raw,
             "service_name":      slot.get("service_name", ""),
             "price_charged":     float(our_price),
             "status":            "booked",
@@ -2054,16 +2071,20 @@ def cancel_booking(booking_id: str):
         return jsonify({"success": True, "booking_id": booking_id, "status": "cancelled",
                         "message": "Booking was already cancelled"}), 200
 
-    platform     = record.get("platform", "")
-    confirmation = record.get("confirmation", "")
+    platform       = record.get("platform", "")
+    confirmation   = record.get("confirmation", "")
     payment_intent = record.get("payment_intent_id", "")
+    # supplier_id is the OCTO supplier key (e.g. "ventrata_edinexplore"); falls back to platform
+    supplier_id = record.get("supplier_id", platform)
 
     results = {}
 
     # ── Step 1: Cancel on source platform ────────────────────────────────────
     octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
-    if platform in octo_platforms and confirmation:
-        results["platform"] = _cancel_octo_booking(platform, confirmation)
+    # Also handle generic "octo" platform stored before supplier_id field was added
+    is_octo = supplier_id in octo_platforms or platform == "octo"
+    if is_octo and confirmation:
+        results["platform"] = _cancel_octo_booking(supplier_id, confirmation)
     elif confirmation:
         # Non-OCTO platform — log for manual processing
         results["platform"] = {"success": None, "detail": f"Manual cancellation required on {platform} for confirmation {confirmation}"}
