@@ -309,6 +309,44 @@ def _ensure_cancellation_queue_table() -> None:
         print(f"cancellation_queue table setup skipped: {e}")
 
 
+def _start_retry_scheduler() -> None:
+    """
+    Start a background thread that runs retry_cancellations.py every 15 minutes.
+    Uses APScheduler so the retry worker lives inside the same process as the API —
+    no separate Railway service needed, shares the same env vars automatically.
+    Only starts once (gunicorn multi-worker safe via a simple PID check).
+    """
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
+    except ImportError:
+        print("APScheduler not installed — cancellation retry cron will not run")
+        return
+
+    # In gunicorn multi-worker mode, only start scheduler in the master/first worker
+    # to avoid duplicate runs. Check via an env sentinel.
+    if os.environ.get("_RETRY_SCHEDULER_STARTED"):
+        return
+    os.environ["_RETRY_SCHEDULER_STARTED"] = "1"
+
+    def _run_retry() -> None:
+        try:
+            retry_path = Path(__file__).parent / "retry_cancellations.py"
+            import importlib.util as _ilu
+            spec   = _ilu.spec_from_file_location("retry_cancellations", retry_path)
+            module = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.main()
+        except Exception as e:
+            print(f"[RETRY_SCHEDULER] Error: {e}")
+
+    scheduler = BackgroundScheduler()
+    # Run immediately on startup, then every 15 minutes
+    scheduler.add_job(_run_retry, "interval", minutes=15, id="retry_cancellations",
+                      next_run_time=__import__("datetime").datetime.now())
+    scheduler.start()
+    print("Cancellation retry scheduler started (every 15 min)")
+
+
 @app.before_request
 def require_api_key():
     if request.path in _PROTECTED_PATHS and request.method == "POST":
@@ -2388,6 +2426,7 @@ if __name__ == "__main__":
 
     _ensure_website_api_key()
     _ensure_cancellation_queue_table()
+    _start_retry_scheduler()
 
     print(f"Booking API starting on http://localhost:{PORT}")
     print(f"  Health check: http://localhost:{PORT}/health")

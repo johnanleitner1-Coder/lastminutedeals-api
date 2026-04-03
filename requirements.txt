@@ -50,3 +50,4 @@ python-dateutil         # Flexible datetime parsing
 pytz                    # Timezone handling
 python-dotenv
 gunicorn
+apscheduler          # Background scheduler for retry_cancellations cron in-process
