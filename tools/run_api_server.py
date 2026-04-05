@@ -257,11 +257,25 @@ def _system_context() -> dict:
         except Exception:
             pass
 
-    # Live bookable slot count
-    agg = Path(".tmp/aggregated_slots.json")
-    if agg.exists():
+    # Live bookable slot count — read from Supabase for accuracy
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
         try:
-            slots = json.loads(agg.read_text(encoding="utf-8"))
+            r = requests.get(f"{sb_url}/rest/v1/slots",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}",
+                         "Prefer": "count=exact", "Range": "0-0"},
+                params={"select": "slot_id", "hours_until_start": "gte.0",
+                        "our_price": "gt.0"},
+                timeout=5)
+            cr = r.headers.get("Content-Range", "")
+            if "/" in cr:
+                ctx["live_bookable_slots"] = int(cr.split("/")[1])
+        except Exception:
+            pass
+    if "live_bookable_slots" not in ctx and DATA_FILE.exists():
+        try:
+            slots = json.loads(DATA_FILE.read_text(encoding="utf-8"))
             ctx["live_bookable_slots"] = sum(
                 1 for s in slots if float(s.get("our_price") or s.get("price") or 0) > 0
             )
@@ -488,6 +502,75 @@ def _stripe():
 
 
 # ── Slot lookup ───────────────────────────────────────────────────────────────
+
+def _load_slots_from_supabase(
+    hours_ahead: float = 72,
+    category: str = "",
+    city: str = "",
+    budget: float = 0,
+    limit: int = 2000,
+) -> list[dict]:
+    """
+    Load slots from Supabase with optional filters.
+    Returns list of full slot dicts. Falls back to local file if Supabase unavailable.
+    Used by execute/best, execute/guaranteed, and system context.
+    """
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+
+    if sb_url and sb_secret:
+        try:
+            hdrs   = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+            params: dict = {"limit": limit, "order": "hours_until_start.asc",
+                            "hours_until_start": f"gte.0"}
+            if hours_ahead:
+                params["hours_until_start"] = f"lte.{hours_ahead}"
+            if category:
+                params["category"] = f"eq.{category}"
+            if city:
+                params["location_city"] = f"ilike.%{city}%"
+            if budget:
+                params["our_price"] = f"lte.{budget}"
+            resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
+                                params=params, timeout=10)
+            if resp.status_code == 200:
+                result = []
+                for row in resp.json():
+                    if row.get("raw"):
+                        try:
+                            result.append(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"])
+                            continue
+                        except Exception:
+                            pass
+                    result.append(row)
+                return result
+        except Exception as e:
+            print(f"[SLOTS] Supabase load failed, falling back to local: {e}")
+
+    # Fallback: local file
+    if not DATA_FILE.exists():
+        return []
+    try:
+        slots = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        now   = datetime.now(timezone.utc)
+        result = []
+        for s in slots:
+            h = s.get("hours_until_start", 999)
+            if h < 0 or h > hours_ahead:
+                continue
+            if category and s.get("category") != category:
+                continue
+            if city and city.lower() not in (s.get("location_city") or "").lower():
+                continue
+            p = float(s.get("our_price") or s.get("price") or 0)
+            if budget and p > budget:
+                continue
+            result.append(s)
+        return result
+    except Exception:
+        return []
+
+
 def get_slot_by_id(slot_id: str) -> dict | None:
     """Look up a slot from Supabase (primary) or local file (fallback)."""
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -1697,30 +1780,22 @@ def execute_best():
         return jsonify({"success": False, "error": "wallet_id or payment_intent_id required."}), 400
 
     # Load all available slots
-    agg = Path(".tmp/aggregated_slots.json")
-    if not agg.exists():
-        return jsonify({"success": False, "error": "No slot data available."}), 503
-
-    slots = json.loads(agg.read_text(encoding="utf-8"))
     booked_ids = _load_booked()
+    slots = _load_slots_from_supabase(
+        hours_ahead=hours_ahead,
+        category=category,
+        city=city,
+        budget=float(budget) if budget else 0,
+        limit=2000,
+    )
 
     # Filter candidates
-    now = datetime.now(timezone.utc)
     candidates = []
     for s in slots:
         if s.get("slot_id") in booked_ids:
             continue
-        h = s.get("hours_until_start") or 999
-        if h < 0 or h > hours_ahead:
-            continue
         p = float(s.get("our_price") or s.get("price") or 0)
         if p <= 0:
-            continue
-        if budget and p > float(budget):
-            continue
-        if category and s.get("category") != category:
-            continue
-        if city and city.lower() not in (s.get("location_city") or "").lower():
             continue
         candidates.append(s)
 
@@ -2198,10 +2273,17 @@ def execute_guaranteed():
         payment_intent_id=payment_intent_id,
     )
 
-    # Load booked IDs
+    # Load slots from Supabase (fresh inventory, not Railway's local file)
     booked_ids = _load_booked()
+    fresh_slots = _load_slots_from_supabase(
+        hours_ahead=hours_ahead,
+        category=category,
+        city=city,
+        budget=float(budget) if budget else 0,
+        limit=2000,
+    )
 
-    engine = eng_mod.ExecutionEngine(booked_ids=booked_ids)
+    engine = eng_mod.ExecutionEngine(slots=fresh_slots, booked_ids=booked_ids)
     result = engine.execute(req)
 
     # Send email on success/failure
