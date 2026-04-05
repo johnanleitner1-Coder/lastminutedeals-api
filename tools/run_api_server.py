@@ -41,7 +41,7 @@ import os
 import secrets
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -521,18 +521,25 @@ def _load_slots_from_supabase(
     if sb_url and sb_secret:
         try:
             hdrs   = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
-            params: dict = {"limit": limit, "order": "hours_until_start.asc",
-                            "hours_until_start": f"gte.0"}
+            now_iso     = datetime.now(timezone.utc).isoformat()
+            horizon_dt  = datetime.now(timezone.utc) + timedelta(hours=hours_ahead)
+            horizon_iso = horizon_dt.isoformat()
+            # Use list of tuples so requests sends two start_time params (PostgREST AND logic)
+            param_list: list[tuple] = [
+                ("limit", limit),
+                ("order", "start_time.asc"),
+                ("start_time", f"gt.{now_iso}"),    # exclude already-started slots
+            ]
             if hours_ahead:
-                params["hours_until_start"] = f"lte.{hours_ahead}"
+                param_list.append(("start_time", f"lte.{horizon_iso}"))
             if category:
-                params["category"] = f"eq.{category}"
+                param_list.append(("category", f"eq.{category}"))
             if city:
-                params["location_city"] = f"ilike.%{city}%"
+                param_list.append(("location_city", f"ilike.%{city}%"))
             if budget:
-                params["our_price"] = f"lte.{budget}"
+                param_list.append(("our_price", f"lte.{budget}"))
             resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
-                                params=params, timeout=10)
+                                params=param_list, timeout=10)
             if resp.status_code == 200:
                 result = []
                 for row in resp.json():
