@@ -2633,7 +2633,7 @@ def admin_refresh_slots():
         import importlib.util as _ilu
         tools = Path(__file__).parent
 
-        for script in ("fetch_octo_slots", "aggregate_slots"):
+        for script in ("fetch_octo_slots", "aggregate_slots", "compute_pricing", "sync_to_supabase"):
             spec = _ilu.spec_from_file_location(script, tools / f"{script}.py")
             mod  = _ilu.module_from_spec(spec)
             spec.loader.exec_module(mod)
