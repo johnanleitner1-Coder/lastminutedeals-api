@@ -82,6 +82,11 @@ def _load_module(name: str):
 _BOOKINGS_FILE = Path(".tmp/bookings.json")
 _BOOKINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# ── Idempotency store (in-memory, per-process) ────────────────────────────────
+# Maps idempotency_key → booking_id for deduplication within a process lifetime.
+# For cross-instance dedup, the Supabase Storage record acts as the persistent lock.
+_IDEMPOTENCY_CACHE: dict = {}   # {key: {"booking_id": str, "result": dict}}
+
 def _signing_secret() -> str:
     """Return the HMAC signing secret, generating and persisting one if absent."""
     key = os.getenv("LMD_SIGNING_SECRET", "")
@@ -361,12 +366,27 @@ def _start_retry_scheduler() -> None:
         except Exception as e:
             print(f"[RETRY_SCHEDULER] Error: {e}")
 
+    def _run_reconcile() -> None:
+        try:
+            reconcile_path = Path(__file__).parent / "reconcile_bookings.py"
+            import importlib.util as _ilu
+            spec   = _ilu.spec_from_file_location("reconcile_bookings", reconcile_path)
+            module = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.main()
+        except Exception as e:
+            print(f"[RECONCILE_SCHEDULER] Error: {e}")
+
+    import datetime as _dt
     scheduler = BackgroundScheduler()
-    # Run immediately on startup, then every 15 minutes
+    # Retry failed cancellations every 15 min (run immediately on startup)
     scheduler.add_job(_run_retry, "interval", minutes=15, id="retry_cancellations",
-                      next_run_time=__import__("datetime").datetime.now())
+                      next_run_time=_dt.datetime.now())
+    # Reconcile active bookings against platform every 30 min (first run after 5 min)
+    scheduler.add_job(_run_reconcile, "interval", minutes=30, id="reconcile_bookings",
+                      next_run_time=_dt.datetime.now() + _dt.timedelta(minutes=5))
     scheduler.start()
-    print("Cancellation retry scheduler started (every 15 min)")
+    print("Schedulers started — retry: every 15 min | reconcile: every 30 min")
 
 
 @app.before_request
@@ -542,6 +562,88 @@ def health():
     return jsonify({"status": "ok", "slots": slot_count})
 
 
+def _get_reliability_metrics() -> dict:
+    """
+    Compute real booking reliability stats from Supabase Storage booking records.
+    Returns counts by status, success rate, reconciliation flags, and circuit breaker states.
+    """
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
+        return {}
+
+    stats = {
+        "booked": 0, "cancelled": 0, "failed": 0,
+        "reconciliation_required": 0, "total": 0,
+        "success_rate": None, "circuit_breakers": {},
+        "last_booking_at": None,
+    }
+
+    try:
+        # List booking files (exclude cancellation_queue and circuit_breaker prefixes)
+        r = requests.post(
+            f"{sb_url}/storage/v1/object/list/bookings",
+            headers={**_sb_storage_headers(), "Content-Type": "application/json"},
+            json={"prefix": "", "limit": 1000},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return stats
+
+        names = [
+            item["name"] for item in r.json()
+            if item.get("name")
+            and item["name"].endswith(".json")
+            and not item["name"].startswith("cancellation_queue/")
+            and not item["name"].startswith("circuit_breaker/")
+            and not item["name"].startswith("idem_")
+        ]
+
+        last_booking_at = None
+        for name in names:
+            try:
+                rec = requests.get(
+                    f"{sb_url}/storage/v1/object/bookings/{name}",
+                    headers=_sb_storage_headers(), timeout=4,
+                )
+                if rec.status_code != 200:
+                    continue
+                record = rec.json()
+                status = record.get("status", "unknown")
+                if status in stats:
+                    stats[status] += 1
+                stats["total"] += 1
+                # Track most recent booking
+                ea = record.get("executed_at", "")
+                if ea and (last_booking_at is None or ea > last_booking_at):
+                    last_booking_at = ea
+            except Exception:
+                pass
+
+        stats["last_booking_at"] = last_booking_at
+        total = stats["total"]
+        if total > 0:
+            stats["success_rate"] = round(
+                (stats["booked"] + stats["cancelled"]) / total, 3
+            )
+    except Exception as e:
+        print(f"[METRICS] Reliability stats error: {e}")
+
+    # Circuit breaker states
+    try:
+        cb_spec = _ilu.spec_from_file_location("circuit_breaker", Path(__file__).parent / "circuit_breaker.py")
+        cb_mod  = _ilu.module_from_spec(cb_spec)
+        cb_spec.loader.exec_module(cb_mod)
+        stats["circuit_breakers"] = {
+            sid: {"state": s.get("state"), "failures": s.get("failures", 0)}
+            for sid, s in cb_mod.get_all_states().items()
+        }
+    except Exception:
+        pass
+
+    return stats
+
+
 @app.route("/metrics", methods=["GET"])
 def public_metrics():
     """
@@ -696,6 +798,7 @@ def public_metrics():
             "mcp_server":    "POST /mcp  (MCP-over-HTTP, no transport setup needed)",
             "openapi":       f"{os.getenv('LANDING_PAGE_URL', 'https://lastminutedealshq.com')}/openapi.json",
         },
+        "reliability": _get_reliability_metrics(),
     })
 
 
@@ -714,9 +817,26 @@ def create_checkout():
     customer_name  = (data.get("customer_name") or "").strip()
     customer_email = (data.get("customer_email") or "").strip()
     customer_phone = (data.get("customer_phone") or "").strip()
+    # Idempotency key — if provided, duplicate requests return the same checkout URL
+    idempotency_key = (
+        data.get("idempotency_key")
+        or request.headers.get("Idempotency-Key")
+        or ""
+    ).strip()
 
     if not all([slot_id, customer_name, customer_email, customer_phone]):
         return jsonify({"success": False, "error": "Missing required fields."}), 400
+
+    # ── Idempotency check ─────────────────────────────────────────────────────
+    if idempotency_key:
+        cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
+        if cached:
+            return jsonify({**cached["result"], "idempotent_replay": True})
+        # Also check Supabase Storage for cross-instance dedup
+        existing = _load_booking_record(f"idem_{idempotency_key[:40]}")
+        if existing and existing.get("checkout_url"):
+            return jsonify({"success": True, "checkout_url": existing["checkout_url"],
+                            "idempotent_replay": True})
 
     # ── Availability check ────────────────────────────────────────────────────
     slot = get_slot_by_id(slot_id)
@@ -778,7 +898,17 @@ def create_checkout():
                 "platform":       slot.get("platform", ""),
             },
         )
-        return jsonify({"success": True, "checkout_url": session.url})
+        result = {"success": True, "checkout_url": session.url}
+        # Store idempotency record so duplicate requests return same URL
+        if idempotency_key:
+            _IDEMPOTENCY_CACHE[idempotency_key] = {"result": result}
+            _save_booking_record(f"idem_{idempotency_key[:40]}", {
+                "idempotency_key": idempotency_key,
+                "checkout_url":    session.url,
+                "slot_id":         slot_id,
+                "created_at":      datetime.now(timezone.utc).isoformat(),
+            })
+        return jsonify(result)
     except Exception as e:
         print(f"Stripe error: {e}")
         return jsonify({"success": False, "error": "Payment system error. Please try again."}), 500
@@ -914,7 +1044,30 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
     """
     Execute the booking on the source platform after payment is confirmed.
     Imports complete_booking.py (Playwright automation).
+    Checks the circuit breaker before attempting OCTO platforms.
     """
+    # ── Circuit breaker check for OCTO suppliers ──────────────────────────────
+    octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+    supplier_id = platform
+    try:
+        burl_j = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+        supplier_id = burl_j.get("supplier_id", platform)
+    except Exception:
+        pass
+    is_octo = supplier_id in octo_platforms or platform == "octo"
+    if is_octo:
+        try:
+            cb_spec = _ilu.spec_from_file_location("circuit_breaker", Path(__file__).parent / "circuit_breaker.py")
+            cb_mod  = _ilu.module_from_spec(cb_spec)
+            cb_spec.loader.exec_module(cb_mod)
+            blocked, reason = cb_mod.is_open(supplier_id)
+            if blocked:
+                raise Exception(f"Circuit breaker open: {reason}")
+        except Exception as cb_err:
+            if "Circuit breaker open" in str(cb_err):
+                raise
+            # circuit_breaker.py unavailable — proceed anyway
+    # ── Execute booking ───────────────────────────────────────────────────────
     try:
         import importlib.util, sys
         spec = importlib.util.spec_from_file_location(
@@ -931,10 +1084,22 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                 booking_url=booking_url,
             )
             print(f"[FULFILLMENT] Confirmed: {confirmation}")
+            # Record success with circuit breaker
+            if is_octo:
+                try:
+                    cb_mod.record_success(supplier_id)
+                except Exception:
+                    pass
             return confirmation
     except FileNotFoundError:
         print(f"[FULFILLMENT] complete_booking.py not found — manual fulfillment needed")
     except Exception as e:
+        # Record failure with circuit breaker
+        if is_octo:
+            try:
+                cb_mod.record_failure(supplier_id, str(e)[:200])
+            except Exception:
+                pass
         raise e
 
 
@@ -2135,6 +2300,17 @@ def _cancel_octo_booking(platform: str, confirmation: str, max_attempts: int = 3
     base_url = supplier["base_url"].rstrip("/")
     last_error = ""
 
+    # Circuit breaker check — cancellations still attempt through half-open
+    try:
+        cb_spec = _ilu.spec_from_file_location("circuit_breaker", Path(__file__).parent / "circuit_breaker.py")
+        cb_mod  = _ilu.module_from_spec(cb_spec)
+        cb_spec.loader.exec_module(cb_mod)
+        blocked, cb_reason = cb_mod.is_open(platform)
+        if blocked:
+            return {"success": False, "detail": f"Circuit open: {cb_reason}", "permanent": False}
+    except Exception:
+        cb_mod = None
+
     for attempt in range(max_attempts):
         if attempt > 0:
             time.sleep(2 ** attempt)   # 2s then 4s
@@ -2149,18 +2325,30 @@ def _cancel_octo_booking(platform: str, confirmation: str, max_attempts: int = 3
                 timeout=15,
             )
             if r.status_code in (200, 204):
+                if cb_mod:
+                    try: cb_mod.record_success(platform)
+                    except Exception: pass
                 return {"success": True, "detail": f"Cancelled on {platform} (HTTP {r.status_code})"}
             if r.status_code == 404:
-                # Booking not found = already cancelled or expired — desired state
+                if cb_mod:
+                    try: cb_mod.record_success(platform)
+                    except Exception: pass
                 return {"success": True, "detail": "Booking not found on supplier (already cancelled or expired)"}
             if r.status_code in (400, 401, 403, 422):
-                # Permanent client error — retrying won't help
+                if cb_mod:
+                    try: cb_mod.record_failure(platform, f"HTTP {r.status_code}")
+                    except Exception: pass
                 return {"success": False, "permanent": True,
                         "detail": f"Permanent failure HTTP {r.status_code}: {r.text[:200]}"}
-            # 5xx or unexpected — log and retry
             last_error = f"HTTP {r.status_code}: {r.text[:200]}"
+            if cb_mod:
+                try: cb_mod.record_failure(platform, last_error)
+                except Exception: pass
         except requests.RequestException as e:
             last_error = str(e)
+            if cb_mod:
+                try: cb_mod.record_failure(platform, last_error)
+                except Exception: pass
 
     return {"success": False, "detail": f"Failed after {max_attempts} attempts: {last_error}"}
 
