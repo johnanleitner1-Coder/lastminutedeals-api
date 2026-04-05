@@ -2615,6 +2615,134 @@ def wallet_transactions(wallet_id: str):
     return jsonify({"wallet_id": wallet_id, "transactions": txs})
 
 
+# ── Peek webhook receiver ─────────────────────────────────────────────────────
+
+@app.route("/webhooks/peek", methods=["POST"])
+def peek_webhook():
+    """
+    Receive booking_update events pushed by Peek Pro via OCTO webhooks.
+
+    Peek fires this whenever a booking is confirmed, updated, or cancelled
+    on their platform. We use it to keep our Supabase Storage records in sync
+    in real time — no waiting for the 30-min reconciliation cycle.
+
+    Payload fields used:
+      booking.uuid      — OCTO booking UUID (matches our 'confirmation' field)
+      booking.status    — CONFIRMED | CANCELLED | ON_HOLD | EXPIRED | etc.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid JSON"}), 400
+
+    booking_data = data.get("booking", {})
+    booking_uuid = booking_data.get("uuid", "")
+    new_status   = booking_data.get("status", "").upper()
+
+    if not booking_uuid:
+        return jsonify({"ok": True, "ignored": "no booking uuid"}), 200
+
+    print(f"[PEEK_WEBHOOK] uuid={booking_uuid} status={new_status}")
+
+    # Find our booking record by matching confirmation = booking_uuid
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+
+    if sb_url and sb_secret:
+        try:
+            # List all booking records and find the one with matching confirmation
+            r = requests.post(
+                f"{sb_url}/storage/v1/object/list/bookings",
+                headers={**_sb_storage_headers(), "Content-Type": "application/json"},
+                json={"prefix": "", "limit": 1000, "offset": 0},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                names = [
+                    item["name"] for item in r.json()
+                    if item.get("name", "").endswith(".json")
+                    and not item["name"].startswith(("cancellation_queue/", "circuit_breaker/", "idem_"))
+                ]
+                for name in names:
+                    rec_r = requests.get(
+                        f"{sb_url}/storage/v1/object/bookings/{name}",
+                        headers=_sb_storage_headers(), timeout=5,
+                    )
+                    if rec_r.status_code != 200:
+                        continue
+                    record = rec_r.json()
+                    if record.get("confirmation") != booking_uuid:
+                        continue
+
+                    # Found the matching booking — update status
+                    booking_id = record.get("booking_id", name.replace(".json", ""))
+                    now = datetime.now(timezone.utc).isoformat()
+
+                    if new_status in ("CANCELLED", "EXPIRED"):
+                        if record.get("status") not in ("cancelled", "reconciliation_required"):
+                            record["status"]              = "reconciliation_required"
+                            record["reconciliation_flag"] = f"peek_webhook_{new_status.lower()}"
+                            record["peek_webhook_at"]     = now
+                            _save_booking_record(booking_id, record)
+                            print(f"[PEEK_WEBHOOK] ⚠ {booking_id} flagged — platform says {new_status}")
+                    elif new_status == "CONFIRMED":
+                        if record.get("status") == "reconciliation_required":
+                            record["status"]          = "booked"
+                            record["peek_webhook_at"] = now
+                            _save_booking_record(booking_id, record)
+                            print(f"[PEEK_WEBHOOK] ✓ {booking_id} restored to booked — platform confirmed")
+                    break
+        except Exception as e:
+            print(f"[PEEK_WEBHOOK] Error processing event: {e}")
+
+    return jsonify({"ok": True}), 200
+
+
+def _register_peek_webhook() -> None:
+    """
+    Register our /webhooks/peek endpoint with Peek Pro's OCTO API on startup.
+    Idempotent — lists existing webhooks first and skips registration if our
+    URL is already registered, so restarts don't create duplicates.
+    """
+    peek_api_key = os.getenv("PEEK_API_KEY", "").strip()
+    host         = os.getenv("BOOKING_SERVER_HOST", "").rstrip("/")
+
+    if not peek_api_key or not host:
+        return  # Not configured yet — skip silently
+
+    our_url  = f"{host}/webhooks/peek"
+    octo_url = "https://octo.peek.com/integrations/octo"
+    headers  = {
+        "Authorization":     f"Bearer {peek_api_key}",
+        "Content-Type":      "application/json",
+        "Octo-Capabilities": "octo/pricing",
+    }
+
+    try:
+        # Check if already registered
+        existing = requests.get(f"{octo_url}/webhooks", headers=headers, timeout=10)
+        if existing.status_code == 200:
+            for wh in existing.json():
+                if wh.get("url") == our_url:
+                    print(f"[PEEK_WEBHOOK] Already registered: {our_url}")
+                    return
+
+        # Register
+        r = requests.post(
+            f"{octo_url}/webhooks",
+            headers=headers,
+            json={"url": our_url, "event": "booking_update"},
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            wh_id = r.json().get("id", "?")
+            print(f"[PEEK_WEBHOOK] Registered id={wh_id} → {our_url}")
+        else:
+            print(f"[PEEK_WEBHOOK] Registration failed HTTP {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[PEEK_WEBHOOK] Registration error: {e}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -2631,6 +2759,7 @@ if __name__ == "__main__":
     _ensure_website_api_key()
     _ensure_cancellation_queue_table()
     _start_retry_scheduler()
+    _register_peek_webhook()
 
     print(f"Booking API starting on http://localhost:{PORT}")
     print(f"  Health check: http://localhost:{PORT}/health")
