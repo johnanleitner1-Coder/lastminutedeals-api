@@ -2615,6 +2615,45 @@ def wallet_transactions(wallet_id: str):
     return jsonify({"wallet_id": wallet_id, "transactions": txs})
 
 
+# ── Admin: slot refresh ───────────────────────────────────────────────────────
+
+@app.route("/admin/refresh-slots", methods=["POST"])
+def admin_refresh_slots():
+    """
+    Trigger a full slot pipeline run on the Railway instance.
+    Runs fetch_octo_slots.py → aggregate_slots.py in-process.
+    Protected by X-API-Key (same as write endpoints).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not _validate_api_key(api_key):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    results = {}
+    try:
+        import importlib.util as _ilu
+        tools = Path(__file__).parent
+
+        for script in ("fetch_octo_slots", "aggregate_slots"):
+            spec = _ilu.spec_from_file_location(script, tools / f"{script}.py")
+            mod  = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "main"):
+                mod.main()
+            results[script] = "ok"
+
+        # Count slots after refresh
+        slot_count = 0
+        if DATA_FILE.exists():
+            try:
+                slot_count = len(json.loads(DATA_FILE.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+
+        return jsonify({"success": True, "slots": slot_count, "steps": results})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "steps": results}), 500
+
+
 # ── Peek webhook receiver ─────────────────────────────────────────────────────
 
 @app.route("/webhooks/peek", methods=["POST"])
