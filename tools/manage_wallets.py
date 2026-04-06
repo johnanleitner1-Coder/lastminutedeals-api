@@ -47,19 +47,47 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests as _req
 from dotenv import load_dotenv
 
 load_dotenv()
 sys.stdout.reconfigure(encoding="utf-8")
 
-WALLETS_FILE = Path(".tmp/wallets.json")
+WALLETS_FILE      = Path(".tmp/wallets.json")
+_SB_WALLETS_PATH  = "config/wallets.json"  # path inside Supabase Storage bookings bucket
 MIN_TOP_UP   = 500    # $5.00 minimum deposit (cents)
 MAX_TOP_UP   = 500000 # $5,000.00 maximum deposit (cents)
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
+def _sb_headers() -> dict:
+    secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    return {"apikey": secret, "Authorization": f"Bearer {secret}"}
+
 def _load_wallets() -> dict:
+    """Load wallets. Primary: Supabase Storage (survives redeploys). Fallback: local cache."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = _req.get(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_WALLETS_PATH}",
+                headers=_sb_headers(),
+                timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # Write local cache
+                try:
+                    WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    WALLETS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
+        except Exception as e:
+            print(f"[WALLETS] Supabase load failed, using local cache: {e}")
+    # Fallback: local cache
     if WALLETS_FILE.exists():
         try:
             return json.loads(WALLETS_FILE.read_text(encoding="utf-8"))
@@ -68,8 +96,26 @@ def _load_wallets() -> dict:
     return {}
 
 def _save_wallets(wallets: dict) -> None:
-    WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WALLETS_FILE.write_text(json.dumps(wallets, indent=2), encoding="utf-8")
+    """Save wallets to both Supabase Storage (persistent) and local file (cache)."""
+    # Local write always
+    try:
+        WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        WALLETS_FILE.write_text(json.dumps(wallets, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    # Supabase Storage write (survives redeploys)
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            _req.post(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_WALLETS_PATH}",
+                headers={**_sb_headers(), "Content-Type": "application/json", "x-upsert": "true"},
+                data=json.dumps(wallets),
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[WALLETS] Supabase save failed (local write succeeded): {e}")
 
 def _generate_wallet_id() -> str:
     return "wlt_" + secrets.token_hex(12)

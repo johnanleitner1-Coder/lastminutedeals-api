@@ -436,8 +436,31 @@ def _mark_booked(slot_id: str) -> None:
 
 # ── API key system ────────────────────────────────────────────────────────────
 API_KEYS_FILE = Path(".tmp/api_keys.json")
+_SB_API_KEYS_PATH = "config/api_keys.json"  # path inside Supabase Storage bookings bucket
 
 def _load_api_keys() -> dict:
+    """Load API keys. Primary: Supabase Storage (survives redeploys). Fallback: local cache."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = requests.get(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_API_KEYS_PATH}",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # Write local cache so reads stay fast within same process lifetime
+                try:
+                    API_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    API_KEYS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
+        except Exception as e:
+            print(f"[API_KEYS] Supabase load failed, using local cache: {e}")
+    # Fallback: local cache (may be empty after fresh redeploy)
     if API_KEYS_FILE.exists():
         try:
             return json.loads(API_KEYS_FILE.read_text(encoding="utf-8"))
@@ -446,8 +469,27 @@ def _load_api_keys() -> dict:
     return {}
 
 def _save_api_keys(keys: dict) -> None:
-    API_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    API_KEYS_FILE.write_text(json.dumps(keys, indent=2), encoding="utf-8")
+    """Save API keys to both Supabase Storage (persistent) and local file (cache)."""
+    # Local write always (fast, used as in-process cache)
+    try:
+        API_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        API_KEYS_FILE.write_text(json.dumps(keys, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    # Supabase Storage write (survives redeploys)
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            requests.post(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_API_KEYS_PATH}",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}",
+                         "Content-Type": "application/json", "x-upsert": "true"},
+                data=json.dumps(keys),
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[API_KEYS] Supabase save failed (local write succeeded): {e}")
 
 def _validate_api_key(key: str) -> bool:
     if not key:
