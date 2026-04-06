@@ -92,11 +92,14 @@ def _verify_octo_booking(supplier_id: str, confirmation: str) -> tuple[str, str]
     if not supplier:
         return "error", f"No supplier config for '{supplier_id}'"
 
-    api_key = os.getenv(supplier["api_key_env"], "").strip()
+    api_key_env = supplier.get("api_key_env", "")
+    if not api_key_env:
+        return "error", f"Supplier '{supplier_id}' missing api_key_env in config"
+    api_key = os.getenv(api_key_env, "").strip()
     if not api_key:
-        return "error", f"API key not set: {supplier['api_key_env']}"
+        return "error", f"API key not set: {api_key_env}"
 
-    base_url = supplier["base_url"].rstrip("/")
+    base_url = supplier.get("base_url", "").rstrip("/")
     try:
         r = requests.get(
             f"{base_url}/bookings/{confirmation}",

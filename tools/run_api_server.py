@@ -262,11 +262,12 @@ def _system_context() -> dict:
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if sb_url and sb_secret:
         try:
+            _now_iso = datetime.now(timezone.utc).isoformat()
             r = requests.get(f"{sb_url}/rest/v1/slots",
                 headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}",
                          "Prefer": "count=exact", "Range": "0-0"},
-                params={"select": "slot_id", "hours_until_start": "gte.0",
-                        "our_price": "gt.0"},
+                params=[("select", "slot_id"), ("start_time", f"gt.{_now_iso}"),
+                        ("our_price", "gt.0")],
                 timeout=5)
             cr = r.headers.get("Content-Range", "")
             if "/" in cr:
@@ -1211,16 +1212,22 @@ def search_slots():
     if sb_url and sb_secret:
         try:
             hdrs = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
-            params: dict = {"limit": limit, "order": "hours_until_start.asc"}
-            if category:
-                params["category"] = f"eq.{category}"
-            if city:
-                params["location_city"] = f"ilike.{city}"
+            now_iso     = datetime.now(timezone.utc).isoformat()
+            param_list: list[tuple] = [
+                ("limit", limit),
+                ("order", "start_time.asc"),
+                ("start_time", f"gt.{now_iso}"),   # exclude already-started slots
+            ]
             if hours_ahead:
-                params["hours_until_start"] = f"lte.{hours_ahead}"
+                horizon_iso = (datetime.now(timezone.utc) + timedelta(hours=hours_ahead)).isoformat()
+                param_list.append(("start_time", f"lte.{horizon_iso}"))
+            if category:
+                param_list.append(("category", f"eq.{category}"))
+            if city:
+                param_list.append(("location_city", f"ilike.%{city}%"))   # % wildcards required for partial match
             if max_price is not None:
-                params["our_price"] = f"lte.{max_price}"
-            resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs, params=params, timeout=10)
+                param_list.append(("our_price", f"lte.{max_price}"))
+            resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs, params=param_list, timeout=10)
             if resp.status_code == 200:
                 rows = resp.json()
                 # Restore full slot from raw JSONB where available
@@ -1871,7 +1878,7 @@ def execute_best():
         payment_intent_id=pi_id,
     )
 
-    engine = eng_mod.ExecutionEngine(booked_ids=booked_ids)
+    engine = eng_mod.ExecutionEngine(slots=slots, booked_ids=booked_ids)
     result = engine.execute(req)
 
     resp = result.to_dict()

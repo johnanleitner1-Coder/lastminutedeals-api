@@ -109,11 +109,14 @@ def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
     if not supplier:
         return False, f"No enabled supplier config for '{supplier_id}'", True
 
-    api_key = os.getenv(supplier["api_key_env"], "").strip()
+    api_key_env = supplier.get("api_key_env", "")
+    if not api_key_env:
+        return False, f"Supplier '{supplier_id}' missing api_key_env in config", True
+    api_key = os.getenv(api_key_env, "").strip()
     if not api_key:
-        return False, f"API key env var not set: {supplier['api_key_env']}", True
+        return False, f"API key env var not set: {api_key_env}", True
 
-    base_url = supplier["base_url"].rstrip("/")
+    base_url = supplier.get("base_url", "").rstrip("/")
     try:
         r = requests.delete(
             f"{base_url}/bookings/{booking_uuid}",
