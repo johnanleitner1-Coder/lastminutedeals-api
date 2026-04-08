@@ -2875,6 +2875,123 @@ def peek_webhook():
     return jsonify({"ok": True}), 200
 
 
+@app.route("/api/inbound-email", methods=["POST"])
+def inbound_email():
+    """
+    Receive inbound emails parsed by SendGrid Inbound Parse.
+
+    Any email sent to *@inbound.lastminutedealshq.com is parsed by SendGrid
+    and POST'd here as multipart/form-data. We store each email in Supabase
+    Storage under inbound_emails/{timestamp}_{from}.json so they can be
+    reviewed via /api/inbound-email/list.
+
+    SendGrid parse fields used:
+      from        — sender address
+      to          — recipient address
+      subject     — email subject
+      text        — plain-text body
+      html        — HTML body (if present)
+      headers     — raw headers string
+    """
+    try:
+        sender  = request.form.get("from", "")
+        to      = request.form.get("to", "")
+        subject = request.form.get("subject", "")
+        body    = request.form.get("text", "") or request.form.get("html", "")
+
+        print(f"[INBOUND_EMAIL] from={sender} subject={subject[:80]!r}")
+
+        record = {
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "from":        sender,
+            "to":          to,
+            "subject":     subject,
+            "body":        body[:10000],   # cap at 10k chars
+        }
+
+        # Store in Supabase Storage: inbound_emails/YYYYMMDD_HHMMSS_<slug>.json
+        sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+        sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+        if sb_url and sb_secret:
+            import re as _re
+            ts   = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            slug = _re.sub(r"[^a-zA-Z0-9@._-]", "_", sender)[:40]
+            path = f"inbound_emails/{ts}_{slug}.json"
+            try:
+                requests.post(
+                    f"{sb_url}/storage/v1/object/bookings/{path}",
+                    headers={**_sb_storage_headers(),
+                             "Content-Type": "application/json",
+                             "x-upsert": "true"},
+                    data=json.dumps(record),
+                    timeout=8,
+                )
+                print(f"[INBOUND_EMAIL] Stored: {path}")
+            except Exception as e:
+                print(f"[INBOUND_EMAIL] Storage error: {e}")
+
+        return jsonify({"ok": True}), 200
+
+    except Exception as e:
+        print(f"[INBOUND_EMAIL] Error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/inbound-email/list", methods=["GET"])
+def list_inbound_emails():
+    """
+    List and return stored inbound emails.
+
+    Query params:
+      limit   — max number to return (default 50)
+      since   — ISO date string to filter by (e.g. 2026-04-07)
+
+    Requires LMD_WEBSITE_API_KEY header or ?api_key= param.
+    """
+    api_key = (request.headers.get("X-Api-Key") or
+               request.args.get("api_key", ""))
+    valid_key = os.getenv("LMD_WEBSITE_API_KEY", "")
+    if api_key != valid_key:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
+        return jsonify({"error": "Storage not configured"}), 500
+
+    limit = min(int(request.args.get("limit", 50)), 200)
+
+    try:
+        r = requests.post(
+            f"{sb_url}/storage/v1/object/list/bookings",
+            headers={**_sb_storage_headers(), "Content-Type": "application/json"},
+            json={"prefix": "inbound_emails/", "limit": 500, "offset": 0},
+            timeout=10,
+        )
+        files = sorted(
+            [f["name"] for f in r.json() if f.get("name")],
+            reverse=True,
+        )[:limit]
+
+        emails = []
+        for name in files:
+            try:
+                er = requests.get(
+                    f"{sb_url}/storage/v1/object/bookings/inbound_emails/{name}",
+                    headers=_sb_storage_headers(),
+                    timeout=8,
+                )
+                if er.status_code == 200:
+                    emails.append(er.json())
+            except Exception:
+                pass
+
+        return jsonify({"count": len(emails), "emails": emails}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def _register_peek_webhook() -> None:
     """
     Register our /webhooks/peek endpoint with Peek Pro's OCTO API on startup.
