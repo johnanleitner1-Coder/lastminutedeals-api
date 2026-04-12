@@ -445,7 +445,8 @@ def _build_initiated_html(customer_name: str, slot: dict) -> tuple[str, str]:
     return html_body, plain
 
 
-def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: str) -> tuple[str, str]:
+def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: str,
+                          cancel_url: str = "") -> tuple[str, str]:
     service      = slot.get("service_name", "Your Service")
     business     = slot.get("business_name", "")
     city         = slot.get("location_city", "")
@@ -591,8 +592,8 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
                         </td>
                         <td>
                           <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
-                            <strong>Need to cancel or reschedule?</strong> Reply to this email as soon as possible
-                            and we'll do our best to help.
+                            <strong>Need to cancel?</strong>
+                            {"<a href='" + cancel_url + "' style='color:" + BRAND_BLUE_DK + ";'>Cancel this booking</a> — you'll receive a full refund." if cancel_url else "Reply to this email as soon as possible and we'll do our best to help."}
                           </p>
                         </td>
                       </tr>
@@ -637,7 +638,7 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
         ------------
         • Arrive 5–10 minutes early to check in.
         • Bring a valid ID and this email (phone is fine).
-        • Need to cancel? Reply to this email ASAP.
+        • Need to cancel? {"Cancel here: " + cancel_url if cancel_url else "Reply to this email ASAP."}
 
         ADD TO CALENDAR
         ---------------
@@ -801,6 +802,135 @@ def _build_failed_html(customer_name: str, slot: dict, error_reason: str) -> tup
     return html_body, plain
 
 
+def _build_cancelled_html(customer_name: str, slot: dict, confirmation_number: str,
+                          refund_status: str = "") -> tuple[str, str]:
+    """Email sent when a supplier cancels a confirmed booking."""
+    service    = slot.get("service_name", "Your Experience")
+    city       = slot.get("location_city", "")
+    state      = slot.get("location_state", "")
+    location   = f"{city}, {state}".strip(", ") or "—"
+    date_str   = _format_dt(slot.get("start_time", ""))
+    price      = _format_price(slot.get("our_price") or slot.get("price"), slot.get("currency", "USD"))
+    first_name = customer_name.split()[0] if customer_name else "there"
+    brand_name = os.environ.get("EMAIL_FROM_NAME", "LastMinuteDeals")
+    site_url   = "https://lastminutedealshq.com"
+
+    refund_note = refund_status or "A full refund has been issued to your original payment method."
+
+    html_body = f"""
+          <!-- Hero -->
+          <tr>
+            <td class="pad-mobile" style="padding:40px 40px 32px;">
+              <p style="margin:0 0 6px; font-family:{FONT_STACK}; font-size:13px; font-weight:700;
+                         color:{BRAND_ERROR}; text-transform:uppercase; letter-spacing:1px;">Booking Cancelled</p>
+              <h1 style="margin:0 0 16px; font-family:{FONT_STACK}; font-size:28px; font-weight:800;
+                          color:{BRAND_NAVY}; line-height:1.2; letter-spacing:-0.5px;">
+                Your booking has been cancelled
+              </h1>
+              <p style="margin:0; font-family:{FONT_STACK}; font-size:16px; color:{BRAND_GRAY}; line-height:1.6;">
+                Hi {first_name}, we're sorry — the operator has cancelled your booking for
+                <strong style="color:{BRAND_DARK};">{service}</strong>.
+                We know this is disappointing, and we've taken care of the refund for you.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Refund badge -->
+          <tr>
+            <td style="padding:0 40px 32px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="background-color:#ecfdf5; border:1.5px solid #6ee7b7; border-radius:10px; padding:18px 24px;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                      <tr>
+                        <td style="width:32px; vertical-align:top; padding-right:14px;">
+                          <div style="width:32px; height:32px; background-color:{BRAND_SUCCESS}; border-radius:50%;
+                                      text-align:center; line-height:34px; font-size:18px;">&#x1F4B0;</div>
+                        </td>
+                        <td>
+                          <p style="margin:0 0 4px; font-family:{FONT_STACK}; font-size:15px; font-weight:800; color:#065f46;">
+                            Full refund issued
+                          </p>
+                          <p style="margin:0; font-family:{FONT_STACK}; font-size:13px; color:#064e3b; line-height:1.5;">
+                            {refund_note} Refunds typically appear within 3–5 business days depending on your bank.
+                          </p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {_divider()}
+
+          <!-- Cancelled booking details -->
+          <tr>
+            <td style="padding:32px 40px 8px;">
+              <p style="margin:0 0 12px; font-family:{FONT_STACK}; font-size:11px; font-weight:700;
+                         color:{BRAND_GRAY}; text-transform:uppercase; letter-spacing:1px;">Cancelled Booking</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 32px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                     style="background-color:{BRAND_BG}; border-radius:10px; padding:20px 24px;">
+                <tr><td>
+                  {_detail_row("Experience", service)}
+                  {_detail_row("Date &amp; Time", date_str or "—")}
+                  {_detail_row("Location", location)}
+                  {_detail_row("Confirmation", confirmation_number or "—")}
+                  {_detail_row("Amount Refunded", price)}
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          {_divider()}
+
+          <!-- Browse more -->
+          <tr>
+            <td style="padding:32px 40px 40px; text-align:center;">
+              <p style="margin:0 0 8px; font-family:{FONT_STACK}; font-size:16px; font-weight:700; color:{BRAND_DARK};">
+                Find your next experience
+              </p>
+              <p style="margin:0 0 24px; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_GRAY}; line-height:1.6;">
+                We have new last-minute slots dropping every few hours. See what's available now.
+              </p>
+              {_cta_button("Browse Last-Minute Deals", site_url)}
+            </td>
+          </tr>
+    """
+
+    plain = textwrap.dedent(f"""
+        BOOKING CANCELLED — {brand_name}
+        =================================
+
+        Hi {first_name},
+
+        We're sorry to let you know that the operator has cancelled your booking:
+
+          Experience : {service}
+          Date       : {date_str or "—"}
+          Location   : {location}
+          Confirmation: {confirmation_number or "—"}
+          Refunded   : {price}
+
+        REFUND: {refund_note}
+        Refunds typically appear within 3–5 business days depending on your bank.
+
+        Browse new last-minute deals: {site_url}
+
+        Questions? Reply to this email — we're here to help.
+
+        {brand_name}
+        {site_url}
+    """).strip()
+
+    return html_body, plain
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Subject line builders
 # ══════════════════════════════════════════════════════════════════════════════
@@ -829,6 +959,8 @@ def _build_subject(email_type: str, slot: dict, confirmation_number: str = "") -
         return f"You're confirmed! {service}"
     elif email_type == "booking_failed":
         return f"Update on your booking \u2014 {service}"
+    elif email_type == "booking_cancelled":
+        return f"Your booking has been cancelled \u2014 full refund issued"
     else:
         return f"Booking update \u2014 {service}"
 
@@ -946,17 +1078,22 @@ def send_booking_email(
     slot: dict,
     confirmation_number: str = "",
     error_reason: str = "",
+    refund_status: str = "",
+    cancel_url: str = "",
 ) -> bool:
     """
     Send a transactional booking email.
 
     Args:
-        email_type:          "booking_initiated", "booking_confirmed", or "booking_failed"
+        email_type:          "booking_initiated", "booking_confirmed", "booking_failed",
+                             or "booking_cancelled"
         customer_email:      Recipient email address
         customer_name:       Recipient display name (e.g. "Jane Smith")
         slot:                Normalized slot dict (see normalize_slot.py for schema)
-        confirmation_number: Booking confirmation ID (used for booking_confirmed)
+        confirmation_number: Booking confirmation ID (used for booking_confirmed/cancelled)
         error_reason:        Human-readable failure reason (used for booking_failed)
+        refund_status:       Refund description (used for booking_cancelled)
+        cancel_url:          Self-serve cancellation link (used for booking_confirmed)
 
     Returns:
         True if the email was sent successfully, False otherwise.
@@ -964,7 +1101,7 @@ def send_booking_email(
     Raises:
         ValueError: For unsupported email_type
     """
-    valid_types = {"booking_initiated", "booking_confirmed", "booking_failed"}
+    valid_types = {"booking_initiated", "booking_confirmed", "booking_failed", "booking_cancelled"}
     if email_type not in valid_types:
         raise ValueError(f"email_type must be one of {valid_types}, got: {email_type!r}")
 
@@ -976,8 +1113,11 @@ def send_booking_email(
         body_rows, plain = _build_initiated_html(customer_name, slot)
         preheader = f"We're securing your spot at {slot.get('service_name', 'your booking')} — your card is reserved, not charged."
     elif email_type == "booking_confirmed":
-        body_rows, plain = _build_confirmed_html(customer_name, slot, confirmation_number)
+        body_rows, plain = _build_confirmed_html(customer_name, slot, confirmation_number, cancel_url)
         preheader = f"Your booking is confirmed! Show this email when you arrive at {slot.get('service_name', 'your experience')}."
+    elif email_type == "booking_cancelled":
+        body_rows, plain = _build_cancelled_html(customer_name, slot, confirmation_number, refund_status)
+        preheader = f"Your booking for {slot.get('service_name', 'your experience')} has been cancelled. Full refund issued."
     else:  # booking_failed
         body_rows, plain = _build_failed_html(customer_name, slot, error_reason)
         preheader = f"Your card was NOT charged. We couldn't complete your booking for {slot.get('service_name', 'your service')}."

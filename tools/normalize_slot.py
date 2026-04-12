@@ -47,6 +47,7 @@ VALID_PLATFORMS = {
     "peek",
     "zaui",
     "checkfront",
+    "liquidspace",
     "test",
 }
 

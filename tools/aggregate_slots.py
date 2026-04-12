@@ -30,6 +30,7 @@ PLATFORM_FILES = [
     # ── API-backed (highest confidence, first-seen wins on dedup) ─────────────
     "octo_slots.json",           # OCTO standard: Ventrata, Bokun, Peek Pro, Xola, Zaui
     "rezdy_slots.json",          # Rezdy Agent API (own format, free account)
+    "liquidspace_slots.json",    # LiquidSpace Marketplace API (workspace bookings)
     "ticketmaster_slots.json",
     "seatgeek_slots.json",
     "mindbody_slots.json",

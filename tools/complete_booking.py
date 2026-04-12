@@ -12,6 +12,9 @@ Supported platforms:
   luma          — lu.ma event RSVP
   meetup        — Meetup RSVP flow
   ticketmaster  — ticket checkout (bot-detection flagged; partial automation)
+  octo/ventrata/bokun/peek/zaui/xola/checkfront — OCTO standard API (pure HTTP)
+  rezdy         — Rezdy Agent API (pure HTTP, free account)
+  liquidspace   — LiquidSpace Marketplace API (OAuth 2.0, workspace bookings)
   <other>       — GenericBooker fallback (never raises; flags for manual review)
 
 Usage (programmatic):
@@ -1511,6 +1514,182 @@ class RezdyBooker(BasePlatformBooker):
         return confirmation
 
 
+class LiquidSpaceBooker(BasePlatformBooker):
+    """
+    Complete a LiquidSpace workspace reservation via the Marketplace API.
+
+    No browser needed — pure HTTP OAuth 2.0 + REST API.
+    Reads booking params from booking_url (JSON encoded by fetch_liquidspace_slots.py).
+
+    Required booking_url JSON fields:
+        _type:        "liquidspace"
+        workspace_id: LiquidSpace workspace UUID
+        venue_id:     LiquidSpace venue UUID
+        date:         YYYY-MM-DD
+        start_hour:   0-23 (hour the booking starts)
+        end_hour:     0-23 (hour the booking ends)
+        hourly_rate:  float (for reference; actual charge is by LiquidSpace)
+
+    API docs: developer.liquidspace.com → Marketplace API
+    """
+
+    def complete(self, page: "Page") -> str:
+        raise NotImplementedError("LiquidSpaceBooker.complete() should never be called — use run()")
+
+    def _get_access_token(self, base_url: str) -> str:
+        """Obtain OAuth 2.0 access token via client_credentials."""
+        try:
+            import requests as req
+        except ImportError:
+            raise BookingUnknownError("LiquidSpaceBooker requires the 'requests' library")
+
+        client_id     = os.getenv("LIQUIDSPACE_CLIENT_ID", "").strip()
+        client_secret = os.getenv("LIQUIDSPACE_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise BookingAuthRequired(
+                "LiquidSpaceBooker: LIQUIDSPACE_CLIENT_ID / LIQUIDSPACE_CLIENT_SECRET not set in .env"
+            )
+
+        token_url = f"{base_url.rstrip('/')}/identity/connect/token"
+        resp = req.post(
+            token_url,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     client_id,
+                "client_secret": client_secret,
+                "scope":         "lsapi.marketplace",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        if not resp.ok:
+            raise BookingAuthRequired(
+                f"LiquidSpaceBooker: token request failed {resp.status_code}: {resp.text[:200]}"
+            )
+        token = resp.json().get("access_token")
+        if not token:
+            raise BookingAuthRequired("LiquidSpaceBooker: no access_token in token response")
+        return token
+
+    def run(self) -> str:
+        """Execute a LiquidSpace reservation via HTTP. No browser needed."""
+        try:
+            import requests as req
+        except ImportError:
+            raise BookingUnknownError(
+                "LiquidSpaceBooker requires the 'requests' library. Run: pip install requests"
+            )
+
+        print(f"[LiquidSpaceBooker] slot={self.slot_id} customer={self.name} <{self.email}>")
+
+        # ── Parse booking params ──────────────────────────────────────────────
+        try:
+            params = json.loads(self.booking_url)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise BookingUnknownError(
+                f"LiquidSpaceBooker: booking_url is not valid JSON: {exc}"
+            ) from exc
+
+        if params.get("_type") != "liquidspace":
+            raise BookingUnknownError(
+                f"LiquidSpaceBooker: booking_url has wrong _type={params.get('_type')!r}"
+            )
+
+        workspace_id = params["workspace_id"]
+        date         = params["date"]
+        start_hour   = int(params["start_hour"])
+        end_hour     = int(params["end_hour"])
+
+        base_url         = os.getenv("LIQUIDSPACE_API_BASE", "https://api.liquidspace.com").strip()
+        subscription_key = os.getenv("LIQUIDSPACE_SUBSCRIPTION_KEY", "").strip()
+
+        # ── Get access token ──────────────────────────────────────────────────
+        token = self._get_access_token(base_url)
+
+        # ── Split customer name ───────────────────────────────────────────────
+        name_parts = self.name.strip().split()
+        first_name = name_parts[0] if name_parts else "Guest"
+        last_name  = name_parts[-1] if len(name_parts) > 1 else first_name
+
+        # ── POST /marketplace/v1/reservations ─────────────────────────────────
+        payload = {
+            "workspaceId": workspace_id,
+            "date":        date,
+            "startHour":   start_hour,
+            "endHour":     end_hour,
+            "booker": {
+                "firstName": first_name,
+                "lastName":  last_name,
+                "email":     self.email,
+                "phone":     self.phone or "",
+            },
+            "externalReference": f"LMD-{self.slot_id[:8].upper()}",
+        }
+
+        print(f"[LiquidSpaceBooker] Reserving workspace={workspace_id} date={date} hours={start_hour}-{end_hour}")
+
+        try:
+            resp = req.post(
+                f"{base_url.rstrip('/')}/marketplace/v1/reservations",
+                json=payload,
+                headers={
+                    "Authorization":             f"Bearer {token}",
+                    "Content-Type":              "application/json",
+                    "Accept":                    "application/json",
+                    **( {"Ocp-Apim-Subscription-Key": subscription_key} if subscription_key else {} ),
+                },
+                timeout=30,
+            )
+        except req.RequestException as exc:
+            raise BookingTimeoutError(
+                f"LiquidSpaceBooker: reservation request failed: {exc}"
+            ) from exc
+
+        if resp.status_code == 409:
+            raise BookingUnavailableError(
+                "LiquidSpaceBooker: workspace no longer available (409 Conflict)"
+            )
+        if resp.status_code == 422:
+            raise BookingUnavailableError(
+                f"LiquidSpaceBooker: unprocessable reservation: {resp.text[:300]}"
+            )
+        if resp.status_code == 401:
+            raise BookingAuthRequired(
+                f"LiquidSpaceBooker: authentication failed (401): {resp.text[:200]}"
+            )
+        if not resp.ok:
+            raise BookingUnknownError(
+                f"LiquidSpaceBooker: reservation failed {resp.status_code}: {resp.text[:300]}"
+            )
+
+        data            = resp.json()
+        reservation_id  = (data.get("id") or data.get("reservationId") or
+                           data.get("reservation", {}).get("id") or "")
+        if not reservation_id:
+            raise BookingUnknownError(
+                f"LiquidSpaceBooker: no reservation ID in response: {resp.text[:300]}"
+            )
+
+        confirmation = f"LS-{reservation_id}"
+        print(f"[LiquidSpaceBooker] Confirmed: {confirmation}")
+
+        # Save JSON artifact for debugging
+        try:
+            _SUCCESS_DIR.mkdir(parents=True, exist_ok=True)
+            ts      = int(time.time())
+            safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", self.slot_id)[:24]
+            art     = _SUCCESS_DIR / f"confirm_{safe_id}_{ts}.json"
+            art.write_text(
+                json.dumps({"confirmation": confirmation, "reservation": data}, indent=2),
+                encoding="utf-8",
+            )
+            print(f"[LiquidSpaceBooker] Confirmation artifact saved: {art}")
+        except Exception as exc:
+            print(f"[LiquidSpaceBooker] Could not save confirmation artifact: {exc}")
+
+        return confirmation
+
+
 # ── Platform registry ─────────────────────────────────────────────────────────
 
 PLATFORM_MAP: dict[str, type[BasePlatformBooker]] = {
@@ -1529,6 +1708,8 @@ PLATFORM_MAP: dict[str, type[BasePlatformBooker]] = {
     "checkfront":  OCTOBooker,
     # ── Rezdy Agent API (own format, not OCTO) ────────────────────────────────
     "rezdy":       RezdyBooker,
+    # ── LiquidSpace Marketplace API (OAuth 2.0, workspace bookings) ──────────
+    "liquidspace": LiquidSpaceBooker,
 }
 
 

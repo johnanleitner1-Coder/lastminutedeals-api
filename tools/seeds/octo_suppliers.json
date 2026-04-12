@@ -15,6 +15,22 @@
     "test_mode": true
   },
   {
+    "_comment": "Ventrata production supplier template. We are an approved Ventrata connectivity partner (approved by Dan, April 2026). Each supplier that connects via their Ventrata dashboard generates a unique API key for that connection. Add one entry per connected supplier using VENTRATA_<SUPPLIER_SLUG>_KEY as the api_key_env.",
+    "_instructions": "When a Ventrata supplier connects to us: (1) they give you their API key, (2) add an entry here with their city/country/category, (3) set VENTRATA_<SLUG>_KEY in .env and on Railway, (4) set enabled=true. Base URL is always https://api.ventrata.com/octo.",
+    "_supplier_list": "Full list of Ventrata suppliers: https://docs.ventrata.com/additional-resources/ventrata-clients — includes Big Bus Tours, Empire State Building, Paramount Studio Tours, Boston Duck Tours, Fat Tire Tours, Gray Line, City Sightseeing (global), Museum of Illusions, and 80+ others.",
+    "supplier_id": "ventrata_production_template",
+    "name": "Ventrata Production Supplier (TEMPLATE — copy this entry per supplier)",
+    "base_url": "https://api.ventrata.com/octo",
+    "api_key_env": "VENTRATA_SUPPLIERSLUG_KEY",
+    "city": "",
+    "state": "",
+    "country": "US",
+    "timezone": "America/New_York",
+    "category": "experiences",
+    "enabled": false,
+    "test_mode": false
+  },
+  {
     "_comment": "Zaui — self-serve signup, API key returned immediately. Free OCTO access. Test sandbox at suppliertestsystem.zaui.net.",
     "_instructions": "Sign up at api.zaui.io/signup — automated, no approval needed. Set ZAUI_API_KEY in .env.",
     "supplier_id": "zaui_test",
@@ -34,14 +50,14 @@
     "_instructions": "Sign up at bokun.io, select Reseller role, generate API key under Settings > Connections > API Keys. Email support for demo environment. Set BOKUN_API_KEY in .env.",
     "supplier_id": "bokun_reseller",
     "name": "Bokun Reseller",
-    "base_url": "https://api.bokun.io/octo",
+    "base_url": "https://api.bokun.io/octo/v1",
     "api_key_env": "BOKUN_API_KEY",
     "city": "",
     "state": "",
     "country": "US",
     "timezone": "America/New_York",
     "category": "experiences",
-    "enabled": false,
+    "enabled": true,
     "test_mode": false
   },
   {

@@ -1146,8 +1146,12 @@ def stripe_webhook():
             # ── Send confirmation email ────────────────────────────────────────
             try:
                 from send_booking_email import send_booking_email
+                _booking_id_for_email = booking_record_id if "booking_record_id" in dir() else ""
+                _cancel_url = (f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{_booking_id_for_email}"
+                               if _booking_id_for_email else "")
                 send_booking_email("booking_confirmed", customer["email"], customer["name"],
-                                   slot_for_email, confirmation_number=str(confirmation or ""))
+                                   slot_for_email, confirmation_number=str(confirmation or ""),
+                                   cancel_url=_cancel_url)
             except Exception as mail_err:
                 print(f"[WEBHOOK] Confirmation email failed (non-fatal): {mail_err}")
 
@@ -1615,11 +1619,13 @@ def book_with_saved_card(customer_id: str):
             "slot_id":           slot_id,
         })
 
-        # Send confirmation email
+        # Send confirmation email with self-serve cancel link
         try:
             from send_booking_email import send_booking_email
+            _cancel_url = f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
             send_booking_email("booking_confirmed", customer_email, customer_name, slot,
-                               confirmation_number=str(confirmation or ""))
+                               confirmation_number=str(confirmation or ""),
+                               cancel_url=_cancel_url)
         except Exception:
             pass
 
@@ -2639,6 +2645,248 @@ def cancel_booking(booking_id: str):
         "octo_queued_for_retry": octo_queued,
         "cancelled_at":   cancelled_at,
     }), 200
+
+
+# ── Supplier-initiated cancellation (Bokun webhook) ───────────────────────────
+
+def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | tuple[None, None]:
+    """
+    Scan Supabase Storage bookings bucket for a record whose confirmation field
+    matches confirmation_code. Returns (booking_id, record) or (None, None).
+    """
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if not sb_url:
+        return None, None
+    headers = _sb_storage_headers()
+    try:
+        r = requests.post(
+            f"{sb_url}/storage/v1/object/list/bookings",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"prefix": "", "limit": 500, "offset": 0},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None, None
+        names = [
+            item["name"] for item in r.json()
+            if item.get("name", "").endswith(".json")
+            and not item["name"].startswith("cancellation_queue/")
+            and not item["name"].startswith("inbound_emails/")
+        ]
+    except Exception:
+        return None, None
+
+    for name in names:
+        booking_id = name.replace(".json", "")
+        record = _load_booking_record(booking_id)
+        if record and record.get("confirmation") == confirmation_code:
+            return booking_id, record
+    return None, None
+
+
+@app.route("/api/bokun/webhook", methods=["POST"])
+def bokun_webhook():
+    """
+    Receive Bokun booking status change webhooks.
+
+    When a supplier cancels a booking in their Bokun dashboard, Bokun POSTs
+    here. We look up the booking by Bokun confirmation code, issue a Stripe
+    refund, and email the customer.
+
+    Register this URL in:
+    Bokun Dashboard → Settings → Integrations → Webhooks → Add Endpoint
+    URL: https://api.lastminutedealshq.com/api/bokun/webhook
+
+    Bokun sends JSON with at minimum:
+      { "type": "booking.cancelled", "booking": { "confirmationCode": "...", "status": "CANCELLED" } }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+
+    event_type   = data.get("type", "")
+    booking_data = data.get("booking") or data
+    bokun_status = str(booking_data.get("status", "")).upper()
+    confirmation = (
+        booking_data.get("confirmationCode")
+        or booking_data.get("confirmation_code")
+        or booking_data.get("id", "")
+    )
+
+    print(f"[BOKUN_WEBHOOK] event={event_type} status={bokun_status} confirmation={confirmation}")
+
+    # Only act on cancellations
+    is_cancel = bokun_status in ("CANCELLED", "CANCELED") or "cancel" in event_type.lower()
+    if not is_cancel:
+        return jsonify({"received": True, "action": "ignored", "status": bokun_status}), 200
+
+    if not confirmation:
+        return jsonify({"received": True, "action": "ignored", "reason": "no confirmation code"}), 200
+
+    # Find our internal booking record
+    booking_id, record = _find_booking_by_confirmation(confirmation)
+    if not record:
+        print(f"[BOKUN_WEBHOOK] No matching booking for confirmation={confirmation}")
+        return jsonify({"received": True, "action": "not_found", "confirmation": confirmation}), 200
+
+    if record.get("status") == "cancelled":
+        return jsonify({"received": True, "action": "already_cancelled", "booking_id": booking_id}), 200
+
+    # Trigger the existing cancel flow (refund Stripe + update record)
+    stripe_client  = _stripe()
+    payment_intent = record.get("payment_intent_id", "")
+    stripe_result  = {"success": True, "action": "no_payment_on_record"}
+
+    if stripe_client.api_key and payment_intent:
+        stripe_result = _refund_stripe(stripe_client, payment_intent)
+        if not stripe_result["success"]:
+            print(f"[BOKUN_WEBHOOK] ⚠ Stripe refund failed for {booking_id}: {stripe_result.get('error')}")
+
+    cancelled_at = datetime.now(timezone.utc).isoformat()
+    record["status"]       = "cancelled"
+    record["cancelled_at"] = cancelled_at
+    record["cancelled_by"] = "supplier_bokun_webhook"
+    record["cancellation_details"] = {"stripe": stripe_result, "bokun_event": event_type}
+    _save_booking_record(booking_id, record)
+
+    # Email the customer
+    try:
+        email_mod = _load_module("send_booking_email")
+        if email_mod and record.get("customer_email"):
+            refund_desc = (
+                f"A full refund of {record.get('price_charged', '')} has been issued to your payment method."
+                if stripe_result.get("action") in ("refunded", "hold_cancelled")
+                else "A full refund has been initiated — it will appear within 3–5 business days."
+            )
+            slot = {
+                "service_name":  record.get("service_name", "Your Experience"),
+                "start_time":    record.get("start_time", ""),
+                "location_city": record.get("location_city", ""),
+                "our_price":     record.get("price_charged"),
+                "currency":      record.get("currency", "USD"),
+            }
+            email_mod.send_booking_email(
+                email_type="booking_cancelled",
+                customer_email=record["customer_email"],
+                customer_name=record.get("customer_name", ""),
+                slot=slot,
+                confirmation_number=booking_id,
+                refund_status=refund_desc,
+            )
+            print(f"[BOKUN_WEBHOOK] Cancellation email sent to {record['customer_email']}")
+    except Exception as e:
+        print(f"[BOKUN_WEBHOOK] Failed to send cancellation email: {e}")
+
+    print(f"[BOKUN_WEBHOOK] ✓ Booking {booking_id} cancelled by supplier. Refund: {stripe_result.get('action')}")
+    return jsonify({
+        "received":    True,
+        "action":      "cancelled",
+        "booking_id":  booking_id,
+        "stripe":      stripe_result.get("action"),
+        "refund_id":   stripe_result.get("refund_id"),
+    }), 200
+
+
+@app.route("/cancel/<booking_id>", methods=["GET", "POST"])
+def self_serve_cancel(booking_id: str):
+    """
+    Self-serve cancellation page for customers.
+
+    GET  /cancel/{booking_id}  — show confirmation page
+    POST /cancel/{booking_id}  — execute cancellation (form submit)
+
+    Link included in the booking confirmation email so customers can cancel
+    without emailing support.
+    """
+    record = _load_booking_record(booking_id)
+    landing_url = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com")
+
+    if not record:
+        return f"""<!DOCTYPE html><html><head><title>Booking Not Found</title></head>
+        <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+        <h2 style="color:#0f172a;">Booking not found</h2>
+        <p style="color:#64748b;">We couldn't find a booking with that ID. If you need help,
+        email <a href="mailto:bookings@lastminutedealshq.com">bookings@lastminutedealshq.com</a>.</p>
+        <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
+        background:#0f172a;color:#fff;border-radius:8px;text-decoration:none;">Browse Deals</a>
+        </body></html>""", 404
+
+    service      = record.get("service_name", "Your Booking")
+    status       = record.get("status", "")
+    already_done = status == "cancelled"
+
+    if request.method == "POST" and not already_done:
+        # Execute cancellation inline (same logic as DELETE /bookings/{id})
+        stripe_client  = _stripe()
+        payment_intent = record.get("payment_intent_id", "")
+        stripe_result  = {"success": True, "action": "no_payment_on_record"}
+
+        if stripe_client.api_key and payment_intent:
+            stripe_result = _refund_stripe(stripe_client, payment_intent)
+
+        supplier_id  = record.get("supplier_id", record.get("platform", ""))
+        confirmation = record.get("confirmation", "")
+        octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+        if supplier_id in octo_platforms and confirmation:
+            _cancel_octo_booking(supplier_id, confirmation)
+
+        cancelled_at = datetime.now(timezone.utc).isoformat()
+        record["status"]       = "cancelled"
+        record["cancelled_at"] = cancelled_at
+        record["cancelled_by"] = "customer_self_serve"
+        _save_booking_record(booking_id, record)
+
+        # Notify customer
+        try:
+            email_mod = _load_module("send_booking_email")
+            if email_mod and record.get("customer_email"):
+                slot = {
+                    "service_name":  service,
+                    "start_time":    record.get("start_time", ""),
+                    "location_city": record.get("location_city", ""),
+                    "our_price":     record.get("price_charged"),
+                    "currency":      record.get("currency", "USD"),
+                }
+                email_mod.send_booking_email(
+                    email_type="booking_cancelled",
+                    customer_email=record["customer_email"],
+                    customer_name=record.get("customer_name", ""),
+                    slot=slot,
+                    confirmation_number=booking_id,
+                    refund_status="A full refund has been issued to your original payment method.",
+                )
+        except Exception:
+            pass
+
+        already_done = True
+
+    if already_done:
+        return f"""<!DOCTYPE html><html><head><title>Booking Cancelled</title></head>
+        <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+        <div style="font-size:48px;margin-bottom:16px;">✓</div>
+        <h2 style="color:#0f172a;">Booking cancelled</h2>
+        <p style="color:#64748b;">Your booking for <strong>{service}</strong> has been cancelled
+        and a full refund has been issued. It typically appears within 3–5 business days.</p>
+        <p style="color:#64748b;">Check your email for confirmation.</p>
+        <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
+        background:#0f172a;color:#fff;border-radius:8px;text-decoration:none;">Browse More Deals</a>
+        </body></html>"""
+
+    # GET — show confirmation page before cancelling
+    return f"""<!DOCTYPE html><html><head><title>Cancel Booking</title></head>
+    <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+    <h2 style="color:#0f172a;">Cancel your booking?</h2>
+    <p style="color:#64748b;margin-bottom:8px;">You're about to cancel:</p>
+    <p style="font-size:18px;font-weight:700;color:#0f172a;margin:0 0 24px;">{service}</p>
+    <p style="color:#64748b;margin-bottom:32px;">You'll receive a full refund to your original payment method
+    within 3–5 business days.</p>
+    <form method="POST">
+      <button type="submit" style="display:inline-block;padding:14px 32px;background:#ef4444;
+        color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;">
+        Confirm Cancellation
+      </button>
+    </form>
+    <p style="margin-top:20px;"><a href="{landing_url}" style="color:#64748b;font-size:14px;">
+      Keep my booking</a></p>
+    </body></html>"""
 
 
 # ── Agent wallet routes ───────────────────────────────────────────────────────
