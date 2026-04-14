@@ -223,7 +223,7 @@ def build_top_deals_schema(slots: list[dict]) -> str:
     return json.dumps(schema, separators=(",", ":"))
 
 
-def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "") -> str:
+def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "", website_api_key: str = "") -> str:
     # Stats for hero
     total_slots = len(slots)
     priced_total = sum(
@@ -277,7 +277,10 @@ def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- generated: {generated_at} -->
   <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LastMinuteDeals — Real-World Execution Infrastructure for AI Agents</title>
   <meta name="description" content="Execution infrastructure for real-world service bookings. AI agents search, decide, and book last-minute slots autonomously — events, wellness, beauty, hospitality. Guaranteed outcomes, multi-path retry, pre-funded wallets, persistent intent sessions." />
@@ -1060,6 +1063,8 @@ def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "
 
 <script>
 var currentSlot = null;
+var BOOKING_API_URL = '{booking_api_url}';
+var WEBSITE_API_KEY = '{website_api_key}';
 
 function fmtPrice(val) {{
   if (val == null) return 'See details';
@@ -1155,8 +1160,6 @@ function closeOnBackdrop(e) {{
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 }}
 
-var BOOKING_API_URL = '{booking_api_url}';
-
 function submitBooking() {{
   var name  = document.getElementById('checkout-name').value.trim();
   var email = document.getElementById('checkout-email').value.trim();
@@ -1168,7 +1171,7 @@ function submitBooking() {{
   var btn = document.getElementById('btn-pay');
   btn.textContent = 'Processing…';
   btn.disabled = true;
-  var apiUrl = BOOKING_API_URL || '/api/book';
+  var apiUrl = (BOOKING_API_URL ? BOOKING_API_URL.replace(/\/+$/, '') + '/api/book' : '/api/book');
 
   // If no booking server is configured, show a graceful coming-soon message
   if (!BOOKING_API_URL) {{
@@ -1183,7 +1186,7 @@ function submitBooking() {{
 
   fetch(apiUrl, {{
     method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
+    headers: {{'Content-Type': 'application/json', 'X-API-Key': WEBSITE_API_KEY}},
     body: JSON.stringify({{
       slot_id: currentSlot.slot_id,
       customer_name: name,
@@ -2068,8 +2071,9 @@ def main():
 
     now_dt  = datetime.now(timezone.utc)
     now_str = now_dt.strftime("%b %d, %Y %I:%M %p UTC").lstrip("0")
-    booking_api_url = os.getenv("BOOKING_API_URL", "").strip()
-    page    = generate_html(slots, now_str, booking_api_url)
+    booking_api_url  = os.getenv("BOOKING_API_URL", "").strip()
+    website_api_key  = os.getenv("LMD_WEBSITE_API_KEY", "").strip()
+    page    = generate_html(slots, now_str, booking_api_url, website_api_key)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "index.html"
