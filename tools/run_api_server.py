@@ -3333,49 +3333,81 @@ _MCP_TOOLS = [
             "Ventrata, Zaui, and Peek Pro via the OCTO open booking protocol. "
             "Slots are sorted by urgency (soonest first)."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
-                "city": {"type": "string", "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
-                "category": {"type": "string", "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
-                "hours_ahead": {"type": "number", "description": "Return slots starting within this many hours (default: 72)."},
-                "max_price": {"type": "number", "description": "Maximum price in USD. Omit for all prices."},
-                "limit": {"type": "integer", "description": "Max results (default: 20, max: 100)."},
+                "city":        {"type": "string",  "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
+                "category":    {"type": "string",  "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
+                "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 72."},
+                "max_price":   {"type": "number",  "description": "Maximum price in USD. Omit or set to 0 for all prices."},
+                "limit":       {"type": "integer", "description": "Max number of results to return. Default: 20, max: 100."},
             },
         },
     },
     {
         "name": "book_slot",
         "description": (
-            "Book a last-minute slot. Creates a Stripe Checkout Session and returns a "
-            "checkout_url. Direct the customer there to complete payment. "
-            "Booking is confirmed with the supplier after payment succeeds."
+            "Book a last-minute slot for a customer. Creates a Stripe Checkout Session and "
+            "returns a checkout_url. Direct the customer to that URL to complete payment. "
+            "The booking is confirmed with the supplier after payment succeeds. "
+            "The customer receives an email confirmation. Bookings are real."
         ),
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
-                "slot_id": {"type": "string", "description": "Slot ID from search_slots results."},
-                "customer_name": {"type": "string", "description": "Full name of the person attending."},
-                "customer_email": {"type": "string", "description": "Email address for booking confirmation."},
-                "customer_phone": {"type": "string", "description": "Phone number with country code (e.g. +15550001234)."},
+                "slot_id":        {"type": "string", "description": "Slot ID from search_slots results. Required."},
+                "customer_name":  {"type": "string", "description": "Full name of the person attending the experience."},
+                "customer_email": {"type": "string", "description": "Email address where booking confirmation will be sent."},
+                "customer_phone": {"type": "string", "description": "Phone number including country code (e.g. +15550001234)."},
             },
             "required": ["slot_id", "customer_name", "customer_email", "customer_phone"],
         },
     },
     {
         "name": "get_booking_status",
-        "description": "Check the status of a booking by booking_id. Returns status, confirmation number, and service details.",
+        "description": (
+            "Check the status of a booking by booking_id. Returns status (pending, confirmed, "
+            "failed, or cancelled), confirmation number, service details, and price charged."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
-                "booking_id": {"type": "string", "description": "The booking_id returned by book_slot."},
+                "booking_id": {"type": "string", "description": "The booking_id string returned by book_slot (format: bk_...)."},
             },
             "required": ["booking_id"],
         },
     },
     {
         "name": "get_supplier_info",
-        "description": "Returns information about available suppliers, destinations, and experience types.",
+        "description": (
+            "Returns information about the supplier network: available destinations, experience "
+            "categories, booking platforms, and protocol details. Call this before search_slots "
+            "to understand what regions and activity types are available."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
