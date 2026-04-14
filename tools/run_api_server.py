@@ -1712,51 +1712,75 @@ def webhook_unsubscribe():
     return jsonify({"success": True, "message": f"Subscription {sub_id} cancelled."})
 
 
-@app.route("/mcp", methods=["POST"])
-def mcp_http():
+@app.route("/mcp", methods=["GET", "POST"])
+def mcp_endpoint():
     """
-    MCP-over-HTTP endpoint. Allows any agent to call our MCP tools without
-    requiring the MCP stdio transport.
+    MCP JSON-RPC 2.0 endpoint. Works with any agent that supports HTTP tool calls.
+    GET  → server info / discoverability
+    POST → MCP JSON-RPC (initialize, tools/list, tools/call)
 
-    Body: { "tool": "search_last_minute_slots", "arguments": { "city": "NYC", "category": "wellness" } }
-    Returns: { "result": [...] }
-
-    Available tools: search_last_minute_slots, get_slot_details, book_slot, get_booking_status
+    Backwards compatible: also accepts legacy { "tool": "...", "arguments": {} } format.
     """
-    data      = request.get_json(force=True, silent=True) or {}
-    tool_name = (data.get("tool") or "").strip()
-    arguments = data.get("arguments") or {}
+    if request.method == "GET":
+        return jsonify({
+            "name": "Last Minute Deals HQ",
+            "version": "1.0.0",
+            "protocol": "MCP JSON-RPC 2.0",
+            "endpoint": "POST /mcp",
+            "tools": [t["name"] for t in _MCP_TOOLS],
+            "docs": "https://lastminutedealshq.com/developers",
+        })
 
-    try:
-        import sys as _sys
-        from pathlib import Path as _Path
-        _sys.path.insert(0, str(_Path(__file__).parent))
-        import run_mcp_server as mcp_mod
+    body   = request.get_json(force=True, silent=True) or {}
+    req_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
 
-        if tool_name == "search_last_minute_slots":
-            result = mcp_mod.search_last_minute_slots(**{
-                k: v for k, v in arguments.items()
-                if k in ("category", "city", "hours_ahead", "max_price", "limit")
+    def ok(result):
+        return jsonify({"jsonrpc": "2.0", "id": req_id, "result": result})
+
+    def err(code, msg):
+        return jsonify({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}), 400
+
+    # Legacy format: { "tool": "...", "arguments": {} }
+    if not method and body.get("tool"):
+        tool_name = body.get("tool", "")
+        arguments  = body.get("arguments", {})
+        # Map old tool names to new ones
+        name_map = {"search_last_minute_slots": "search_slots", "get_slot_details": "get_slot"}
+        tool_name = name_map.get(tool_name, tool_name)
+        try:
+            result = _mcp_call_tool(tool_name, arguments)
+            return jsonify({"tool": tool_name, "result": result})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    if method == "initialize":
+        return ok({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
+        })
+    elif method == "tools/list":
+        return ok({"tools": _MCP_TOOLS})
+    elif method == "tools/call":
+        tool_name = params.get("name", "")
+        arguments  = params.get("arguments", {})
+        try:
+            result = _mcp_call_tool(tool_name, arguments)
+            return ok({
+                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+                "isError": False,
             })
-        elif tool_name == "get_slot_details":
-            result = mcp_mod.get_slot_details(arguments.get("slot_id", ""))
-        elif tool_name == "book_slot":
-            result = mcp_mod.book_slot(
-                slot_id=arguments.get("slot_id", ""),
-                customer_name=arguments.get("customer_name", ""),
-                customer_email=arguments.get("customer_email", ""),
-                customer_phone=arguments.get("customer_phone", ""),
-            )
-        elif tool_name == "get_booking_status":
-            result = mcp_mod.get_booking_status(arguments.get("booking_id", ""))
-        else:
-            available = ["search_last_minute_slots", "get_slot_details", "book_slot", "get_booking_status"]
-            return jsonify({"error": f"Unknown tool: {tool_name}", "available_tools": available}), 400
-
-        return jsonify({"tool": tool_name, "result": result})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        except Exception as e:
+            return ok({
+                "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
+                "isError": True,
+            })
+    elif method == "notifications/initialized":
+        return "", 204
+    else:
+        return err(-32601, f"Method not found: {method}")
 
 
 @app.route("/api/subscribe", methods=["POST"])
@@ -3240,17 +3264,7 @@ def list_inbound_emails():
         return jsonify({"error": str(e)}), 500
 
 
-# ── MCP JSON-RPC endpoint ─────────────────────────────────────────────────────
-# Implements MCP protocol over HTTP POST so any agent can call our tools
-# without needing SSE or local installation.
-#
-# Claude Desktop / Claude Code (SSE):  use run_mcp_server.py locally
-# Any HTTP agent / custom framework:   POST https://api.lastminutedealshq.com/mcp
-#
-# Protocol: JSON-RPC 2.0 with MCP method names
-#   initialize     → server info + capabilities
-#   tools/list     → list of available tools + schemas
-#   tools/call     → execute a tool, return result
+# ── MCP tool registry (used by /mcp endpoint above) ──────────────────────────
 
 _MCP_TOOLS = [
     {
@@ -3350,65 +3364,6 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
 
     else:
         return {"error": f"Unknown tool: {name}"}
-
-
-@app.route("/mcp", methods=["POST"])
-def mcp_jsonrpc():
-    """MCP JSON-RPC 2.0 endpoint. Works with any agent that supports HTTP tool calls."""
-    body = request.get_json(force=True, silent=True) or {}
-    req_id = body.get("id")
-    method = body.get("method", "")
-    params = body.get("params", {})
-
-    def ok(result):
-        return jsonify({"jsonrpc": "2.0", "id": req_id, "result": result})
-
-    def err(code, msg):
-        return jsonify({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}), 400
-
-    if method == "initialize":
-        return ok({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
-        })
-
-    elif method == "tools/list":
-        return ok({"tools": _MCP_TOOLS})
-
-    elif method == "tools/call":
-        tool_name = params.get("name", "")
-        arguments  = params.get("arguments", {})
-        try:
-            result = _mcp_call_tool(tool_name, arguments)
-            return ok({
-                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
-                "isError": False,
-            })
-        except Exception as e:
-            return ok({
-                "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
-                "isError": True,
-            })
-
-    elif method == "notifications/initialized":
-        return "", 204
-
-    else:
-        return err(-32601, f"Method not found: {method}")
-
-
-@app.route("/mcp", methods=["GET"])
-def mcp_info():
-    """Returns MCP server info for discoverability."""
-    return jsonify({
-        "name": "Last Minute Deals HQ",
-        "version": "1.0.0",
-        "protocol": "MCP JSON-RPC 2.0",
-        "endpoint": "POST /mcp",
-        "tools": [t["name"] for t in _MCP_TOOLS],
-        "docs": "https://lastminutedealshq.com/developers",
-    })
 
 
 def _register_peek_webhook() -> None:
