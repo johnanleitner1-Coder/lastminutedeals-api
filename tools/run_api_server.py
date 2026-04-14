@@ -104,6 +104,15 @@ def _sign_record(record: dict) -> str:
     payload = json.dumps(record, sort_keys=True, separators=(",", ":"))
     return hmac.new(_signing_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
 
+def _make_cancel_token(booking_id: str) -> str:
+    """Return a 32-char HMAC token for authenticating self-serve cancel URLs."""
+    return hmac.new(_signing_secret().encode(), booking_id.encode(), hashlib.sha256).hexdigest()[:32]
+
+def _verify_cancel_token(booking_id: str, token: str) -> bool:
+    """Constant-time comparison to verify a cancel token."""
+    expected = _make_cancel_token(booking_id)
+    return hmac.compare_digest(expected, token or "")
+
 def _sb_storage_headers() -> dict:
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     return {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
@@ -1147,8 +1156,11 @@ def stripe_webhook():
             try:
                 from send_booking_email import send_booking_email
                 _booking_id_for_email = booking_record_id if "booking_record_id" in dir() else ""
-                _cancel_url = (f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{_booking_id_for_email}"
-                               if _booking_id_for_email else "")
+                _cancel_url = (
+                    f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{_booking_id_for_email}"
+                    f"?t={_make_cancel_token(_booking_id_for_email)}"
+                    if _booking_id_for_email else ""
+                )
                 send_booking_email("booking_confirmed", customer["email"], customer["name"],
                                    slot_for_email, confirmation_number=str(confirmation or ""),
                                    cancel_url=_cancel_url)
@@ -1622,7 +1634,10 @@ def book_with_saved_card(customer_id: str):
         # Send confirmation email with self-serve cancel link
         try:
             from send_booking_email import send_booking_email
-            _cancel_url = f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
+            _cancel_url = (
+                f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
+                f"?t={_make_cancel_token(booking_record_id)}"
+            )
             send_booking_email("booking_confirmed", customer_email, customer_name, slot,
                                confirmation_number=str(confirmation or ""),
                                cancel_url=_cancel_url)
@@ -2591,6 +2606,26 @@ def _queue_octo_retry(booking_id: str, supplier_id: str, confirmation: str,
         print(f"[CANCEL_QUEUE] Could not queue {booking_id}: {e}")
 
 
+@app.route("/bookings/<booking_id>", methods=["GET"])
+def get_booking(booking_id: str):
+    """Return booking status by ID. Used by MCP get_booking_status tool."""
+    record = _load_booking_record(booking_id)
+    if not record:
+        return jsonify({"error": f"Booking '{booking_id}' not found."}), 404
+    return jsonify({
+        "booking_id":          record.get("booking_id", booking_id),
+        "status":              record.get("status", "unknown"),
+        "service_name":        record.get("service_name"),
+        "business_name":       record.get("business_name"),
+        "start_time":          record.get("start_time"),
+        "customer_name":       record.get("customer_name"),
+        "confirmation_number": record.get("confirmation_number") or record.get("confirmation"),
+        "price_charged":       record.get("price_charged"),
+        "currency":            record.get("currency", "USD"),
+        "created_at":          record.get("created_at"),
+    })
+
+
 @app.route("/bookings/<booking_id>", methods=["DELETE"])
 def cancel_booking(booking_id: str):
     """
@@ -2820,6 +2855,22 @@ def self_serve_cancel(booking_id: str):
     Link included in the booking confirmation email so customers can cancel
     without emailing support.
     """
+    # Verify HMAC token to prevent unauthenticated cancellations.
+    # Token is required on both GET (view) and POST (confirm) to stop
+    # enumeration attacks — booking IDs are deterministic and guessable.
+    token = request.args.get("t") or request.form.get("t", "")
+    if not _verify_cancel_token(booking_id, token):
+        return (
+            """<!DOCTYPE html><html><head><title>Invalid Link</title></head>
+            <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+            <h2 style="color:#0f172a;">Invalid or expired link</h2>
+            <p style="color:#64748b;">This cancellation link is invalid. Please use the link from your
+            original booking confirmation email.<br><br>Need help? Email
+            <a href="mailto:bookings@lastminutedealshq.com">bookings@lastminutedealshq.com</a>.</p>
+            </body></html>""",
+            403,
+        )
+
     record = _load_booking_record(booking_id)
     landing_url = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com")
 
@@ -2903,6 +2954,7 @@ def self_serve_cancel(booking_id: str):
     <p style="color:#64748b;margin-bottom:32px;">You'll receive a full refund to your original payment method
     within 3–5 business days.</p>
     <form method="POST">
+      <input type="hidden" name="t" value="{token}">
       <button type="submit" style="display:inline-block;padding:14px 32px;background:#ef4444;
         color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;">
         Confirm Cancellation
@@ -2991,7 +3043,7 @@ def wallet_balance(wallet_id: str):
     wlt = wlt_mod.get_wallet(wallet_id)
     if not wlt:
         return jsonify({"error": "Wallet not found."}), 404
-    if wlt.get("api_key") != api_key and not _validate_api_key(api_key):
+    if not hmac.compare_digest(wlt.get("api_key", ""), api_key):
         return jsonify({"error": "Unauthorized."}), 401
 
     bal = wlt.get("balance_cents", 0)
@@ -3018,7 +3070,7 @@ def wallet_transactions(wallet_id: str):
     wlt = wlt_mod.get_wallet(wallet_id)
     if not wlt:
         return jsonify({"error": "Wallet not found."}), 404
-    if wlt.get("api_key") != api_key and not _validate_api_key(api_key):
+    if not hmac.compare_digest(wlt.get("api_key", ""), api_key):
         return jsonify({"error": "Unauthorized."}), 401
 
     txs = wlt.get("transactions", [])[-50:]

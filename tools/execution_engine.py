@@ -337,6 +337,52 @@ class ExecutionEngine:
         except Exception:
             pass
 
+    def _cancel_octo(self, platform: str, confirmation: str) -> bool:
+        """
+        Cancel a confirmed OCTO booking when payment fails after booking succeeded.
+        Best-effort: logs failure but does not raise. Returns True if cancelled.
+        """
+        import json as _json, os, requests as _req
+        seeds_path = TOOLS_DIR / "seeds" / "octo_suppliers.json"
+        try:
+            suppliers = _json.loads(seeds_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[ENGINE] OCTO cancel: could not load supplier config: {e}")
+            return False
+
+        supplier = next(
+            (s for s in suppliers if s.get("supplier_id") == platform and s.get("enabled")),
+            None,
+        )
+        if not supplier:
+            print(f"[ENGINE] OCTO cancel: no enabled supplier for '{platform}'")
+            return False
+
+        api_key = os.getenv(supplier["api_key_env"], "").strip()
+        if not api_key:
+            print(f"[ENGINE] OCTO cancel: API key not set ({supplier['api_key_env']})")
+            return False
+
+        base_url = supplier["base_url"].rstrip("/")
+        try:
+            r = _req.delete(
+                f"{base_url}/bookings/{confirmation}",
+                headers={
+                    "Authorization":     f"Bearer {api_key}",
+                    "Octo-Capabilities": "octo/pricing",
+                    "Content-Type":      "application/json",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 204, 404):
+                print(f"[ENGINE] OCTO cancel succeeded (HTTP {r.status_code}): {confirmation}")
+                return True
+            print(f"[ENGINE] OCTO cancel failed (HTTP {r.status_code}): {r.text[:200]}")
+            return False
+        except Exception as e:
+            print(f"[ENGINE] OCTO cancel exception: {e}")
+            return False
+
     # ── Confidence score ──────────────────────────────────────────────────────
 
     def _compute_confidence(self, req: ExecutionRequest) -> float:
@@ -447,10 +493,17 @@ class ExecutionEngine:
                     # stripe_checkout: capture already handled by Stripe webhook
 
                     if not payment_ok:
+                        # Payment failed after booking succeeded — cancel the supplier booking
+                        # so we don't leave an unpaid confirmed reservation on their system.
+                        print(f"[ENGINE] Payment failed — rolling back OCTO booking {confirmation} on {plat}")
+                        self._cancel_octo(plat, str(confirmation or ""))
+                        # Also cancel any Stripe hold that may still be open
+                        if req.payment_method == "stripe_pi" and req.payment_intent_id:
+                            self._cancel_stripe(req.payment_intent_id)
                         log.append(AttemptRecord(
                             attempt=attempt_num, strategy=strategy_label,
                             slot_id=sid, service_name=name, platform=plat, price=price,
-                            outcome="payment_failed", error="Payment capture failed after booking",
+                            outcome="payment_failed", error="Payment capture failed after booking; OCTO booking rolled back",
                         ))
                         continue
 
