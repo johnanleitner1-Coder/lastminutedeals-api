@@ -223,7 +223,7 @@ def build_top_deals_schema(slots: list[dict]) -> str:
     return json.dumps(schema, separators=(",", ":"))
 
 
-def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "", website_api_key: str = "") -> str:
+def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "", website_api_key: str = "") -> str:  # website_api_key param kept for backward compat but no longer embedded in output
     # Stats for hero
     total_slots = len(slots)
     priced_total = sum(
@@ -1064,7 +1064,7 @@ def generate_html(slots: list[dict], generated_at: str, booking_api_url: str = "
 <script>
 var currentSlot = null;
 var BOOKING_API_URL = '{booking_api_url}';
-var WEBSITE_API_KEY = '{website_api_key}';
+var WEBSITE_API_KEY = '';  // intentionally empty — /api/book is public
 
 function fmtPrice(val) {{
   if (val == null) return 'See details';

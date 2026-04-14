@@ -2645,6 +2645,12 @@ def cancel_booking(booking_id: str):
     → { "success": true, "booking_id": "bk_...", "status": "cancelled",
         "refund_id": "re_...", "platform_result": "..." }
     """
+    # Require a valid API key — this endpoint modifies booking state and triggers
+    # refunds. The self-serve customer cancel flow uses /cancel/<id>?t=<token> instead.
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not _validate_api_key(api_key):
+        return jsonify({"success": False, "error": "Unauthorized. Valid X-API-Key required."}), 401
+
     record = _load_booking_record(booking_id)
     if not record:
         return jsonify({"success": False, "error": "Booking not found"}), 404
