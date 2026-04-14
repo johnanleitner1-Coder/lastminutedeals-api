@@ -39,9 +39,12 @@ load_dotenv()
 BOOKING_API = os.getenv("BOOKING_API_URL", "https://web-production-dc74b.up.railway.app").rstrip("/")
 API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
 HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
+PORT        = int(os.getenv("PORT", "8080"))
 
 mcp = FastMCP(
     "Last Minute Deals HQ",
+    host="0.0.0.0",   # required for Railway — bind to all interfaces, not just localhost
+    port=PORT,
     instructions=(
         "You have access to real last-minute tour and activity inventory across "
         "Iceland, Italy, Morocco, Portugal, and more. Use search_slots to find "
@@ -248,5 +251,4 @@ def get_supplier_info() -> dict:
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8080"))
-    mcp.run(transport="sse", host="0.0.0.0", port=port)
+    mcp.run(transport="sse")
