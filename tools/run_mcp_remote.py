@@ -30,7 +30,7 @@ claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/sse
 import os
 import sys
 
-import httpx
+import requests as _requests
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -52,17 +52,15 @@ mcp = FastMCP(
 
 
 def _api_get(path: str, params: dict = None) -> dict | list:
-    with httpx.Client(timeout=15) as client:
-        r = client.get(f"{BOOKING_API}{path}", headers=HDRS, params=params or {})
-        r.raise_for_status()
-        return r.json()
+    r = _requests.get(f"{BOOKING_API}{path}", headers=HDRS, params=params or {}, timeout=15)
+    r.raise_for_status()
+    return r.json()
 
 
 def _api_post(path: str, body: dict) -> dict:
-    with httpx.Client(timeout=15) as client:
-        r = client.post(f"{BOOKING_API}{path}", headers=HDRS, json=body)
-        r.raise_for_status()
-        return r.json()
+    r = _requests.post(f"{BOOKING_API}{path}", headers=HDRS, json=body, timeout=15)
+    r.raise_for_status()
+    return r.json()
 
 
 def _safe_slot(s: dict) -> dict:
@@ -163,7 +161,7 @@ def book_slot(
             "customer_phone": customer_phone,
         })
         return result
-    except httpx.HTTPStatusError as e:
+    except _requests.HTTPError as e:
         try:
             detail = e.response.json()
             return {"success": False, "error": detail.get("error", str(e))}
@@ -187,7 +185,7 @@ def get_booking_status(booking_id: str) -> dict:
     """
     try:
         return _api_get(f"/bookings/{booking_id}")
-    except httpx.HTTPStatusError as e:
+    except _requests.HTTPError as e:
         if e.response.status_code == 404:
             return {"error": f"Booking '{booking_id}' not found."}
         return {"error": str(e)}
