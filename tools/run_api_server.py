@@ -3240,6 +3240,177 @@ def list_inbound_emails():
         return jsonify({"error": str(e)}), 500
 
 
+# ── MCP JSON-RPC endpoint ─────────────────────────────────────────────────────
+# Implements MCP protocol over HTTP POST so any agent can call our tools
+# without needing SSE or local installation.
+#
+# Claude Desktop / Claude Code (SSE):  use run_mcp_server.py locally
+# Any HTTP agent / custom framework:   POST https://api.lastminutedealshq.com/mcp
+#
+# Protocol: JSON-RPC 2.0 with MCP method names
+#   initialize     → server info + capabilities
+#   tools/list     → list of available tools + schemas
+#   tools/call     → execute a tool, return result
+
+_MCP_TOOLS = [
+    {
+        "name": "search_slots",
+        "description": (
+            "Search for last-minute available tours and activities. Returns real inventory "
+            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista), "
+            "Ventrata, Zaui, and Peek Pro via the OCTO open booking protocol. "
+            "Slots are sorted by urgency (soonest first)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
+                "category": {"type": "string", "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
+                "hours_ahead": {"type": "number", "description": "Return slots starting within this many hours (default: 72)."},
+                "max_price": {"type": "number", "description": "Maximum price in USD. Omit for all prices."},
+                "limit": {"type": "integer", "description": "Max results (default: 20, max: 100)."},
+            },
+        },
+    },
+    {
+        "name": "book_slot",
+        "description": (
+            "Book a last-minute slot. Creates a Stripe Checkout Session and returns a "
+            "checkout_url. Direct the customer there to complete payment. "
+            "Booking is confirmed with the supplier after payment succeeds."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slot_id": {"type": "string", "description": "Slot ID from search_slots results."},
+                "customer_name": {"type": "string", "description": "Full name of the person attending."},
+                "customer_email": {"type": "string", "description": "Email address for booking confirmation."},
+                "customer_phone": {"type": "string", "description": "Phone number with country code (e.g. +15550001234)."},
+            },
+            "required": ["slot_id", "customer_name", "customer_email", "customer_phone"],
+        },
+    },
+    {
+        "name": "get_booking_status",
+        "description": "Check the status of a booking by booking_id. Returns status, confirmation number, and service details.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "booking_id": {"type": "string", "description": "The booking_id returned by book_slot."},
+            },
+            "required": ["booking_id"],
+        },
+    },
+    {
+        "name": "get_supplier_info",
+        "description": "Returns information about available suppliers, destinations, and experience types.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+
+def _mcp_call_tool(name: str, arguments: dict) -> dict:
+    """Execute an MCP tool call and return result."""
+    api_key = os.getenv("LMD_WEBSITE_API_KEY", "")
+    hdrs = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    base = f"http://localhost:{PORT}"
+
+    if name == "search_slots":
+        params = {}
+        if arguments.get("city"):        params["city"]        = arguments["city"]
+        if arguments.get("category"):    params["category"]    = arguments["category"]
+        if arguments.get("hours_ahead"): params["hours_ahead"] = arguments["hours_ahead"]
+        if arguments.get("max_price"):   params["max_price"]   = arguments["max_price"]
+        params["limit"] = arguments.get("limit", 20)
+        r = requests.get(f"{base}/slots", headers=hdrs, params=params, timeout=15)
+        return r.json()
+
+    elif name == "book_slot":
+        r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
+        return r.json()
+
+    elif name == "get_booking_status":
+        bid = arguments.get("booking_id", "")
+        r = requests.get(f"{base}/bookings/{bid}", headers=hdrs, timeout=10)
+        return r.json()
+
+    elif name == "get_supplier_info":
+        return {
+            "suppliers": [
+                {"name": "Arctic Adventures", "destinations": ["Iceland"], "platform": "Bokun"},
+                {"name": "Bicycle Roma", "destinations": ["Rome"], "platform": "Bokun"},
+                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Sahara"], "platform": "Bokun"},
+                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra"], "platform": "Bokun"},
+                {"name": "Ventrata network", "destinations": ["Edinburgh", "global"], "platform": "Ventrata"},
+                {"name": "Zaui network", "destinations": ["Canada"], "platform": "Zaui"},
+            ],
+            "protocol": "OCTO",
+            "confirmation": "instant",
+            "docs": "https://lastminutedealshq.com/developers",
+        }
+
+    else:
+        return {"error": f"Unknown tool: {name}"}
+
+
+@app.route("/mcp", methods=["POST"])
+def mcp_jsonrpc():
+    """MCP JSON-RPC 2.0 endpoint. Works with any agent that supports HTTP tool calls."""
+    body = request.get_json(force=True, silent=True) or {}
+    req_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    def ok(result):
+        return jsonify({"jsonrpc": "2.0", "id": req_id, "result": result})
+
+    def err(code, msg):
+        return jsonify({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}), 400
+
+    if method == "initialize":
+        return ok({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
+        })
+
+    elif method == "tools/list":
+        return ok({"tools": _MCP_TOOLS})
+
+    elif method == "tools/call":
+        tool_name = params.get("name", "")
+        arguments  = params.get("arguments", {})
+        try:
+            result = _mcp_call_tool(tool_name, arguments)
+            return ok({
+                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+                "isError": False,
+            })
+        except Exception as e:
+            return ok({
+                "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
+                "isError": True,
+            })
+
+    elif method == "notifications/initialized":
+        return "", 204
+
+    else:
+        return err(-32601, f"Method not found: {method}")
+
+
+@app.route("/mcp", methods=["GET"])
+def mcp_info():
+    """Returns MCP server info for discoverability."""
+    return jsonify({
+        "name": "Last Minute Deals HQ",
+        "version": "1.0.0",
+        "protocol": "MCP JSON-RPC 2.0",
+        "endpoint": "POST /mcp",
+        "tools": [t["name"] for t in _MCP_TOOLS],
+        "docs": "https://lastminutedealshq.com/developers",
+    })
+
+
 def _register_peek_webhook() -> None:
     """
     Register our /webhooks/peek endpoint with Peek Pro's OCTO API on startup.
