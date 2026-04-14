@@ -8,4 +8,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python tools/run_api_server.py"
+cmd = "python -c "import os; s=os.getenv('RAILWAY_SERVICE_NAME','web'); exec(open('tools/run_mcp_remote.py' if s=='mcp' else 'tools/run_api_server.py').read())""
