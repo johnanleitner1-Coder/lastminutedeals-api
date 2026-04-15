@@ -1851,6 +1851,22 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
         raise e
 
 
+# Fields stripped from every public /slots response.
+# booking_url contains the supplier's API base URL and credentials env-var name —
+# exposing it lets agents bypass our platform and book directly at the original price.
+# price is our cost basis — exposing it reveals our markup and enables arbitrage.
+# business_id, api_key_env, and data_source are internal operational fields.
+_SLOT_INTERNAL_FIELDS = frozenset({
+    "booking_url", "price", "original_price", "markup_pct", "our_markup",
+    "business_id", "data_source", "test_group", "scraped_at",
+    "api_key_env",
+})
+
+def _sanitize_slot(slot: dict) -> dict:
+    """Strip internal fields before returning a slot to any external caller."""
+    return {k: v for k, v in slot.items() if k not in _SLOT_INTERNAL_FIELDS}
+
+
 @app.route("/slots", methods=["GET"])
 def search_slots():
     """
@@ -1892,11 +1908,11 @@ def search_slots():
                 for row in rows:
                     if row.get("raw"):
                         try:
-                            result.append(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"])
+                            result.append(_sanitize_slot(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"]))
                             continue
                         except Exception:
                             pass
-                    result.append(row)
+                    result.append(_sanitize_slot(row))
                 return jsonify(result)
         except Exception as e:
             print(f"Supabase search failed: {e}")
@@ -1917,7 +1933,7 @@ def search_slots():
         p = s.get("our_price") or s.get("price") or 0
         if max_price is not None and float(p) > max_price:
             continue
-        result.append(s)
+        result.append(_sanitize_slot(s))
         if len(result) >= limit:
             break
     return jsonify(result)
