@@ -3507,26 +3507,23 @@ def _register_peek_webhook() -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def _build_combined_asgi():
-    """
-    Build a single ASGI app that serves:
-      GET /sse         → FastMCP SSE stream  (MCP protocol for AI agents)
-      POST /messages   → FastMCP message handler
-      everything else  → Flask booking API (WSGI wrapped as ASGI)
-    """
-    from a2wsgi import WSGIMiddleware
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
-    from starlette.responses import Response
-    from starlette.requests import Request as StarletteRequest
+MCP_INTERNAL_PORT = PORT + 1  # FastMCP runs here internally; Flask proxies /sse to it
 
-    # Build the MCP server (reuses the same logic as run_mcp_remote.py)
+
+def _start_mcp_thread():
+    """
+    Start the FastMCP SSE server in a daemon thread on MCP_INTERNAL_PORT.
+    Flask routes /sse and /messages to it via proxy.
+    This avoids ASGI/WSGI conflicts — Flask stays pure WSGI, FastMCP stays pure ASGI.
+    """
+    import threading
+    import uvicorn
+    import requests as _mcp_req
     from mcp.server.fastmcp import FastMCP
-    import requests as _req
 
-    BOOKING_API = os.getenv("BOOKING_API_URL", f"http://localhost:{PORT}").rstrip("/")
-    API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
-    HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
+    BOOKING_API = os.getenv("BOOKING_API_URL", f"http://127.0.0.1:{PORT}").rstrip("/")
+    _API_KEY    = os.getenv("LMD_WEBSITE_API_KEY", "")
+    _HDRS       = {"X-API-Key": _API_KEY, "Content-Type": "application/json"}
 
     mcp = FastMCP(
         "Last Minute Deals HQ",
@@ -3542,117 +3539,59 @@ def _build_combined_asgi():
             "workshops), O Turista Tours (Lisbon, Porto, Sintra, Fatima day trips), "
             "Arctic Sea Tours (North Iceland whale watching), "
             "Hillborn Experiences (Tanzania ultra-luxury safaris, Mount Kilimanjaro "
-            "climbs, Zanzibar retreats, cultural encounters — East Africa), "
-            "and more. "
+            "climbs, Zanzibar retreats — East Africa). "
             "Use search_slots to find available experiences, then book_slot to create "
-            "a Stripe checkout session — the customer completes payment and receives "
-            "instant confirmation. Bookings are real and go directly to the supplier."
+            "a Stripe checkout session. Bookings are real and go directly to the supplier."
         ),
     )
 
-    def _safe_slot(s: dict) -> dict:
-        return {
-            "slot_id":           s.get("slot_id", ""),
-            "category":          s.get("category", ""),
-            "service_name":      s.get("service_name", ""),
-            "business_name":     s.get("business_name", ""),
-            "location_city":     s.get("location_city", ""),
-            "location_country":  s.get("location_country", ""),
-            "start_time":        s.get("start_time", ""),
-            "end_time":          s.get("end_time", ""),
-            "duration_minutes":  s.get("duration_minutes"),
-            "hours_until_start": s.get("hours_until_start"),
-            "spots_open":        s.get("spots_open"),
-            "price":             s.get("price"),
-            "our_price":         s.get("our_price"),
-            "currency":          s.get("currency", "USD"),
-            "confidence":        s.get("confidence", "high"),
-        }
+    def _safe(s):
+        return {k: s.get(k) for k in (
+            "slot_id", "category", "service_name", "business_name",
+            "location_city", "location_country", "start_time", "end_time",
+            "duration_minutes", "hours_until_start", "spots_open",
+            "price", "our_price", "currency", "confidence",
+        )}
 
     @mcp.tool()
-    def search_slots(
-        city: str = "",
-        category: str = "",
-        hours_ahead: float = 72.0,
-        max_price: float = 0.0,
-        limit: int = 20,
-    ) -> list[dict]:
-        """
-        Search for last-minute available tours and activities.
-
-        Returns real production inventory from Arctic Adventures, Bicycle Roma,
-        Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Arctic Sea Tours,
-        Hillborn Experiences, and more — sourced live via the OCTO open booking protocol.
-        Slots are sorted by urgency (soonest first).
-
-        Args:
-            city:        City or country filter, partial match (e.g. "Reykjavik", "Rome", "Iceland").
-                         Leave empty to search all locations.
-            category:    Category filter. Use "experiences" for tours/activities.
-                         Leave empty for all categories.
-            hours_ahead: Return slots starting within this many hours (default: 72).
-            max_price:   Maximum price in USD. Set to 0 to return all prices.
-            limit:       Max results to return (default: 20, max: 100).
-
-        Returns:
-            List of available slot dicts sorted by hours_until_start (soonest first).
-        """
-        params: dict = {"hours_ahead": hours_ahead, "limit": min(int(limit), 100)}
-        if city:
-            params["city"] = city
-        if category:
-            params["category"] = category
-        if max_price and max_price > 0:
-            params["max_price"] = max_price
+    def search_slots(city: str = "", category: str = "", hours_ahead: float = 72.0,
+                     max_price: float = 0.0, limit: int = 20) -> list[dict]:
+        """Search last-minute tours and activities. Returns live production inventory
+        sorted by urgency (soonest first).
+        Args: city (partial match, e.g. "Reykjavik"), category (e.g. "experiences"),
+        hours_ahead (default 72), max_price (0=no limit), limit (max 100)."""
+        p = {"hours_ahead": hours_ahead, "limit": min(int(limit), 100)}
+        if city: p["city"] = city
+        if category: p["category"] = category
+        if max_price > 0: p["max_price"] = max_price
         try:
-            r = _req.get(f"{BOOKING_API}/slots", headers=HDRS, params=params, timeout=15)
+            r = _mcp_req.get(f"{BOOKING_API}/slots", headers=_HDRS, params=p, timeout=15)
             r.raise_for_status()
             slots = r.json()
             if not isinstance(slots, list):
-                return [{"error": "Unexpected response from booking API"}]
+                return [{"error": "Unexpected API response"}]
             if not slots:
-                return [{"message": f"No slots found for city={city!r} hours_ahead={hours_ahead}."}]
-            return [_safe_slot(s) for s in slots]
+                return [{"message": f"No slots found. Try expanding hours_ahead or clearing city."}]
+            return [_safe(s) for s in slots]
         except Exception as e:
-            return [{"error": f"Could not fetch slots: {e}"}]
+            return [{"error": str(e)}]
 
     @mcp.tool()
-    def book_slot(
-        slot_id: str,
-        customer_name: str,
-        customer_email: str,
-        customer_phone: str,
-    ) -> dict:
-        """
-        Book a last-minute slot for a customer.
-
-        Creates a Stripe Checkout Session and returns a checkout_url. Direct the
-        customer to that URL to complete payment. The booking is confirmed with the
-        supplier after payment succeeds.
-
-        Args:
-            slot_id:        Slot ID from search_slots results.
-            customer_name:  Full name of the person attending.
-            customer_email: Email address for booking confirmation.
-            customer_phone: Phone number including country code (e.g. +15550001234).
-
-        Returns:
-            On success: { success: true, checkout_url, booking_id, expires_at }
-            On error:   { success: false, error }
-        """
+    def book_slot(slot_id: str, customer_name: str, customer_email: str,
+                  customer_phone: str) -> dict:
+        """Book a slot. Returns checkout_url for the customer to complete Stripe payment.
+        Args: slot_id (from search_slots), customer_name, customer_email,
+        customer_phone (with country code, e.g. +15550001234)."""
         try:
-            r = _req.post(f"{BOOKING_API}/api/book", headers=HDRS, json={
-                "slot_id": slot_id,
-                "customer_name": customer_name,
-                "customer_email": customer_email,
-                "customer_phone": customer_phone,
+            r = _mcp_req.post(f"{BOOKING_API}/api/book", headers=_HDRS, json={
+                "slot_id": slot_id, "customer_name": customer_name,
+                "customer_email": customer_email, "customer_phone": customer_phone,
             }, timeout=15)
             r.raise_for_status()
             return r.json()
-        except _req.HTTPError as e:
+        except _mcp_req.HTTPError as e:
             try:
-                detail = e.response.json()
-                return {"success": False, "error": detail.get("error", str(e))}
+                return {"success": False, "error": e.response.json().get("error", str(e))}
             except Exception:
                 return {"success": False, "error": str(e)}
         except Exception as e:
@@ -3660,72 +3599,77 @@ def _build_combined_asgi():
 
     @mcp.tool()
     def get_booking_status(booking_id: str) -> dict:
-        """
-        Check the status of a booking.
-
-        Args:
-            booking_id: The booking_id returned by book_slot.
-
-        Returns:
-            Booking record with status, confirmation number, and service details.
-        """
+        """Check booking status by booking_id. Returns status, confirmation number, service details."""
         try:
-            r = _req.get(f"{BOOKING_API}/bookings/{booking_id}", headers=HDRS, timeout=15)
+            r = _mcp_req.get(f"{BOOKING_API}/bookings/{booking_id}", headers=_HDRS, timeout=15)
             r.raise_for_status()
             return r.json()
-        except _req.HTTPError as e:
-            if e.response.status_code == 404:
-                return {"error": f"Booking '{booking_id}' not found."}
-            return {"error": str(e)}
+        except _mcp_req.HTTPError as e:
+            return {"error": f"Booking '{booking_id}' not found." if e.response.status_code == 404 else str(e)}
         except Exception as e:
             return {"error": str(e)}
 
     @mcp.tool()
     def get_supplier_info() -> dict:
-        """
-        Returns information about the supplier network and available inventory.
-        Use this before search_slots to understand what destinations and experience types exist.
-        """
+        """Returns supplier network info. Call before search_slots to understand available destinations."""
         return {
             "suppliers": [
                 {"name": "Arctic Adventures", "destinations": ["Reykjavik", "Husafell", "Skaftafell", "Iceland"],
-                 "categories": ["glacier hikes", "ice caves", "snowmobiling", "aurora tours",
-                                "lava tunnels", "diving", "hiking", "whale watching", "multi-day tours"]},
+                 "categories": ["glacier hikes", "ice caves", "snowmobiling", "aurora", "diving", "whale watching"]},
                 {"name": "Arctic Sea Tours", "destinations": ["Dalvik", "North Iceland"],
                  "categories": ["whale watching", "sea excursions"]},
-                {"name": "Bicycle Roma", "destinations": ["Rome", "Appia Antica", "Castelli Romani", "Orvieto"],
-                 "categories": ["e-bike tours", "cycling", "food tours", "day trips", "guided city tours"]},
-                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara Desert"],
+                {"name": "Bicycle Roma", "destinations": ["Rome", "Appia Antica", "Castelli Romani"],
+                 "categories": ["e-bike tours", "food tours", "day trips", "city tours"]},
+                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara"],
                  "categories": ["desert tours", "multi-day tours", "cultural experiences"]},
                 {"name": "Ramen Factory Kyoto", "destinations": ["Kyoto", "Japan"],
-                 "categories": ["cooking classes", "ramen workshops", "cultural experiences"]},
+                 "categories": ["cooking classes", "ramen workshops"]},
                 {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra", "Fatima"],
-                 "categories": ["private tours", "day trips", "city tours", "transfers"]},
+                 "categories": ["private tours", "day trips", "transfers"]},
                 {"name": "Hillborn Experiences", "destinations": ["Arusha", "Serengeti", "Zanzibar", "Kilimanjaro"],
-                 "categories": ["private safaris", "Kilimanjaro climbs", "Zanzibar retreats",
-                                "cultural encounters", "ultra-luxury tours"],
+                 "categories": ["private safaris", "Kilimanjaro climbs", "Zanzibar retreats", "ultra-luxury tours"],
                  "notes": "Ultra-luxury East African operator. $1M public liability insured."},
             ],
             "protocol": "OCTO via Bokun — direct supplier API, production inventory only",
-            "confirmation": "instant",
-            "payment": "Stripe checkout — customer pays on our page, supplier confirmed automatically",
+            "payment": "Stripe checkout, instant supplier confirmation",
         }
 
-    # MCP SSE ASGI app
-    mcp_asgi = mcp.sse_app()
+    def _run():
+        uvicorn.run(mcp.sse_app(), host="127.0.0.1", port=MCP_INTERNAL_PORT, log_level="warning")
 
-    # Flask booking API wrapped as ASGI
-    flask_asgi = WSGIMiddleware(app)
+    t = threading.Thread(target=_run, daemon=True, name="mcp-sse")
+    t.start()
+    print(f"MCP SSE server started on internal port {MCP_INTERNAL_PORT}")
 
-    # Route: /sse and /messages → MCP; everything else → Flask
-    async def _dispatch(scope, receive, send):
-        path = scope.get("path", "")
-        if path in ("/sse", "/messages") or path.startswith("/messages"):
-            await mcp_asgi(scope, receive, send)
-        else:
-            await flask_asgi(scope, receive, send)
 
-    return _dispatch
+# ── MCP proxy routes (public /sse and /messages → internal FastMCP) ───────────
+
+@app.route("/sse")
+def _mcp_sse_proxy():
+    """Proxy GET /sse to the internal FastMCP SSE server."""
+    from flask import stream_with_context, Response as FlaskResponse
+    mcp_url = f"http://127.0.0.1:{MCP_INTERNAL_PORT}/sse"
+    upstream = requests.get(mcp_url, stream=True, timeout=None)
+
+    def _generate():
+        for chunk in upstream.iter_content(chunk_size=None):
+            yield chunk
+
+    return FlaskResponse(
+        stream_with_context(_generate()),
+        content_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
+
+
+@app.route("/messages", methods=["POST"])
+def _mcp_messages_proxy():
+    """Proxy POST /messages to the internal FastMCP message handler."""
+    mcp_url = f"http://127.0.0.1:{MCP_INTERNAL_PORT}/messages"
+    resp = requests.post(mcp_url, json=request.get_json(silent=True),
+                         params=request.args, timeout=30)
+    return jsonify(resp.json()), resp.status_code
 
 
 if __name__ == "__main__":
@@ -3743,6 +3687,7 @@ if __name__ == "__main__":
     _ensure_cancellation_queue_table()
     _start_retry_scheduler()
     _register_peek_webhook()
+    _start_mcp_thread()
 
     print(f"Booking API + MCP server starting on http://localhost:{PORT}")
     print(f"  Health check:    http://localhost:{PORT}/health")
@@ -3750,5 +3695,4 @@ if __name__ == "__main__":
     print(f"  MCP SSE:         http://localhost:{PORT}/sse")
     print()
 
-    import uvicorn
-    uvicorn.run(_build_combined_asgi(), host="0.0.0.0", port=PORT, log_level="warning")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
