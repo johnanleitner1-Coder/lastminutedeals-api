@@ -44,6 +44,8 @@ Pillow
 
 # ── MCP server ────────────────────────────────────────────────────────────────
 mcp
+a2wsgi                  # WSGI→ASGI bridge (serves Flask + FastMCP on one port)
+starlette               # ASGI framework (used by FastMCP SSE app)
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dateutil         # Flexible datetime parsing
