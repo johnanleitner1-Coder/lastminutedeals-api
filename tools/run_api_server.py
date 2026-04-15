@@ -1859,7 +1859,7 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
 _SLOT_INTERNAL_FIELDS = frozenset({
     "booking_url", "price", "original_price", "markup_pct", "our_markup",
     "business_id", "data_source", "test_group", "scraped_at",
-    "api_key_env",
+    "api_key_env", "platform",
 })
 
 def _sanitize_slot(slot: dict) -> dict:
