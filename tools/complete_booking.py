@@ -41,6 +41,7 @@ DEPENDENCY: pip install playwright && playwright install chromium
 import argparse
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -1263,6 +1264,49 @@ class OCTOBooker(BasePlatformBooker):
         # Reseller reference — used as voucher number by some suppliers (e.g. Zaui)
         reseller_ref = f"LMD-{self.slot_id[:12].upper()}"
 
+        # 5xx codes that are transient and worth one retry.
+        # 400/409/422 = definitive supplier refusal → fail immediately.
+        _RETRYABLE_5XX = frozenset({429, 500, 502, 503, 504})
+
+        # Booking metadata accumulated during execution (returned alongside confirmation)
+        _meta: dict = {"retry_count": 0, "retry_stage": None}
+
+        def _retry_delay() -> float:
+            """Base 1 s + up to 0.5 s jitter to prevent thundering-herd bursts."""
+            return 1.0 + random.uniform(0, 0.5)
+
+        def _octo_post(url: str, stage: str, **kwargs) -> "req.Response":
+            """POST with 2 attempts: retries on network errors and 5xx responses."""
+            for _attempt in range(1, 3):
+                try:
+                    r = req.post(url, headers=headers, timeout=30, **kwargs)
+                except req.RequestException as exc:
+                    if _attempt == 2:
+                        raise BookingTimeoutError(
+                            f"OCTOBooker: {stage} network error after 2 attempts: {exc}"
+                        ) from exc
+                    _meta["retry_count"] += 1
+                    _meta["retry_stage"] = stage
+                    delay = _retry_delay()
+                    print(f"[OCTOBooker] {stage} network error (attempt {_attempt}), "
+                          f"retrying in {delay:.1f}s: {exc}")
+                    time.sleep(delay)
+                    continue
+
+                # Got a response — retry if transient 5xx and we have attempts left
+                if _attempt == 1 and r.status_code in _RETRYABLE_5XX:
+                    _meta["retry_count"] += 1
+                    _meta["retry_stage"] = stage
+                    delay = _retry_delay()
+                    print(f"[OCTOBooker] {stage} HTTP {r.status_code} (attempt {_attempt}), "
+                          f"retrying in {delay:.1f}s")
+                    time.sleep(delay)
+                    continue
+
+                return r  # definitive response — pass back regardless of status
+
+            return r  # unreachable but satisfies type checker
+
         # ── Step 1: Create reservation (hold) ─────────────────────────────────
         # Try POST /reservations first (standard OCTO). Some suppliers (Zaui) only
         # support POST /bookings — fall back automatically on 400/404/405.
@@ -1276,43 +1320,16 @@ class OCTOBooker(BasePlatformBooker):
             "contact":           contact,
         }
 
-        for _attempt in range(1, 3):  # 2 attempts
-            try:
-                resp = req.post(
-                    f"{base_url}/reservations",
-                    headers=headers,
-                    json=reservation_payload,
-                    timeout=30,
-                )
-                break
-            except req.RequestException as exc:
-                if _attempt == 2:
-                    raise BookingTimeoutError(
-                        f"OCTOBooker: reservation failed after 2 attempts: {exc}"
-                    ) from exc
-                print(f"[OCTOBooker] Reservation attempt {_attempt} failed, retrying: {exc}")
-                time.sleep(1)
+        _t0 = time.monotonic()
+        resp = _octo_post(f"{base_url}/reservations", "reservation", json=reservation_payload)
 
         # Some suppliers (Zaui, Ventrata) don't implement /reservations — fall back to /bookings
         # Trigger fallback on any 400/404/405 from /reservations (endpoint may not exist)
         if resp.status_code in (400, 404, 405):
             print(f"[OCTOBooker] /reservations not supported ({resp.status_code}) — trying POST /bookings")
-            for _attempt in range(1, 3):  # 2 attempts
-                try:
-                    resp = req.post(
-                        f"{base_url}/bookings",
-                        headers=headers,
-                        json=reservation_payload,
-                        timeout=30,
-                    )
-                    break
-                except req.RequestException as exc:
-                    if _attempt == 2:
-                        raise BookingTimeoutError(
-                            f"OCTOBooker: bookings fallback failed after 2 attempts: {exc}"
-                        ) from exc
-                    print(f"[OCTOBooker] Bookings fallback attempt {_attempt} failed, retrying: {exc}")
-                    time.sleep(1)
+            resp = _octo_post(f"{base_url}/bookings", "reservation_fallback", json=reservation_payload)
+
+        _meta["reservation_ms"] = round((time.monotonic() - _t0) * 1000)
 
         if resp.status_code == 409:
             raise BookingUnavailableError(
@@ -1339,24 +1356,42 @@ class OCTOBooker(BasePlatformBooker):
         print(f"[OCTOBooker] Confirming booking: {reservation_uuid}")
         confirm_payload = {"contact": contact, "resellerReference": reseller_ref}
 
-        for _attempt in range(1, 3):  # 2 attempts
+        _t1 = time.monotonic()
+        try:
+            resp = _octo_post(
+                f"{base_url}/bookings/{reservation_uuid}/confirm",
+                "confirm",
+                json=confirm_payload,
+            )
+        except Exception:
+            # Confirm failed — cancel the orphaned reservation so inventory isn't held.
+            # OCTO spec: DELETE /bookings/{uuid} cancels a held-but-unconfirmed booking.
             try:
-                resp = req.post(
-                    f"{base_url}/bookings/{reservation_uuid}/confirm",
+                req.delete(
+                    f"{base_url}/bookings/{reservation_uuid}",
                     headers=headers,
-                    json=confirm_payload,
-                    timeout=30,
+                    timeout=10,
                 )
-                break
-            except req.RequestException as exc:
-                if _attempt == 2:
-                    raise BookingTimeoutError(
-                        f"OCTOBooker: confirmation failed after 2 attempts: {exc}"
-                    ) from exc
-                print(f"[OCTOBooker] Confirmation attempt {_attempt} failed, retrying: {exc}")
-                time.sleep(1)
+                print(f"[OCTOBooker] Orphaned reservation cancelled: {reservation_uuid}")
+            except Exception as del_err:
+                print(f"[OCTOBooker] Could not cancel orphaned reservation "
+                      f"{reservation_uuid}: {del_err} — may need manual cleanup")
+            raise
+
+        _meta["confirm_ms"] = round((time.monotonic() - _t1) * 1000)
 
         if not resp.ok:
+            # Confirm returned an error — attempt reservation cleanup before raising.
+            try:
+                req.delete(
+                    f"{base_url}/bookings/{reservation_uuid}",
+                    headers=headers,
+                    timeout=10,
+                )
+                print(f"[OCTOBooker] Orphaned reservation cancelled: {reservation_uuid}")
+            except Exception as del_err:
+                print(f"[OCTOBooker] Could not cancel orphaned reservation "
+                      f"{reservation_uuid}: {del_err}")
             raise BookingUnknownError(
                 f"OCTOBooker: confirmation failed {resp.status_code}: {resp.text[:300]}"
             )
@@ -1393,7 +1428,9 @@ class OCTOBooker(BasePlatformBooker):
         except Exception as exc:
             print(f"[OCTOBooker] Could not save confirmation artifact: {exc}")
 
-        return confirmation
+        # Return dict so callers can record per-step timing and retry counts.
+        # Non-OCTO bookers return a plain string — callers must handle both.
+        return {"confirmation": confirmation, "booking_meta": _meta}
 
 
 # ── Rezdy API booker (pure HTTP — Rezdy Agent API format) ─────────────────────

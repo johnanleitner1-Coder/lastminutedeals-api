@@ -1370,7 +1370,7 @@ def _fulfill_booking_async(
         print(f"[FULFILL] Initiated email failed (non-fatal): {mail_err}")
 
     try:
-        confirmation = _fulfill_booking(slot_id, customer, platform, booking_url)
+        confirmation, booking_meta = _fulfill_booking(slot_id, customer, platform, booking_url)
 
         # Booking succeeded — capture the held payment now
         if payment_intent:
@@ -1401,6 +1401,11 @@ def _fulfill_booking_async(
             "payment_intent_id":    payment_intent,
             "slot_id":              slot_id,
             "execution_duration_ms": round((time.monotonic() - _exec_start) * 1000),
+            # Per-step timing + retry observability from OCTOBooker
+            "reservation_ms":       booking_meta.get("reservation_ms"),
+            "confirm_ms":           booking_meta.get("confirm_ms"),
+            "retry_count":          booking_meta.get("retry_count", 0),
+            "retry_stage":          booking_meta.get("retry_stage"),
         }
         _save_booking_record(booking_record_id, record)
         # Update idempotency record with final status
@@ -1490,12 +1495,20 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
         if spec:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            confirmation = module.complete_booking(
+            result = module.complete_booking(
                 slot_id=slot_id,
                 customer=customer,
                 platform=platform,
                 booking_url=booking_url,
             )
+            # OCTOBooker returns {"confirmation": str, "booking_meta": {...}}.
+            # Other bookers return a plain string. Handle both.
+            if isinstance(result, dict):
+                confirmation  = result.get("confirmation", "")
+                booking_meta  = result.get("booking_meta", {})
+            else:
+                confirmation  = result
+                booking_meta  = {}
             print(f"[FULFILLMENT] Confirmed: {confirmation}")
             # Record success with circuit breaker
             if is_octo:
@@ -1503,9 +1516,10 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                     cb_mod.record_success(supplier_id)
                 except Exception:
                     pass
-            return confirmation
+            return confirmation, booking_meta
     except FileNotFoundError:
         print(f"[FULFILLMENT] complete_booking.py not found — manual fulfillment needed")
+        return "manual-fulfillment-required", {}
     except Exception as e:
         # Record failure with circuit breaker
         if is_octo:
