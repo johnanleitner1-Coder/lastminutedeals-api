@@ -231,6 +231,24 @@ def get_supplier_info() -> dict:
                 "booking_platform": "Bokun",
             },
             {
+                "name": "Factory Alliance Kyoto",
+                "destinations": ["Kyoto", "Japan"],
+                "categories": ["cultural experiences", "traditional crafts", "workshops"],
+                "booking_platform": "Bokun",
+            },
+            {
+                "name": "Boka Bliss",
+                "destinations": ["Kotor", "Montenegro"],
+                "categories": ["boat tours", "coastal experiences", "sea excursions"],
+                "booking_platform": "Bokun",
+            },
+            {
+                "name": "TourTransfer Bucharest",
+                "destinations": ["Bucharest", "Romania"],
+                "categories": ["transfers", "city tours", "day trips"],
+                "booking_platform": "Bokun",
+            },
+            {
                 "name": "Ventrata network",
                 "destinations": ["Edinburgh", "global"],
                 "categories": ["walking tours", "sightseeing", "experiences"],

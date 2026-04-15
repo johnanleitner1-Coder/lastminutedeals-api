@@ -3329,7 +3329,8 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista), "
+            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista, "
+            "Factory Alliance Kyoto, Boka Bliss Montenegro, TourTransfer Bucharest), "
             "Ventrata, Zaui, and Peek Pro via the OCTO open booking protocol. "
             "Slots are sorted by urgency (soonest first)."
         ),
@@ -3440,10 +3441,13 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     elif name == "get_supplier_info":
         return {
             "suppliers": [
-                {"name": "Arctic Adventures", "destinations": ["Iceland"], "platform": "Bokun"},
+                {"name": "Arctic Adventures", "destinations": ["Reykjavik", "Iceland"], "platform": "Bokun"},
                 {"name": "Bicycle Roma", "destinations": ["Rome"], "platform": "Bokun"},
-                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Sahara"], "platform": "Bokun"},
-                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra"], "platform": "Bokun"},
+                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara"], "platform": "Bokun"},
+                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra", "Fatima", "Nazare"], "platform": "Bokun"},
+                {"name": "Factory Alliance Kyoto", "destinations": ["Kyoto", "Japan"], "platform": "Bokun"},
+                {"name": "Boka Bliss", "destinations": ["Kotor", "Montenegro"], "platform": "Bokun"},
+                {"name": "TourTransfer Bucharest", "destinations": ["Bucharest", "Romania"], "platform": "Bokun"},
                 {"name": "Ventrata network", "destinations": ["Edinburgh", "global"], "platform": "Ventrata"},
                 {"name": "Zaui network", "destinations": ["Canada"], "platform": "Zaui"},
             ],
