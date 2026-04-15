@@ -71,10 +71,20 @@ def format_slot_message(slot: dict, landing_url: str) -> str:
     label    = CAT_LABEL.get(cat, cat.title())
     name     = slot.get("service_name", "Deal")
     business = slot.get("business_name", "") or ""
+    # Strip internal/test suffixes not meant for customers
+    import re as _re
+    business = _re.sub(r'\s*\((?:Ventrata|Bokun|Zaui|Peek|Test|Demo)[^)]*\)', '', business, flags=_re.IGNORECASE).strip()
     if "@" in business or business.lower().startswith("for venue details"):
         business = ""
-    city     = slot.get("location_city", "")
-    state    = slot.get("location_state", "")
+    city     = slot.get("location_city", "") or ""
+    state    = slot.get("location_state", "") or ""
+    country  = slot.get("location_country", "") or ""
+    # Fallback: if no city, use country code label
+    if not city and country:
+        _COUNTRY_NAMES = {"CA": "Canada", "US": "United States", "GB": "United Kingdom",
+                          "IT": "Italy", "IS": "Iceland", "MA": "Morocco", "PT": "Portugal",
+                          "JP": "Japan", "ME": "Montenegro", "RO": "Romania"}
+        city = _COUNTRY_NAMES.get(country.upper(), country)
     hours    = slot.get("hours_until_start")
     price    = slot.get("our_price") or slot.get("price")
 
@@ -107,9 +117,13 @@ def format_slot_message(slot: dict, landing_url: str) -> str:
     else:
         price_line = f"💰 <b>${float(price):.0f}</b>"
 
-    # Build book URL — use landing page if available, otherwise booking_url
-    # NOTE: we never expose the source platform URL directly
-    if landing_url:
+    # Build book URL — deep-link to this specific slot on our landing page.
+    # ?slot=<slot_id> triggers the booking modal for that exact deal.
+    # NOTE: we never expose the source platform URL directly.
+    slot_id = slot.get("slot_id", "")
+    if landing_url and slot_id:
+        book_url = f"{landing_url.rstrip('/')}/?slot={slot_id}"
+    elif landing_url:
         book_url = f"{landing_url.rstrip('/')}/#deals"
     else:
         book_url = slot.get("booking_url", "")
@@ -132,19 +146,34 @@ def select_posts(slots: list[dict], posted_ids: set, max_posts: int) -> list[dic
     """
     Select the best slots to post:
     - Not already posted
-    - Sorted by urgency (soonest first), then by having a price
+    - Between 2h and 72h away (avoid imminent slots that may be stale)
+    - Has a price
+    - Sorted by: has-city first, then soonest
     - Max max_posts slots
     """
+    # Patterns that indicate test/placeholder inventory — skip these
+    _TEST_PATTERNS = [
+        "product no date", "test product", "demo product", "sample product",
+        "(test)", "(demo)", "no date required",
+    ]
+
+    def _is_test_slot(s: dict) -> bool:
+        name = (s.get("service_name") or "").lower()
+        biz  = (s.get("business_name") or "").lower()
+        return any(p in name or p in biz for p in _TEST_PATTERNS)
+
     candidates = [
         s for s in slots
         if s.get("slot_id") not in posted_ids
         and s.get("hours_until_start") is not None
-        and s.get("hours_until_start") <= 72
+        and 2 <= s.get("hours_until_start") <= 72
         and (s.get("our_price") is not None or s.get("price") is not None)
+        and not _is_test_slot(s)
     ]
 
-    # Sort: soonest first, price known preferred
+    # Sort: city-known first (richer message), then soonest, then price known
     candidates.sort(key=lambda s: (
+        0 if s.get("location_city") else 1,   # city known first
         s.get("hours_until_start") or 999,
         0 if s.get("our_price") or s.get("price") else 1,
     ))

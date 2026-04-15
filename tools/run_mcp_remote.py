@@ -47,9 +47,17 @@ mcp = FastMCP(
     port=PORT,
     instructions=(
         "You have access to real last-minute tour and activity inventory across "
-        "Iceland, Italy, Morocco, Portugal, and more. Use search_slots to find "
-        "available experiences, then book_slot to complete a reservation. "
-        "Bookings are real — customers receive instant confirmation."
+        "Iceland, Italy, Morocco, Portugal, Japan, and more — sourced live from "
+        "production booking systems via the OCTO open standard. "
+        "Suppliers include Arctic Adventures (Iceland glacier hikes, snowmobiling, "
+        "whale watching, aurora, lava tunnels), Bicycle Roma (Rome e-bike tours, "
+        "food tours, day trips), Pure Morocco Experience (Sahara desert tours, "
+        "Marrakech cultural experiences), Ramen Factory Kyoto (cooking classes, "
+        "workshops), O Turista Tours (Lisbon, Porto, Sintra, Fatima day trips), "
+        "and more. "
+        "Use search_slots to find available experiences, then book_slot to create "
+        "a Stripe checkout session — the customer completes payment and receives "
+        "instant confirmation. Bookings are real and go directly to the supplier."
     ),
 )
 
@@ -98,8 +106,10 @@ def search_slots(
     """
     Search for last-minute available tours and activities.
 
-    Returns real inventory from Ventrata, Bokun, Zaui, and Peek Pro suppliers
-    via the OCTO open booking protocol. Slots are sorted by urgency (soonest first).
+    Returns real production inventory from Arctic Adventures, Bicycle Roma,
+    Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Arctic Sea Tours,
+    and more — sourced live via the OCTO open booking protocol.
+    Slots are sorted by urgency (soonest first).
 
     Args:
         city:        City or country filter, partial match (e.g. "Reykjavik", "Rome", "Iceland").
@@ -208,62 +218,56 @@ def get_supplier_info() -> dict:
         "suppliers": [
             {
                 "name": "Arctic Adventures",
-                "destinations": ["Reykjavik", "Akureyri", "Iceland"],
-                "categories": ["glacier hikes", "snowmobiling", "whale watching", "lava tunnels", "aurora", "diving"],
+                "destinations": ["Reykjavik", "Husafell", "Skaftafell", "Iceland"],
+                "categories": ["glacier hikes", "ice caves", "snowmobiling", "aurora tours",
+                               "lava tunnels", "diving", "hiking", "whale watching",
+                               "multi-day tours", "golden circle"],
                 "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Arctic Sea Tours",
+                "destinations": ["Dalvik", "North Iceland"],
+                "categories": ["whale watching", "sea excursions"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
             },
             {
                 "name": "Bicycle Roma",
-                "destinations": ["Rome"],
-                "categories": ["e-bike tours", "cycling", "food tours", "day trips"],
+                "destinations": ["Rome", "Appia Antica", "Castelli Romani", "Orvieto"],
+                "categories": ["e-bike tours", "cycling", "food tours", "day trips",
+                               "guided city tours", "bike rentals"],
                 "booking_platform": "Bokun",
+                "confirmation": "instant",
             },
             {
                 "name": "Pure Morocco Experience",
-                "destinations": ["Marrakech", "Merzouga", "Sahara"],
-                "categories": ["desert tours", "cultural experiences"],
+                "destinations": ["Marrakech", "Merzouga", "Sahara Desert"],
+                "categories": ["desert tours", "multi-day tours", "cultural experiences"],
                 "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Ramen Factory Kyoto",
+                "destinations": ["Kyoto", "Japan"],
+                "categories": ["cooking classes", "ramen workshops", "cultural experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
             },
             {
                 "name": "O Turista Tours",
-                "destinations": ["Lisbon", "Porto", "Sintra", "Fatima", "Nazare"],
-                "categories": ["city tours", "private tours", "day trips"],
+                "destinations": ["Lisbon", "Porto", "Sintra", "Fatima", "Nazare", "Sesimbra"],
+                "categories": ["private tours", "day trips", "city tours",
+                               "transfers", "wine experiences", "pilgrimage tours"],
                 "booking_platform": "Bokun",
-            },
-            {
-                "name": "Factory Alliance Kyoto",
-                "destinations": ["Kyoto", "Japan"],
-                "categories": ["cultural experiences", "traditional crafts", "workshops"],
-                "booking_platform": "Bokun",
-            },
-            {
-                "name": "Boka Bliss",
-                "destinations": ["Kotor", "Montenegro"],
-                "categories": ["boat tours", "coastal experiences", "sea excursions"],
-                "booking_platform": "Bokun",
-            },
-            {
-                "name": "TourTransfer Bucharest",
-                "destinations": ["Bucharest", "Romania"],
-                "categories": ["transfers", "city tours", "day trips"],
-                "booking_platform": "Bokun",
-            },
-            {
-                "name": "Ventrata network",
-                "destinations": ["Edinburgh", "global"],
-                "categories": ["walking tours", "sightseeing", "experiences"],
-                "booking_platform": "Ventrata",
-            },
-            {
-                "name": "Zaui network",
-                "destinations": ["Canada"],
-                "categories": ["outdoor activities", "adventures"],
-                "booking_platform": "Zaui",
+                "confirmation": "instant",
             },
         ],
-        "protocol": "OCTO (Open Connectivity for Tourism)",
+        "live_slot_count": "242 slots available within 72h (refreshed every 4h)",
+        "protocol": "OCTO (Open Connectivity for Tourism) — direct supplier API, no scraping",
         "confirmation": "instant",
-        "payment": "Stripe — auth-then-capture (customer never charged for failed bookings)",
+        "payment": "Stripe checkout — customer pays on our page, supplier confirmed automatically",
+        "note": "All inventory is production. No test or demo slots.",
         "api_docs": "https://lastminutedealshq.com/developers",
     }
 

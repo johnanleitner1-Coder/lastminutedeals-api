@@ -11,7 +11,7 @@
     "country": "GB",
     "timezone": "Europe/London",
     "category": "experiences",
-    "enabled": true,
+    "enabled": false,
     "test_mode": true
   },
   {
@@ -28,7 +28,8 @@
     "timezone": "America/New_York",
     "category": "experiences",
     "enabled": false,
-    "test_mode": false
+    "test_mode": false,
+    "pricing_capability": true
   },
   {
     "_comment": "Zaui — self-serve signup, API key returned immediately. Free OCTO access. Test sandbox at suppliertestsystem.zaui.net.",
@@ -42,7 +43,7 @@
     "country": "CA",
     "timezone": "America/Vancouver",
     "category": "experiences",
-    "enabled": true,
+    "enabled": false,
     "test_mode": true
   },
   {
@@ -58,7 +59,33 @@
     "timezone": "America/New_York",
     "category": "experiences",
     "enabled": true,
-    "test_mode": false
+    "test_mode": false,
+    "timeout": 60,
+    "retry_on_timeout": true,
+    "pricing_capability": true,
+    "reference_supplier_map": {
+      "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "AA0907":                     {"name": "Arctic Adventures", "city": "Husafell",  "country": "IS"},
+      "AA0915":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "ST":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "GC":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "GG":                         {"name": "Arctic Adventures", "city": "Skaftafell", "country": "IS"},
+      "TR":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "IS":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
+      "AST":                        {"name": "Arctic Sea Tours",  "city": "Dalvik",    "country": "IS"},
+      "RFK":                        {"name": "Ramen Factory Kyoto", "city": "Kyoto",   "country": "JP"},
+      "LISBOA":                     {"name": "O Turista Tours",   "city": "Lisbon",    "country": "PT"},
+      "LISBON":                     {"name": "O Turista Tours",   "city": "Lisbon",    "country": "PT"},
+      "TRANSFERS (PORTO":           {"name": "O Turista Tours",   "city": "Porto",     "country": "PT"},
+      "5595853P4":                  {"name": "Pure Morocco Experience", "city": "Marrakech", "country": "MA"},
+      "TOUR":                       {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "OTA":                        {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "MULTI DAY TOURS":            {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"}
+    }
   },
   {
     "_comment": "Rezdy Agent API — free account, API key in 48 hours, staging at rezdy-staging.com.",
@@ -104,7 +131,7 @@
     "country": "US",
     "timezone": "America/New_York",
     "category": "experiences",
-    "enabled": true,
+    "enabled": false,
     "test_mode": true
   },
   {

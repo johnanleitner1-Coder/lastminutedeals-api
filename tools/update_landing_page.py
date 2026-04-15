@@ -165,7 +165,7 @@ def render_card(slot: dict) -> str:
 
     badge_html = f'<span class="badge {badge_class}">{badge_text}</span>' if badge_text else ""
 
-    return f"""<div class="card" data-city="{html_lib.escape(city)}" data-category="{category}" data-hours="{hours or 99}" data-price="{raw_price or 0}" style="border-top:3px solid {cat_color}">
+    return f"""<div class="card" id="slot-{slot_id}" data-city="{html_lib.escape(city)}" data-category="{category}" data-hours="{hours or 99}" data-price="{raw_price or 0}" style="border-top:3px solid {cat_color}">
       <div class="card-top">
         <span class="card-cat" style="color:{cat_color}">{cat_label}</span>
         {badge_html}
@@ -1265,6 +1265,20 @@ window.addEventListener('DOMContentLoaded', function() {{
   var total = document.querySelectorAll('.card').length;
   var countEl = document.getElementById('visible-count');
   if (countEl) countEl.textContent = total + ' deals shown';
+
+  // Deep-link: ?slot=<slot_id> → scroll to card and open booking modal
+  var params = new URLSearchParams(window.location.search);
+  var deepSlot = params.get('slot');
+  if (deepSlot) {{
+    var card = document.getElementById('slot-' + deepSlot);
+    if (card) {{
+      card.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+      var btn = card.querySelector('.btn-book');
+      if (btn && btn.dataset.slot) {{
+        setTimeout(function() {{ openCheckout(btn.dataset.slot); }}, 400);
+      }}
+    }}
+  }}
 }});
 
 // ── SMS opt-in form ──────────────────────────────────────────────────────

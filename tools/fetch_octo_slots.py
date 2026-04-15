@@ -80,20 +80,22 @@ REQUEST_DELAY_S = 0.5
 class OCTOClient:
     """Thin wrapper around the OCTO REST API for a single supplier."""
 
-    def __init__(self, base_url: str, api_key: str, timeout: int = 30):
-        self.base_url = base_url.rstrip("/")
-        self.api_key  = api_key
-        self.timeout  = timeout
+    def __init__(self, base_url: str, api_key: str, timeout: int = 30, pricing_capability: bool = False):
+        self.base_url          = base_url.rstrip("/")
+        self.api_key           = api_key
+        self.timeout           = timeout
+        self.pricing_capability = pricing_capability
         self.session  = requests.Session()
         self.session.headers.update({
-            "Authorization":  f"Bearer {api_key}",
-            "Content-Type":   "application/json",
-            "Accept":         "application/json",
-            "Octo-Capabilities": "octo/pricing",   # required by Ventrata; provides pricing data
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+            "Accept":        "application/json",
         })
+        # NOTE: "Octo-Capabilities: octo/pricing" is added per-request on
+        # availability calls only. Sending it on /products hangs Bokun.
 
     def get_products(self) -> list[dict]:
-        """Fetch all products (experiences/activities) from this supplier."""
+        """Fetch all products — no pricing capability header (avoids Bokun timeout)."""
         resp = self.session.get(
             f"{self.base_url}/products",
             timeout=self.timeout,
@@ -130,9 +132,15 @@ class OCTOClient:
             "localDateEnd":   date_end,
             "units":          units,
         }
+        # Add pricing capability header only on availability requests.
+        # This works on both Ventrata and Bokun (Bokun only hangs on /products).
+        extra_headers = {}
+        if self.pricing_capability:
+            extra_headers["Octo-Capabilities"] = "octo/pricing"
         resp = self.session.post(
             f"{self.base_url}/availability",
             json=payload,
+            headers=extra_headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()
@@ -264,10 +272,21 @@ def octo_availability_to_slot(
 
     product_id    = product.get("id", "")
     product_name  = product.get("internalName") or product.get("title") or product_id
-    supplier_name = supplier.get("name", "OCTO Supplier")
-    city          = supplier.get("city", "")
+
+    # Resolve supplier name and city from reference prefix map (Bokun reseller use case)
+    ref_map = supplier.get("reference_supplier_map", {})
+    ref     = product.get("reference", "") or ""
+    resolved = None
+    if ref_map and ref:
+        # Try longest matching prefix first (e.g. "AA0907" before "AA")
+        for prefix in sorted(ref_map.keys(), key=len, reverse=True):
+            if ref.startswith(prefix) or ref.upper().startswith(prefix.upper()):
+                resolved = ref_map[prefix]
+                break
+    supplier_name = (resolved or {}).get("name") or supplier.get("name", "OCTO Supplier")
+    city          = (resolved or {}).get("city")  or supplier.get("city", "")
     state         = supplier.get("state", "")
-    country       = supplier.get("country", "US")
+    country       = (resolved or {}).get("country") or supplier.get("country", "US")
     category      = _infer_category(product, supplier.get("category", "experiences"))
 
     # Encode all OCTO booking params in booking_url (internal, never shown to users)
@@ -317,10 +336,13 @@ def octo_availability_to_slot(
 
 def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
     """Fetch all available slots from one OCTO-compliant supplier."""
-    name       = supplier.get("name", "Unknown")
-    base_url   = supplier.get("base_url", "")
-    api_key_env = supplier.get("api_key_env", "")
-    api_key    = os.getenv(api_key_env, "").strip()
+    name            = supplier.get("name", "Unknown")
+    base_url        = supplier.get("base_url", "")
+    api_key_env     = supplier.get("api_key_env", "")
+    api_key         = os.getenv(api_key_env, "").strip()
+    timeout           = int(supplier.get("timeout", 30))
+    retry_on_timeout  = supplier.get("retry_on_timeout", False)
+    pricing_capability = supplier.get("pricing_capability", False)
 
     if not api_key:
         print(f"  [{name}] SKIP — {api_key_env} not set in .env")
@@ -328,21 +350,33 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
 
     print(f"  [{name}] Connecting to {base_url} ...")
 
-    client = OCTOClient(base_url, api_key)
+    client = OCTOClient(base_url, api_key, timeout=timeout, pricing_capability=pricing_capability)
 
     # Compute date range: today through today + ceil(hours_ahead/24) days
     now        = datetime.now(timezone.utc)
     date_start = now.strftime("%Y-%m-%d")
     date_end   = (now + timedelta(hours=hours_ahead + 24)).strftime("%Y-%m-%d")
 
-    try:
-        products = client.get_products()
-        print(f"  [{name}] {len(products)} products")
-    except requests.HTTPError as exc:
-        print(f"  [{name}] ERROR getting products: {exc.response.status_code} {exc.response.text[:200]}")
-        return []
-    except Exception as exc:
-        print(f"  [{name}] ERROR getting products: {exc}")
+    # Fetch product list — retry once on timeout if configured
+    for attempt in range(2 if retry_on_timeout else 1):
+        try:
+            products = client.get_products()
+            print(f"  [{name}] {len(products)} products")
+            break
+        except requests.exceptions.Timeout:
+            if attempt == 0 and retry_on_timeout:
+                print(f"  [{name}] Timeout on /products — retrying with {timeout * 2}s timeout...")
+                client.timeout = timeout * 2
+                continue
+            print(f"  [{name}] ERROR getting products: timed out after {client.timeout}s")
+            return []
+        except requests.HTTPError as exc:
+            print(f"  [{name}] ERROR getting products: {exc.response.status_code} {exc.response.text[:200]}")
+            return []
+        except Exception as exc:
+            print(f"  [{name}] ERROR getting products: {exc}")
+            return []
+    else:
         return []
 
     slots = []
@@ -355,20 +389,34 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
         option_id, unit_id = _primary_unit(product)
         units = [{"id": unit_id, "quantity": 1}]
 
-        try:
-            availability = client.get_availability(
-                product_id=product_id,
-                option_id=option_id,
-                units=units,
-                date_start=date_start,
-                date_end=date_end,
-            )
-            time.sleep(REQUEST_DELAY_S)
-        except requests.HTTPError as exc:
-            print(f"  [{name}] [{product_id}] availability error: {exc.response.status_code}")
-            continue
-        except Exception as exc:
-            print(f"  [{name}] [{product_id}] availability error: {exc}")
+        # Retry availability once on timeout if configured
+        availability = None
+        for attempt in range(2 if retry_on_timeout else 1):
+            try:
+                availability = client.get_availability(
+                    product_id=product_id,
+                    option_id=option_id,
+                    units=units,
+                    date_start=date_start,
+                    date_end=date_end,
+                )
+                time.sleep(REQUEST_DELAY_S)
+                break
+            except requests.exceptions.Timeout:
+                if attempt == 0 and retry_on_timeout:
+                    print(f"  [{name}] [{product_id}] Timeout — retrying...")
+                    time.sleep(2)
+                    continue
+                print(f"  [{name}] [{product_id}] availability timed out — skipping")
+                break
+            except requests.HTTPError as exc:
+                print(f"  [{name}] [{product_id}] availability error: {exc.response.status_code}")
+                break
+            except Exception as exc:
+                print(f"  [{name}] [{product_id}] availability error: {exc}")
+                break
+
+        if availability is None:
             continue
 
         for avail in availability:
