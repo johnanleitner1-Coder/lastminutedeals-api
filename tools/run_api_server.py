@@ -1147,6 +1147,67 @@ def _get_api_usage_metrics() -> dict:
         return {"error": str(e)}
 
 
+@app.route("/test/dry-run", methods=["POST"])
+def test_dry_run():
+    """
+    Trigger a dry-run booking fulfillment directly — no Stripe checkout needed.
+    Calls _fulfill_booking_async with dry_run=True using a real slot from inventory.
+    Use this to verify the full fulfillment pipeline without touching any supplier.
+
+    Requires X-API-Key header (same key used for /api/book).
+
+    Body (JSON):
+        slot_id  — optional; defaults to first available slot in inventory
+    """
+    api_key = request.headers.get("X-API-Key", "")
+    if not _validate_api_key(api_key):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data    = request.get_json(force=True, silent=True) or {}
+    slot_id = (data.get("slot_id") or "").strip()
+
+    # Pick first available slot if none specified
+    if not slot_id:
+        try:
+            slots = json.loads(DATA_FILE.read_text(encoding="utf-8")) if DATA_FILE.exists() else []
+            slot  = next((s for s in slots if s.get("booking_url")), None)
+            if slot:
+                slot_id = slot["slot_id"]
+        except Exception:
+            pass
+
+    if not slot_id:
+        return jsonify({"error": "No slots available in inventory"}), 404
+
+    slot = get_slot_by_id(slot_id)
+    if not slot:
+        return jsonify({"error": f"Slot {slot_id} not found"}), 404
+
+    session_id  = f"dry_run_test_{slot_id[:12]}"
+    wh_key      = f"webhook_session_{session_id[:40]}"
+    customer    = {"name": "Dry Run Test", "email": "test@lastminutedealshq.com", "phone": "+15550001234"}
+    platform    = slot.get("platform", "")
+    booking_url = slot.get("booking_url", "")
+    amount      = int(float(slot.get("our_price") or slot.get("price") or 0) * 100)
+    service     = slot.get("service_name", "Test Booking")
+
+    threading.Thread(
+        target=_fulfill_booking_async,
+        args=(session_id, wh_key, slot_id, "", customer, platform, booking_url, amount, service, True),
+        daemon=True,
+        name=f"dry-run-{slot_id[:8]}",
+    ).start()
+
+    return jsonify({
+        "started":    True,
+        "session_id": session_id,
+        "slot_id":    slot_id,
+        "service":    service,
+        "platform":   platform,
+        "note":       "Fulfillment running in background. Check Railway logs for [FULFILL] DRY RUN lines. Booking record will appear in Supabase tagged dry_run=true.",
+    })
+
+
 @app.route("/metrics", methods=["GET"])
 def public_metrics():
     """
