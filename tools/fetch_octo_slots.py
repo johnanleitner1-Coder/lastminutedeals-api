@@ -164,23 +164,35 @@ def _parse_octo_datetime(dt_str: str) -> datetime | None:
         return None
 
 
-def _extract_price(unit_pricing: list[dict]) -> float | None:
-    """Return the retail price for the first adult/standard unit type, in dollars."""
-    if not unit_pricing:
-        return None
-    # Prefer adult, then standard, then first available
-    preferred = ["adult", "adults", "standard", "general", "person"]
-    ordered = sorted(
-        unit_pricing,
-        key=lambda u: next(
-            (i for i, p in enumerate(preferred) if p in (u.get("unitId", "")).lower()),
-            99,
-        ),
-    )
-    for unit in ordered:
-        retail = unit.get("retail")
+def _extract_price(unit_pricing: list[dict], avail_pricing: dict | None = None) -> float | None:
+    """
+    Return the per-person retail price in dollars.
+
+    Tries two sources:
+    1. unitPricing array (per-unit pricing — Bokun, Ventrata when pricing capability used)
+    2. avail.pricing object (total booking price — Boka Bliss and some other suppliers)
+    """
+    if unit_pricing:
+        # Prefer adult, then standard, then first available
+        preferred = ["adult", "adults", "standard", "general", "person"]
+        ordered = sorted(
+            unit_pricing,
+            key=lambda u: next(
+                (i for i, p in enumerate(preferred) if p in (u.get("unitId", "")).lower()),
+                99,
+            ),
+        )
+        for unit in ordered:
+            retail = unit.get("retail")
+            if retail is not None:
+                return round(retail / 100, 2)  # OCTO prices are in cents
+
+    # Fallback: avail-level pricing (some suppliers don't return unitPricing)
+    if avail_pricing and isinstance(avail_pricing, dict):
+        retail = avail_pricing.get("retail")
         if retail is not None:
-            return round(retail / 100, 2)  # OCTO prices are in cents
+            return round(retail / 100, 2)
+
     return None
 
 
@@ -268,7 +280,7 @@ def octo_availability_to_slot(
 
     vacancies = avail.get("vacancies")
     capacity  = avail.get("capacity")
-    price     = _extract_price(avail.get("unitPricing") or [])
+    price     = _extract_price(avail.get("unitPricing") or [], avail.get("pricing"))
 
     product_id    = product.get("id", "")
     product_name  = product.get("internalName") or product.get("title") or product_id

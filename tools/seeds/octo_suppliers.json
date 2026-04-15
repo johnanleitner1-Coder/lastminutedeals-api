@@ -85,11 +85,15 @@
       "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
-      "HE":                         {"name": "Hillborn Experiences", "city": "Arusha",   "country": "TZ"},
-      "HILLBORN":                   {"name": "Hillborn Experiences", "city": "Arusha",   "country": "TZ"},
-      "KIL":                        {"name": "Hillborn Experiences", "city": "Kilimanjaro", "country": "TZ"},
-      "ZNZ":                        {"name": "Hillborn Experiences", "city": "Zanzibar",  "country": "TZ"},
-      "SAF":                        {"name": "Hillborn Experiences", "city": "Serengeti", "country": "TZ"}
+      "201393P":                    {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
+      "MERU-LUX":                   {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
+      "TANSF":                      {"name": "Hillborn Experiences", "city": "Serengeti", "country": "TZ"},
+      "HE":                         {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
+      "HILLBORN":                   {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
+      "471620P":                    {"name": "Boka Bliss",           "city": "Kotor",     "country": "ME"},
+      "5577093P":                   {"name": "TourTransfer Bucharest", "city": "Bucharest", "country": "RO"},
+      "RED":                        {"name": "REDRIB Experience",    "city": "Helsinki",  "country": "FI"},
+      "REGULAR BIKES LUNGOTEVERE":  {"name": "Bicycle Roma",         "city": "Rome",      "country": "IT"}
     }
   },
   {
