@@ -11,10 +11,9 @@ Search available tour, activity, and experience slots and book them directly —
 | Tool | What it does |
 |---|---|
 | `search_slots` | Find available slots by city, category, time window, price |
-| `get_slot` | Full details for a specific slot |
-| `book_slot` | Create a booking (Stripe checkout or wallet) |
+| `book_slot` | Create a booking — returns Stripe checkout URL |
 | `get_booking_status` | Check confirmation status by booking ID |
-| `refresh_slots` | Trigger a fresh inventory pull from connected suppliers |
+| `get_supplier_info` | List supplier network, destinations, and categories |
 
 ### Example conversation
 
@@ -36,14 +35,14 @@ Claude: [calls book_slot(slot_id="...", customer_name="Jane Smith", ...)]
 
 No local installation required. The MCP server is hosted and accessible directly over HTTP — compatible with any agent or HTTP client that speaks JSON-RPC 2.0.
 
-**Endpoint:** `POST https://api.lastminutedealshq.com/mcp`
+**Endpoint:** `POST https://web-production-dc74b.up.railway.app/mcp`
 
 All requests use `Content-Type: application/json` and the standard MCP JSON-RPC 2.0 envelope.
 
 ### Initialize session
 
 ```bash
-curl -X POST https://api.lastminutedealshq.com/mcp \
+curl -X POST https://web-production-dc74b.up.railway.app/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key-here" \
   -d '{
@@ -61,7 +60,7 @@ curl -X POST https://api.lastminutedealshq.com/mcp \
 ### List available tools
 
 ```bash
-curl -X POST https://api.lastminutedealshq.com/mcp \
+curl -X POST https://web-production-dc74b.up.railway.app/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key-here" \
   -d '{
@@ -75,7 +74,7 @@ curl -X POST https://api.lastminutedealshq.com/mcp \
 ### Call a tool — search_slots
 
 ```bash
-curl -X POST https://api.lastminutedealshq.com/mcp \
+curl -X POST https://web-production-dc74b.up.railway.app/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key-here" \
   -d '{
@@ -121,7 +120,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
 }
 ```
 
-> **Alternative:** If you prefer not to run a local process, you can point any HTTP-capable MCP client directly at `https://api.lastminutedealshq.com/mcp` instead of using the stdio transport above. See the [Remote HTTP Endpoint](#remote-http-endpoint) section for details.
+> **Alternative:** If you prefer not to run a local process, you can point any HTTP-capable MCP client directly at `https://web-production-dc74b.up.railway.app/mcp` instead of using the stdio transport above. See the [Remote HTTP Endpoint](#remote-http-endpoint) section for details.
 
 ### Claude Code / any MCP client
 
@@ -220,13 +219,13 @@ Returns current status: `awaiting_payment` | `confirmed` | `failed` | `cancelled
 
 ---
 
-### `refresh_slots`
+### `get_supplier_info`
 
 ```python
-refresh_slots(hours_ahead=48)
+get_supplier_info()
 ```
 
-Triggers a fresh pull from all connected suppliers. Slot data is also refreshed automatically every 4 hours.
+Returns the full supplier network — destinations, categories, booking platforms, and protocol details. Call this before `search_slots` to understand what regions and activity types are available.
 
 ---
 
@@ -250,13 +249,13 @@ All suppliers have **instant confirmation** — no manual approval, no phone cal
 The same tools are available as a REST API for agents that don't use MCP:
 
 ```
-GET  https://api.lastminutedealshq.com/slots?city=Rome&hours_ahead=24
-GET  https://api.lastminutedealshq.com/slots/{slot_id}
-POST https://api.lastminutedealshq.com/book
-GET  https://api.lastminutedealshq.com/bookings/{booking_id}
+GET  https://web-production-dc74b.up.railway.app/slots?city=Rome&hours_ahead=24
+GET  https://web-production-dc74b.up.railway.app/slots/{slot_id}
+POST https://web-production-dc74b.up.railway.app/api/book
+GET  https://web-production-dc74b.up.railway.app/api/bookings/{booking_id}
 ```
 
-Full OpenAPI spec at [api.lastminutedealshq.com/docs](https://api.lastminutedealshq.com/docs)
+Full OpenAPI spec at [web-production-dc74b.up.railway.app/docs](https://web-production-dc74b.up.railway.app/docs)
 
 ---
 
@@ -276,5 +275,5 @@ No per-booking fees. Get started at **[lastminutedealshq.com/developers](https:/
 
 - **Website:** [lastminutedealshq.com](https://lastminutedealshq.com)
 - **Developer docs:** [lastminutedealshq.com/developers](https://lastminutedealshq.com/developers)
-- **API reference:** [api.lastminutedealshq.com/docs](https://api.lastminutedealshq.com/docs)
+- **API reference:** [web-production-dc74b.up.railway.app/docs](https://web-production-dc74b.up.railway.app/docs)
 - **Contact:** bookings@lastminutedealshq.com

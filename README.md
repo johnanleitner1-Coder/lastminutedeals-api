@@ -176,12 +176,12 @@ For Claude, GPT, and any MCP-compatible agent:
 
 ```
 POST /mcp
-{"tool": "search_last_minute_slots", "arguments": {"city": "NYC", "category": "wellness"}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_slots","arguments":{"city":"NYC","category":"experiences"}}}
 ```
 
-Available tools: `search_last_minute_slots` · `get_slot_details` · `book_slot` · `get_booking_status`
+Available tools: `search_slots` · `book_slot` · `get_booking_status` · `get_supplier_info`
 
-Full MCP server: `tools/run_mcp_server.py`
+Remote endpoint: `https://web-production-dc74b.up.railway.app/mcp`
 
 ---
 
