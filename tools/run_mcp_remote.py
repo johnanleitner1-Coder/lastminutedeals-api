@@ -54,6 +54,8 @@ mcp = FastMCP(
         "food tours, day trips), Pure Morocco Experience (Sahara desert tours, "
         "Marrakech cultural experiences), Ramen Factory Kyoto (cooking classes, "
         "workshops), O Turista Tours (Lisbon, Porto, Sintra, Fatima day trips), "
+        "Hillborn Experiences (Tanzania ultra-luxury safaris, Mount Kilimanjaro "
+        "climbs, Zanzibar retreats, cultural encounters — East Africa), "
         "and more. "
         "Use search_slots to find available experiences, then book_slot to create "
         "a Stripe checkout session — the customer completes payment and receives "
@@ -261,6 +263,16 @@ def get_supplier_info() -> dict:
                                "transfers", "wine experiences", "pilgrimage tours"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
+            },
+        ],
+            {
+                "name": "Hillborn Experiences",
+                "destinations": ["Arusha", "Serengeti", "Zanzibar", "Kilimanjaro", "Tanzania"],
+                "categories": ["private safaris", "Kilimanjaro climbs", "Zanzibar retreats",
+                               "cultural encounters", "ultra-luxury tours", "wildlife"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+                "notes": "Ultra-luxury East African operator. $1M public liability insured.",
             },
         ],
         "live_slot_count": "242 slots available within 72h (refreshed every 4h)",

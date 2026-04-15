@@ -84,7 +84,12 @@
       "MULTI DAY TOURS":            {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
-      "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"}
+      "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
+      "HE":                         {"name": "Hillborn Experiences", "city": "Arusha",   "country": "TZ"},
+      "HILLBORN":                   {"name": "Hillborn Experiences", "city": "Arusha",   "country": "TZ"},
+      "KIL":                        {"name": "Hillborn Experiences", "city": "Kilimanjaro", "country": "TZ"},
+      "ZNZ":                        {"name": "Hillborn Experiences", "city": "Zanzibar",  "country": "TZ"},
+      "SAF":                        {"name": "Hillborn Experiences", "city": "Serengeti", "country": "TZ"}
     }
   },
   {
