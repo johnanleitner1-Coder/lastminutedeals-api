@@ -404,14 +404,32 @@ def _write_request_log(path: str, method: str, status: int, latency_ms: int | No
         pass  # Never let logging break the API
 
 
-def _ensure_request_log_table() -> None:
-    """Create request_logs table in Supabase Postgres if it doesn't exist."""
+def _pg_connect(timeout: int = 8):
+    """Connect to Supabase Postgres, handling special characters in password."""
+    import psycopg2
+    from urllib.parse import urlparse, unquote
     db_url = os.getenv("SUPABASE_DB_URL", "")
     if not db_url:
+        return None
+    p = urlparse(db_url)
+    return psycopg2.connect(
+        host=p.hostname,
+        port=p.port or 5432,
+        dbname=(p.path or "/postgres").lstrip("/"),
+        user=unquote(p.username or ""),
+        password=unquote(p.password or ""),
+        connect_timeout=timeout,
+        sslmode="require",
+    )
+
+
+def _ensure_request_log_table() -> None:
+    """Create request_logs table in Supabase Postgres if it doesn't exist."""
+    if not os.getenv("SUPABASE_DB_URL", ""):
         return
     try:
         import psycopg2
-        conn = psycopg2.connect(db_url, connect_timeout=8)
+        conn = _pg_connect(timeout=8)
         conn.autocommit = True
         cur = conn.cursor()
         cur.execute("""
@@ -893,12 +911,11 @@ def _get_api_usage_metrics() -> dict:
     Query request_logs for real API call stats broken down by source.
     Returns counts for last 24h and last 30d, plus median latency.
     """
-    db_url = os.getenv("SUPABASE_DB_URL", "")
-    if not db_url:
+    if not os.getenv("SUPABASE_DB_URL", ""):
         return {}
     try:
         import psycopg2
-        conn = psycopg2.connect(db_url, connect_timeout=5)
+        conn = _pg_connect(timeout=5)
         cur  = conn.cursor()
 
         cur.execute("""
