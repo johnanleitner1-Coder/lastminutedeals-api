@@ -896,6 +896,9 @@ def _get_reliability_metrics() -> dict:
                 if rec.status_code != 200:
                     continue
                 record = rec.json()
+                # Exclude dry-run records from reliability metrics — they aren't real bookings
+                if record.get("dry_run"):
+                    continue
                 status = record.get("status", "unknown")
                 if status in stats:
                     stats[status] += 1
@@ -1319,6 +1322,10 @@ def create_checkout():
     customer_name  = (data.get("customer_name") or "").strip()
     customer_email = (data.get("customer_email") or "").strip()
     customer_phone = (data.get("customer_phone") or "").strip()
+    # dry_run=true: skip OCTO supplier call; test payment + webhook flow without
+    # touching any real supplier. Safe to use in Stripe test mode for end-to-end testing.
+    dry_run = str(data.get("dry_run", "")).lower() in ("true", "1", "yes") or \
+              request.headers.get("X-Dry-Run", "").lower() in ("true", "1", "yes")
     # Idempotency key — if provided, duplicate requests return the same checkout URL
     idempotency_key = (
         data.get("idempotency_key")
@@ -1398,6 +1405,7 @@ def create_checkout():
                 "service_name":   service_name,
                 "booking_url":    slot.get("booking_url", ""),
                 "platform":       slot.get("platform", ""),
+                "dry_run":        "true" if dry_run else "false",
             },
         )
         result = {"success": True, "checkout_url": session.url}
@@ -1504,11 +1512,13 @@ def stripe_webhook():
         booking_url = metadata.get("booking_url", "")
         amount_total = session.get("amount_total", 0)
         service_name = metadata.get("service_name", "")
+        dry_run      = metadata.get("dry_run", "false") == "true"
 
         threading.Thread(
             target=_fulfill_booking_async,
             args=(session_id, wh_record_key, slot_id, payment_intent,
-                  customer, platform, booking_url, amount_total, service_name),
+                  customer, platform, booking_url, amount_total, service_name,
+                  dry_run),
             daemon=True,
             name=f"fulfill-{session_id[:12]}",
         ).start()
@@ -1547,34 +1557,55 @@ def _fulfill_booking_async(
     session_id: str, wh_record_key: str, slot_id: str, payment_intent: str,
     customer: dict, platform: str, booking_url: str,
     amount_total: int, service_name: str,
+    dry_run: bool = False,
 ):
     """
     Run in a daemon thread. Executes the full booking lifecycle:
       1. Send "in progress" email
       2. Call supplier API with hard 45 s ceiling (ThreadPoolExecutor)
+         — OR — return synthetic confirmation if dry_run=True (no supplier touched)
       3. Capture or cancel Stripe payment hold
       4. Send confirmation or failure email
       5. Persist final state to Supabase Storage
+
+    dry_run=True: skips the OCTO supplier call entirely. Safe for end-to-end testing
+    without creating real bookings on any supplier dashboard.
     """
     import concurrent.futures
     stripe = _stripe()
     slot_for_email = get_slot_by_id(slot_id) or {"service_name": service_name or "your booking"}
     _exec_start = time.monotonic()
 
+    if dry_run:
+        print(f"[FULFILL] DRY RUN — skipping supplier call: session={session_id} slot={slot_id}")
+
     try:
-        from send_booking_email import send_booking_email
-        send_booking_email("booking_initiated", customer["email"], customer["name"], slot_for_email)
+        if not dry_run:
+            from send_booking_email import send_booking_email
+            send_booking_email("booking_initiated", customer["email"], customer["name"], slot_for_email)
     except Exception as mail_err:
         print(f"[FULFILL] Initiated email failed (non-fatal): {mail_err}")
 
     try:
-        # Run supplier call in a sub-thread so we can enforce a hard wall-clock ceiling.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="octo") as ex:
-            fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
-            confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
+        if dry_run:
+            # Synthetic path — no supplier call, no payment capture, no customer email.
+            # Simulates success so every other part of the pipeline can be verified.
+            import time as _time
+            _time.sleep(0.5)  # realistic latency simulation
+            confirmation = f"DRY-RUN-{slot_id[:16].upper()}"
+            booking_meta = {
+                "attempts": 0, "retries": 0, "retry_stage": None,
+                "reservation_ms": None, "confirm_ms": None,
+            }
+            print(f"[FULFILL] DRY RUN complete: synthetic confirmation={confirmation}")
+        else:
+            # Run supplier call in a sub-thread so we can enforce a hard wall-clock ceiling.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="octo") as ex:
+                fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
+                confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
 
-        # Booking succeeded — capture the held payment now
-        if payment_intent:
+        # Capture the payment hold — skip in dry_run (no real money involved)
+        if payment_intent and not dry_run:
             stripe.PaymentIntent.capture(payment_intent)
             print(f"[FULFILL] Payment captured: {payment_intent}")
 
@@ -1597,6 +1628,7 @@ def _fulfill_booking_async(
             "service_name":          service_name,
             "price_charged":         amount_total / 100,
             "status":                "booked",
+            "dry_run":               dry_run,
             "executed_at":           datetime.now(timezone.utc).isoformat(),
             "customer_email":        customer["email"],
             "payment_intent_id":     payment_intent,
@@ -1630,20 +1662,24 @@ def _fulfill_booking_async(
         # Update idempotency record with final status
         _save_booking_record(wh_record_key, {"session_id": session_id, "status": "booked",
                                               "booking_id": booking_record_id,
+                                              "dry_run":    dry_run,
                                               "completed_at": datetime.now(timezone.utc).isoformat()})
 
-        cancel_url = (
-            f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
-            f"?t={_make_cancel_token(booking_record_id)}"
-        )
-        try:
-            send_booking_email("booking_confirmed", customer["email"], customer["name"],
-                               slot_for_email, confirmation_number=str(confirmation or ""),
-                               cancel_url=cancel_url)
-        except Exception as mail_err:
-            print(f"[FULFILL] Confirmation email failed (non-fatal): {mail_err}")
+        # Skip customer emails in dry_run — no real customer, no noise in their inbox
+        if not dry_run:
+            cancel_url = (
+                f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
+                f"?t={_make_cancel_token(booking_record_id)}"
+            )
+            try:
+                send_booking_email("booking_confirmed", customer["email"], customer["name"],
+                                   slot_for_email, confirmation_number=str(confirmation or ""),
+                                   cancel_url=cancel_url)
+            except Exception as mail_err:
+                print(f"[FULFILL] Confirmation email failed (non-fatal): {mail_err}")
 
-        print(f"[FULFILL] Done: session={session_id} confirmation={confirmation}")
+        mode = "DRY RUN" if dry_run else "LIVE"
+        print(f"[FULFILL] {mode} done: session={session_id} confirmation={confirmation}")
 
     except Exception as e:
         failure_reason = _classify_failure(e)
