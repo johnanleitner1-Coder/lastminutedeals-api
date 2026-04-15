@@ -1485,6 +1485,216 @@ def create_checkout():
         return jsonify({"success": False, "error": "Payment system error. Please try again."}), 500
 
 
+@app.route("/api/book/direct", methods=["POST"])
+def book_direct():
+    """
+    Autonomous agent booking — no Stripe checkout, no human in the loop.
+
+    Requires BOTH:
+      - wallet_id: a funded wallet tied to the calling agent's account
+      - execution_mode: "autonomous" (explicit intent — prevents accidental charges)
+
+    Body:
+      {
+        "slot_id":        "...",
+        "customer_name":  "...",
+        "customer_email": "...",
+        "customer_phone": "...",
+        "wallet_id":      "wlt_...",
+        "execution_mode": "autonomous"
+      }
+
+    Response (always one of two shapes — never mixed):
+      Success: { "status": "confirmed", "booking_id": "bk_...", "confirmation_number": "...",
+                 "service_name": "...", "charged_cents": 11120, "wallet_balance_remaining": ... }
+      Failure: { "status": "failed", "error": "...", "failure_reason": "..." }
+
+    /api/book remains unchanged as the human-facing Stripe checkout path.
+    """
+    api_key = request.headers.get("X-API-Key", "")
+    if not _validate_api_key(api_key):
+        return jsonify({"status": "failed", "error": "Unauthorized. Valid X-API-Key required.",
+                        "failure_reason": "auth_error"}), 401
+
+    data           = request.get_json(force=True, silent=True) or {}
+    slot_id        = (data.get("slot_id") or "").strip()
+    customer_name  = (data.get("customer_name") or "").strip()
+    customer_email = (data.get("customer_email") or "").strip()
+    customer_phone = (data.get("customer_phone") or "").strip()
+    wallet_id      = (data.get("wallet_id") or "").strip()
+    execution_mode = (data.get("execution_mode") or "").strip().lower()
+
+    # Both fields required — wallet proves capability, execution_mode proves intent
+    if execution_mode != "autonomous":
+        return jsonify({
+            "status": "failed",
+            "error": 'execution_mode must be "autonomous" for direct booking. '
+                     'Use POST /api/book for human-facing Stripe checkout.',
+            "failure_reason": "invalid_execution_mode",
+        }), 400
+    if not wallet_id:
+        return jsonify({
+            "status": "failed",
+            "error": "wallet_id required for autonomous booking.",
+            "failure_reason": "missing_wallet",
+        }), 400
+    if not all([slot_id, customer_name, customer_email, customer_phone]):
+        return jsonify({
+            "status": "failed",
+            "error": "slot_id, customer_name, customer_email, customer_phone are all required.",
+            "failure_reason": "missing_fields",
+        }), 400
+
+    # Load wallet module
+    try:
+        wlt_mod = _load_module("manage_wallets")
+        if not wlt_mod:
+            raise ImportError("manage_wallets unavailable")
+    except Exception as e:
+        return jsonify({"status": "failed", "error": "Wallet system unavailable.",
+                        "failure_reason": "system_error"}), 500
+
+    # Verify wallet exists
+    wallet = wlt_mod.get_wallet(wallet_id)
+    if not wallet:
+        return jsonify({"status": "failed", "error": f"Wallet '{wallet_id}' not found.",
+                        "failure_reason": "wallet_not_found"}), 404
+
+    # Verify slot exists and is available
+    slot = get_slot_by_id(slot_id)
+    if not slot:
+        return jsonify({"status": "failed", "error": "Slot not found or expired.",
+                        "failure_reason": "slot_not_found"}), 404
+    if slot_id in _load_booked():
+        return jsonify({"status": "failed", "error": "Slot already booked.",
+                        "failure_reason": "slot_unavailable"}), 409
+    try:
+        start_dt = datetime.fromisoformat(
+            slot.get("start_time", "").replace("Z", "+00:00"))
+        if start_dt <= datetime.now(timezone.utc):
+            return jsonify({"status": "failed", "error": "Slot has already started.",
+                            "failure_reason": "slot_expired"}), 410
+    except Exception:
+        pass
+
+    our_price = slot.get("our_price") or slot.get("price")
+    if not our_price or float(our_price) <= 0:
+        return jsonify({"status": "failed", "error": "Slot has no price set.",
+                        "failure_reason": "no_price"}), 400
+
+    amount_cents = int(float(our_price) * 100)
+
+    # Check balance before attempting — fail fast, never partial
+    balance = wlt_mod.get_balance(wallet_id)
+    if balance is None or balance < amount_cents:
+        balance_dollars = (balance or 0) / 100
+        return jsonify({
+            "status": "failed",
+            "error": f"Insufficient wallet balance. Need ${our_price:.2f}, have ${balance_dollars:.2f}.",
+            "failure_reason": "insufficient_funds",
+            "wallet_balance_cents": balance or 0,
+            "required_cents": amount_cents,
+        }), 402
+
+    # Debit wallet — atomic before starting fulfillment
+    service_name = slot.get("service_name", "Booking")
+    debited = wlt_mod.debit_wallet(
+        wallet_id, amount_cents,
+        f"Booking: {service_name} ({slot_id[:12]})"
+    )
+    if not debited:
+        return jsonify({"status": "failed", "error": "Wallet debit failed. Please try again.",
+                        "failure_reason": "debit_failed"}), 500
+
+    # Wallet debited — now execute fulfillment synchronously so we can return
+    # the confirmation directly. Use a short-lived thread with a hard join timeout
+    # matching _MAX_BOOKING_TIMEOUT_S so the response isn't open-ended.
+    import concurrent.futures
+    session_id  = f"direct_{slot_id[:12]}_{int(time.time())}"
+    wh_key      = f"webhook_session_{session_id[:40]}"
+    customer    = {"name": customer_name, "email": customer_email, "phone": customer_phone}
+    platform    = slot.get("platform", "")
+    booking_url = slot.get("booking_url", "")
+
+    confirmation = None
+    booking_meta: dict = {}
+    fulfill_error = None
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
+            confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
+    except Exception as exc:
+        fulfill_error = exc
+
+    if fulfill_error:
+        # Refund the wallet debit — booking never completed
+        failure_reason = _classify_failure(fulfill_error)
+        try:
+            wlt_mod.credit_wallet(wallet_id, amount_cents,
+                                  f"Refund: failed booking {slot_id[:12]} ({failure_reason})")
+        except Exception as refund_err:
+            print(f"[DIRECT] Wallet refund failed after booking failure: {refund_err} — "
+                  f"manual refund needed for {wallet_id} ${amount_cents/100:.2f}")
+        return jsonify({
+            "status":         "failed",
+            "failure_reason": failure_reason,
+            "error":          str(fulfill_error)[:300],
+            "wallet_refunded": True,
+        }), 502
+
+    # Fulfillment succeeded — persist record and return confirmation
+    _mark_booked(slot_id)
+    booking_record_id = f"bk_{slot_id[:12]}"
+    try:
+        burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+        supplier_id = burl_j.get("supplier_id", platform)
+    except Exception:
+        supplier_id = platform
+
+    record = {
+        "booking_id":            booking_record_id,
+        "session_id":            session_id,
+        "confirmation":          str(confirmation or ""),
+        "platform":              platform,
+        "supplier_id":           supplier_id,
+        "service_name":          service_name,
+        "price_charged":         our_price,
+        "status":                "booked",
+        "payment_method":        "wallet",
+        "wallet_id":             wallet_id,
+        "executed_at":           datetime.now(timezone.utc).isoformat(),
+        "customer_email":        customer_email,
+        "slot_id":               slot_id,
+        "execution_duration_ms": booking_meta.get("execution_duration_ms"),
+        "reservation_ms":        booking_meta.get("reservation_ms"),
+        "confirm_ms":            booking_meta.get("confirm_ms"),
+        "attempts":              booking_meta.get("attempts", 1),
+        "retries":               booking_meta.get("retries", 0),
+        "retry_stage":           booking_meta.get("retry_stage"),
+    }
+    _save_booking_record(booking_record_id, record)
+    _save_booking_record(wh_key, {"session_id": session_id, "status": "booked",
+                                   "booking_id": booking_record_id,
+                                   "completed_at": datetime.now(timezone.utc).isoformat()})
+
+    balance_after = wlt_mod.get_balance(wallet_id) or 0
+
+    print(f"[DIRECT] Autonomous booking complete: {booking_record_id} "
+          f"confirmation={confirmation} wallet={wallet_id} charged=${our_price:.2f}")
+
+    return jsonify({
+        "status":                   "confirmed",
+        "booking_id":               booking_record_id,
+        "confirmation_number":      str(confirmation or ""),
+        "service_name":             service_name,
+        "start_time":               slot.get("start_time"),
+        "location_city":            slot.get("location_city"),
+        "charged_cents":            amount_cents,
+        "wallet_balance_remaining": balance_after,
+    })
+
+
 # Session-level idempotency lock: prevents concurrent processing of the same
 # Stripe session on webhook retry. Maps session_id → True while executing.
 _WEBHOOK_IN_FLIGHT: dict[str, bool] = {}
@@ -4192,25 +4402,63 @@ def _start_mcp_thread():
             return [{"error": str(e)}]
 
     @mcp.tool()
-    def book_slot(slot_id: str, customer_name: str, customer_email: str,
-                  customer_phone: str) -> dict:
-        """Book a slot. Returns checkout_url for the customer to complete Stripe payment.
-        Args: slot_id (from search_slots), customer_name, customer_email,
-        customer_phone (with country code, e.g. +15550001234)."""
+    def book_slot(
+        slot_id: str,
+        customer_name: str,
+        customer_email: str,
+        customer_phone: str,
+        execution_mode: str = "approval",
+        wallet_id: str = "",
+    ) -> dict:
+        """
+        Book a slot for a customer.
+
+        execution_mode controls the payment path — declare what your agent is authorised to do:
+
+          "approval"   (default) — returns a checkout_url the customer opens to pay via Stripe.
+                                   Safe for consumer-facing assistants; no autonomous charge.
+
+          "autonomous" — executes the booking and charges the wallet immediately.
+                         Requires wallet_id (a pre-funded wallet). Returns confirmation_number
+                         directly — no human step needed. Only use if your agent is authorised
+                         to charge without user approval.
+
+        Args:
+          slot_id        — from search_slots results
+          customer_name  — full name
+          customer_email — email address
+          customer_phone — with country code, e.g. +15550001234
+          execution_mode — "approval" (default) or "autonomous"
+          wallet_id      — required when execution_mode="autonomous" (format: wlt_...)
+        """
         try:
-            r = _mcp_req.post(f"{BOOKING_API}/api/book", headers=_HDRS, json={
-                "slot_id": slot_id, "customer_name": customer_name,
-                "customer_email": customer_email, "customer_phone": customer_phone,
-            }, timeout=15)
+            if execution_mode == "autonomous":
+                if not wallet_id:
+                    return {"status": "failed", "error": "wallet_id is required for autonomous execution."}
+                r = _mcp_req.post(f"{BOOKING_API}/api/book/direct", headers=_HDRS, json={
+                    "slot_id":        slot_id,
+                    "customer_name":  customer_name,
+                    "customer_email": customer_email,
+                    "customer_phone": customer_phone,
+                    "wallet_id":      wallet_id,
+                    "execution_mode": "autonomous",
+                }, timeout=60)  # longer timeout — fulfillment is synchronous
+            else:
+                r = _mcp_req.post(f"{BOOKING_API}/api/book", headers=_HDRS, json={
+                    "slot_id":        slot_id,
+                    "customer_name":  customer_name,
+                    "customer_email": customer_email,
+                    "customer_phone": customer_phone,
+                }, timeout=15)
             r.raise_for_status()
             return r.json()
         except _mcp_req.HTTPError as e:
             try:
-                return {"success": False, "error": e.response.json().get("error", str(e))}
+                return {"status": "failed", "error": e.response.json().get("error", str(e))}
             except Exception:
-                return {"success": False, "error": str(e)}
+                return {"status": "failed", "error": str(e)}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"status": "failed", "error": str(e)}
 
     @mcp.tool()
     def get_booking_status(booking_id: str) -> dict:
