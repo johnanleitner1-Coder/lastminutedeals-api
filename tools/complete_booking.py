@@ -1268,16 +1268,53 @@ class OCTOBooker(BasePlatformBooker):
         # 400/409/422 = definitive supplier refusal → fail immediately.
         _RETRYABLE_5XX = frozenset({429, 500, 502, 503, 504})
 
-        # Booking metadata accumulated during execution (returned alongside confirmation)
-        _meta: dict = {"retry_count": 0, "retry_stage": None}
+        # Booking metadata accumulated during execution (returned alongside confirmation).
+        # attempts = total HTTP calls issued (including retries)
+        # retries  = attempts - 1  (how many extra calls were made)
+        _meta: dict = {"attempts": 0, "retries": 0, "retry_stage": None}
 
         def _retry_delay() -> float:
             """Base 1 s + up to 0.5 s jitter to prevent thundering-herd bursts."""
             return 1.0 + random.uniform(0, 0.5)
 
+        def _octo_cleanup(
+            b_url: str, res_uuid: str, hdrs: dict, r: "type[req]", meta: dict
+        ) -> None:
+            """
+            Attempt DELETE /bookings/{uuid} to release an orphaned held reservation.
+            Retries once with jitter. If both attempts fail, sets meta["cleanup_required"]
+            so the caller (run_api_server) can persist a cleanup record for later.
+            """
+            for attempt in range(1, 3):
+                try:
+                    resp = r.delete(
+                        f"{b_url}/bookings/{res_uuid}",
+                        headers=hdrs,
+                        timeout=10,
+                    )
+                    if resp.ok or resp.status_code == 404:
+                        print(f"[OCTOBooker] Orphaned reservation released: {res_uuid}"
+                              f" (status {resp.status_code})")
+                        return
+                    # Non-ok but non-network error — retry once
+                    if attempt == 2:
+                        raise RuntimeError(f"DELETE {resp.status_code}: {resp.text[:200]}")
+                    time.sleep(_retry_delay())
+                except Exception as exc:
+                    if attempt == 2:
+                        print(f"[OCTOBooker] Cleanup failed after 2 attempts for "
+                              f"{res_uuid}: {exc} — queuing for manual cleanup")
+                        meta["cleanup_required"]         = True
+                        meta["cleanup_reservation_uuid"] = res_uuid
+                        meta["cleanup_base_url"]         = b_url
+                        return
+                    time.sleep(_retry_delay())
+
         def _octo_post(url: str, stage: str, **kwargs) -> "req.Response":
-            """POST with 2 attempts: retries on network errors and 5xx responses."""
+            """POST with 2 attempts: retries on network errors and 5xx responses.
+            Tracks total attempts and retries in _meta."""
             for _attempt in range(1, 3):
+                _meta["attempts"] += 1
                 try:
                     r = req.post(url, headers=headers, timeout=30, **kwargs)
                 except req.RequestException as exc:
@@ -1285,7 +1322,7 @@ class OCTOBooker(BasePlatformBooker):
                         raise BookingTimeoutError(
                             f"OCTOBooker: {stage} network error after 2 attempts: {exc}"
                         ) from exc
-                    _meta["retry_count"] += 1
+                    _meta["retries"] += 1
                     _meta["retry_stage"] = stage
                     delay = _retry_delay()
                     print(f"[OCTOBooker] {stage} network error (attempt {_attempt}), "
@@ -1295,7 +1332,7 @@ class OCTOBooker(BasePlatformBooker):
 
                 # Got a response — retry if transient 5xx and we have attempts left
                 if _attempt == 1 and r.status_code in _RETRYABLE_5XX:
-                    _meta["retry_count"] += 1
+                    _meta["retries"] += 1
                     _meta["retry_stage"] = stage
                     delay = _retry_delay()
                     print(f"[OCTOBooker] {stage} HTTP {r.status_code} (attempt {_attempt}), "
@@ -1366,32 +1403,14 @@ class OCTOBooker(BasePlatformBooker):
         except Exception:
             # Confirm failed — cancel the orphaned reservation so inventory isn't held.
             # OCTO spec: DELETE /bookings/{uuid} cancels a held-but-unconfirmed booking.
-            try:
-                req.delete(
-                    f"{base_url}/bookings/{reservation_uuid}",
-                    headers=headers,
-                    timeout=10,
-                )
-                print(f"[OCTOBooker] Orphaned reservation cancelled: {reservation_uuid}")
-            except Exception as del_err:
-                print(f"[OCTOBooker] Could not cancel orphaned reservation "
-                      f"{reservation_uuid}: {del_err} — may need manual cleanup")
+            _octo_cleanup(base_url, reservation_uuid, headers, req, _meta)
             raise
 
         _meta["confirm_ms"] = round((time.monotonic() - _t1) * 1000)
 
         if not resp.ok:
             # Confirm returned an error — attempt reservation cleanup before raising.
-            try:
-                req.delete(
-                    f"{base_url}/bookings/{reservation_uuid}",
-                    headers=headers,
-                    timeout=10,
-                )
-                print(f"[OCTOBooker] Orphaned reservation cancelled: {reservation_uuid}")
-            except Exception as del_err:
-                print(f"[OCTOBooker] Could not cancel orphaned reservation "
-                      f"{reservation_uuid}: {del_err}")
+            _octo_cleanup(base_url, reservation_uuid, headers, req, _meta)
             raise BookingUnknownError(
                 f"OCTOBooker: confirmation failed {resp.status_code}: {resp.text[:300]}"
             )

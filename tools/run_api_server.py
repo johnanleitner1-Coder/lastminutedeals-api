@@ -850,6 +850,8 @@ def _get_reliability_metrics() -> dict:
         "avg_reservation_ms": None, "avg_confirm_ms": None,
         # Retries
         "retry_rate": None, "retry_stage_breakdown": {},
+        # Failures
+        "failure_breakdown": {},
         # Per supplier
         "by_supplier": {},
     }
@@ -881,6 +883,7 @@ def _get_reliability_metrics() -> dict:
         conf_times:  list = []
         retry_counts: list = []
         retry_stages: dict = {}
+        failure_breakdown: dict = {}
         # per-supplier: {supplier_id: {"total": int, "success": int, "exec_ms": [...]}}
         by_supplier: dict = {}
 
@@ -898,6 +901,11 @@ def _get_reliability_metrics() -> dict:
                     stats[status] += 1
                 stats["total"] += 1
 
+                # Failure reason breakdown
+                if status == "failed":
+                    fr = record.get("failure_reason", "unknown")
+                    failure_breakdown[fr] = failure_breakdown.get(fr, 0) + 1
+
                 ea = record.get("executed_at", "")
                 if ea and (last_booking_at is None or ea > last_booking_at):
                     last_booking_at = ea
@@ -913,8 +921,8 @@ def _get_reliability_metrics() -> dict:
                 if conf_ms is not None:
                     conf_times.append(int(conf_ms))
 
-                # Retries
-                rc = record.get("retry_count", 0) or 0
+                # Retries — new field name is "retries"; fall back to legacy "retry_count"
+                rc = record.get("retries", record.get("retry_count", 0)) or 0
                 retry_counts.append(rc)
                 if rc > 0:
                     stage = record.get("retry_stage") or "unknown"
@@ -963,6 +971,8 @@ def _get_reliability_metrics() -> dict:
             stats["retry_rate"] = round(retried / len(retry_counts), 3)
             stats["retry_stage_breakdown"] = retry_stages
 
+        stats["failure_breakdown"] = failure_breakdown
+
         # Per-supplier summary (only suppliers with ≥1 booking)
         stats["by_supplier"] = {
             sid: {
@@ -1000,18 +1010,38 @@ def _compute_trust_signal(reliability: dict) -> dict:
         insufficient_data  — fewer than 5 real bookings; cannot assess
         low_confidence     — success_rate < 0.80 or avg_execution_ms > 15 000
         moderate           — success_rate ≥ 0.80 and avg_execution_ms ≤ 15 000
-        high_confidence    — success_rate ≥ 0.92 and avg_execution_ms ≤ 8 000
+        high_confidence    — success_rate ≥ 0.92, avg_execution_ms ≤ 8 000,
+                             and failure_variance != "high"
+
+    failure_variance — consistency signal derived from p95/avg execution ratio:
+        low    → p95 < 1.5× avg  (predictable, consistent)
+        medium → p95 1.5–2.5× avg
+        high   → p95 > 2.5× avg  (erratic; penalises high_confidence verdict)
     """
-    n            = reliability.get("total", 0)
-    success_rate = reliability.get("success_rate")
-    avg_ms       = reliability.get("avg_execution_ms")
-    retry_rate   = reliability.get("retry_rate")
-    p95_ms       = reliability.get("p95_execution_ms")
+    n                 = reliability.get("total", 0)
+    success_rate      = reliability.get("success_rate")
+    avg_ms            = reliability.get("avg_execution_ms")
+    retry_rate        = reliability.get("retry_rate")
+    p95_ms            = reliability.get("p95_execution_ms")
+    failure_breakdown = reliability.get("failure_breakdown", {})
+
+    # Derive failure_variance from p95/avg ratio
+    failure_variance: str | None = None
+    if avg_ms and p95_ms and avg_ms > 0:
+        ratio = p95_ms / avg_ms
+        if ratio < 1.5:
+            failure_variance = "low"
+        elif ratio < 2.5:
+            failure_variance = "medium"
+        else:
+            failure_variance = "high"
 
     if n < 5 or success_rate is None:
         verdict = "insufficient_data"
         score   = None
-    elif success_rate >= 0.92 and (avg_ms is None or avg_ms <= 8_000):
+    elif (success_rate >= 0.92
+          and (avg_ms is None or avg_ms <= 8_000)
+          and failure_variance != "high"):
         verdict = "high_confidence"
         score   = round(success_rate, 3)
     elif success_rate >= 0.80 and (avg_ms is None or avg_ms <= 15_000):
@@ -1029,17 +1059,21 @@ def _compute_trust_signal(reliability: dict) -> dict:
         parts.append(f"avg execution {avg_ms / 1000:.1f}s")
     if p95_ms is not None:
         parts.append(f"p95 {p95_ms / 1000:.1f}s")
+    if failure_variance:
+        parts.append(f"{failure_variance} variance")
     if retry_rate is not None:
         parts.append(f"{retry_rate * 100:.0f}% retry rate")
     explanation = ". ".join(parts) + "." if parts else "No booking data collected yet."
 
     return {
-        "score":        score,
-        "sample_size":  n,
-        "verdict":      verdict,
-        "explanation":  explanation,
+        "score":             score,
+        "sample_size":       n,
+        "verdict":           verdict,
+        "explanation":       explanation,
+        "failure_variance":  failure_variance,
+        "failure_breakdown": failure_breakdown,
         # Agent hint: if verdict is high_confidence or moderate, safe to route
-        "recommended":  verdict in ("high_confidence", "moderate"),
+        "recommended":       verdict in ("high_confidence", "moderate"),
     }
 
 
@@ -1484,6 +1518,31 @@ def stripe_webhook():
     return jsonify({"status": "ok"})
 
 
+# Hard ceiling on total supplier execution time. Individual OCTO HTTP calls have a
+# 30 s socket timeout; with two retry attempts per call the worst-case chain is
+# ~95 s. This ceiling aborts the supplier call and cancels the payment hold so the
+# customer is never left waiting indefinitely.
+_MAX_BOOKING_TIMEOUT_S = 45
+
+
+def _classify_failure(exc: Exception) -> str:
+    """Map exception type to a stable failure_reason string for booking records."""
+    from concurrent.futures import TimeoutError as FuturesTimeout
+    cls = type(exc).__name__
+    msg = str(exc).lower()
+    if isinstance(exc, FuturesTimeout) or "timed out" in msg or "timeout" in msg:
+        return "execution_timeout"
+    if "BookingUnavailableError" in cls or "unavailable" in msg or "conflict" in msg or "409" in msg:
+        return "availability_conflict"
+    if "BookingTimeoutError" in cls or "network error" in msg:
+        return "timeout"
+    if "BookingAuthRequired" in cls or "auth" in msg:
+        return "auth_error"
+    if "cleanup_failed" in msg:
+        return "cleanup_failed"
+    return "api_error"
+
+
 def _fulfill_booking_async(
     session_id: str, wh_record_key: str, slot_id: str, payment_intent: str,
     customer: dict, platform: str, booking_url: str,
@@ -1492,11 +1551,12 @@ def _fulfill_booking_async(
     """
     Run in a daemon thread. Executes the full booking lifecycle:
       1. Send "in progress" email
-      2. Call supplier API (OCTOBooker for Bokun)
+      2. Call supplier API with hard 45 s ceiling (ThreadPoolExecutor)
       3. Capture or cancel Stripe payment hold
       4. Send confirmation or failure email
       5. Persist final state to Supabase Storage
     """
+    import concurrent.futures
     stripe = _stripe()
     slot_for_email = get_slot_by_id(slot_id) or {"service_name": service_name or "your booking"}
     _exec_start = time.monotonic()
@@ -1508,7 +1568,10 @@ def _fulfill_booking_async(
         print(f"[FULFILL] Initiated email failed (non-fatal): {mail_err}")
 
     try:
-        confirmation, booking_meta = _fulfill_booking(slot_id, customer, platform, booking_url)
+        # Run supplier call in a sub-thread so we can enforce a hard wall-clock ceiling.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="octo") as ex:
+            fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
+            confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
 
         # Booking succeeded — capture the held payment now
         if payment_intent:
@@ -1519,33 +1582,51 @@ def _fulfill_booking_async(
 
         booking_record_id = f"bk_{slot_id[:12]}"
         try:
-            burl_j       = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
-            supplier_id  = burl_j.get("supplier_id", platform)
+            burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+            supplier_id = burl_j.get("supplier_id", platform)
         except Exception:
             supplier_id = platform
 
         record = {
-            "booking_id":           booking_record_id,
-            "session_id":           session_id,
-            "confirmation":         str(confirmation or ""),
-            "platform":             platform,
-            "supplier_id":          supplier_id,
-            "booking_url":          booking_url,
-            "service_name":         service_name,
-            "price_charged":        amount_total / 100,
-            "status":               "booked",
-            "executed_at":          datetime.now(timezone.utc).isoformat(),
-            "customer_email":       customer["email"],
-            "payment_intent_id":    payment_intent,
-            "slot_id":              slot_id,
+            "booking_id":            booking_record_id,
+            "session_id":            session_id,
+            "confirmation":          str(confirmation or ""),
+            "platform":              platform,
+            "supplier_id":           supplier_id,
+            "booking_url":           booking_url,
+            "service_name":          service_name,
+            "price_charged":         amount_total / 100,
+            "status":                "booked",
+            "executed_at":           datetime.now(timezone.utc).isoformat(),
+            "customer_email":        customer["email"],
+            "payment_intent_id":     payment_intent,
+            "slot_id":               slot_id,
             "execution_duration_ms": round((time.monotonic() - _exec_start) * 1000),
-            # Per-step timing + retry observability from OCTOBooker
-            "reservation_ms":       booking_meta.get("reservation_ms"),
-            "confirm_ms":           booking_meta.get("confirm_ms"),
-            "retry_count":          booking_meta.get("retry_count", 0),
-            "retry_stage":          booking_meta.get("retry_stage"),
+            # Per-step timing from OCTOBooker
+            "reservation_ms":        booking_meta.get("reservation_ms"),
+            "confirm_ms":            booking_meta.get("confirm_ms"),
+            # Retry observability — attempts = total calls made, retries = attempts - 1
+            "attempts":              booking_meta.get("attempts", 1),
+            "retries":               booking_meta.get("retries", 0),
+            "retry_stage":           booking_meta.get("retry_stage"),
         }
         _save_booking_record(booking_record_id, record)
+
+        # If reservation cleanup was needed and failed, queue it for later
+        if booking_meta.get("cleanup_required"):
+            _save_booking_record(
+                f"cleanup_{booking_meta['cleanup_reservation_uuid'][:32]}",
+                {
+                    "cleanup_required":    True,
+                    "reservation_uuid":    booking_meta.get("cleanup_reservation_uuid"),
+                    "supplier":            platform,
+                    "supplier_base_url":   booking_meta.get("cleanup_base_url"),
+                    "detected_at":         datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            print(f"[FULFILL] Cleanup record saved for orphaned reservation "
+                  f"{booking_meta.get('cleanup_reservation_uuid')}")
+
         # Update idempotency record with final status
         _save_booking_record(wh_record_key, {"session_id": session_id, "status": "booked",
                                               "booking_id": booking_record_id,
@@ -1565,7 +1646,8 @@ def _fulfill_booking_async(
         print(f"[FULFILL] Done: session={session_id} confirmation={confirmation}")
 
     except Exception as e:
-        print(f"[FULFILL] Booking failed: {e}")
+        failure_reason = _classify_failure(e)
+        print(f"[FULFILL] Booking failed ({failure_reason}): {e}")
 
         if payment_intent:
             try:
@@ -1574,9 +1656,13 @@ def _fulfill_booking_async(
             except Exception as cancel_err:
                 print(f"[FULFILL] Failed to cancel hold: {cancel_err} — manual action required")
 
-        _save_booking_record(wh_record_key, {"session_id": session_id, "status": "failed",
-                                              "error": str(e)[:500],
-                                              "failed_at": datetime.now(timezone.utc).isoformat()})
+        _save_booking_record(wh_record_key, {
+            "session_id":    session_id,
+            "status":        "failed",
+            "failure_reason": failure_reason,
+            "error":         str(e)[:500],
+            "failed_at":     datetime.now(timezone.utc).isoformat(),
+        })
 
         try:
             send_booking_email("booking_failed", customer["email"], customer["name"],
