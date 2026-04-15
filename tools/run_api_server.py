@@ -826,23 +826,36 @@ def health():
 
 def _get_reliability_metrics() -> dict:
     """
-    Compute real booking reliability stats from Supabase Storage booking records.
-    Returns counts by status, success rate, reconciliation flags, and circuit breaker states.
+    Compute booking reliability stats from Supabase Storage booking records.
+
+    Returns:
+      - Status counts and success rate
+      - Execution timing distribution (avg, p50, p95) for total, reservation, confirm
+      - Retry rate and retry stage breakdown
+      - Per-supplier success rates and avg execution time
+      - Circuit breaker states
     """
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if not sb_url or not sb_secret:
         return {}
 
-    stats = {
+    stats: dict = {
         "booked": 0, "cancelled": 0, "failed": 0,
         "reconciliation_required": 0, "total": 0,
         "success_rate": None, "circuit_breakers": {},
         "last_booking_at": None,
+        # Timing
+        "avg_execution_ms": None, "p50_execution_ms": None, "p95_execution_ms": None,
+        "avg_reservation_ms": None, "avg_confirm_ms": None,
+        # Retries
+        "retry_rate": None, "retry_stage_breakdown": {},
+        # Per supplier
+        "by_supplier": {},
     }
 
     try:
-        # List booking files (exclude cancellation_queue and circuit_breaker prefixes)
+        # List booking files, exclude internal prefixes
         r = requests.post(
             f"{sb_url}/storage/v1/object/list/bookings",
             headers={**_sb_storage_headers(), "Content-Type": "application/json"},
@@ -859,9 +872,18 @@ def _get_reliability_metrics() -> dict:
             and not item["name"].startswith("cancellation_queue/")
             and not item["name"].startswith("circuit_breaker/")
             and not item["name"].startswith("idem_")
+            and not item["name"].startswith("webhook_session_")
         ]
 
-        last_booking_at = None
+        last_booking_at  = None
+        exec_times:  list = []
+        res_times:   list = []
+        conf_times:  list = []
+        retry_counts: list = []
+        retry_stages: dict = {}
+        # per-supplier: {supplier_id: {"total": int, "success": int, "exec_ms": [...]}}
+        by_supplier: dict = {}
+
         for name in names:
             try:
                 rec = requests.get(
@@ -875,10 +897,39 @@ def _get_reliability_metrics() -> dict:
                 if status in stats:
                     stats[status] += 1
                 stats["total"] += 1
-                # Track most recent booking
+
                 ea = record.get("executed_at", "")
                 if ea and (last_booking_at is None or ea > last_booking_at):
                     last_booking_at = ea
+
+                # Timing
+                exec_ms = record.get("execution_duration_ms")
+                if exec_ms is not None:
+                    exec_times.append(int(exec_ms))
+                res_ms = record.get("reservation_ms")
+                if res_ms is not None:
+                    res_times.append(int(res_ms))
+                conf_ms = record.get("confirm_ms")
+                if conf_ms is not None:
+                    conf_times.append(int(conf_ms))
+
+                # Retries
+                rc = record.get("retry_count", 0) or 0
+                retry_counts.append(rc)
+                if rc > 0:
+                    stage = record.get("retry_stage") or "unknown"
+                    retry_stages[stage] = retry_stages.get(stage, 0) + 1
+
+                # Per-supplier
+                sid = record.get("supplier_id") or record.get("platform") or "unknown"
+                if sid not in by_supplier:
+                    by_supplier[sid] = {"total": 0, "success": 0, "exec_ms": []}
+                by_supplier[sid]["total"] += 1
+                if status in ("booked", "cancelled"):
+                    by_supplier[sid]["success"] += 1
+                if exec_ms is not None:
+                    by_supplier[sid]["exec_ms"].append(int(exec_ms))
+
             except Exception:
                 pass
 
@@ -888,6 +939,40 @@ def _get_reliability_metrics() -> dict:
             stats["success_rate"] = round(
                 (stats["booked"] + stats["cancelled"]) / total, 3
             )
+
+        # Timing aggregates
+        def _pct(lst: list, p: float) -> int | None:
+            if not lst:
+                return None
+            s = sorted(lst)
+            idx = int(len(s) * p)
+            return s[min(idx, len(s) - 1)]
+
+        if exec_times:
+            stats["avg_execution_ms"] = round(sum(exec_times) / len(exec_times))
+            stats["p50_execution_ms"] = _pct(exec_times, 0.50)
+            stats["p95_execution_ms"] = _pct(exec_times, 0.95)
+        if res_times:
+            stats["avg_reservation_ms"] = round(sum(res_times) / len(res_times))
+        if conf_times:
+            stats["avg_confirm_ms"] = round(sum(conf_times) / len(conf_times))
+
+        # Retry rate
+        if retry_counts:
+            retried = sum(1 for c in retry_counts if c > 0)
+            stats["retry_rate"] = round(retried / len(retry_counts), 3)
+            stats["retry_stage_breakdown"] = retry_stages
+
+        # Per-supplier summary (only suppliers with ≥1 booking)
+        stats["by_supplier"] = {
+            sid: {
+                "total":            d["total"],
+                "success_rate":     round(d["success"] / d["total"], 3) if d["total"] else None,
+                "avg_execution_ms": round(sum(d["exec_ms"]) / len(d["exec_ms"])) if d["exec_ms"] else None,
+            }
+            for sid, d in by_supplier.items()
+        }
+
     except Exception as e:
         print(f"[METRICS] Reliability stats error: {e}")
 
@@ -904,6 +989,58 @@ def _get_reliability_metrics() -> dict:
         pass
 
     return stats
+
+
+def _compute_trust_signal(reliability: dict) -> dict:
+    """
+    Produce a machine-readable trust signal that agents can evaluate programmatically.
+    Designed to be the top-level answer to: "Should I route bookings through this system?"
+
+    Verdict scale:
+        insufficient_data  — fewer than 5 real bookings; cannot assess
+        low_confidence     — success_rate < 0.80 or avg_execution_ms > 15 000
+        moderate           — success_rate ≥ 0.80 and avg_execution_ms ≤ 15 000
+        high_confidence    — success_rate ≥ 0.92 and avg_execution_ms ≤ 8 000
+    """
+    n            = reliability.get("total", 0)
+    success_rate = reliability.get("success_rate")
+    avg_ms       = reliability.get("avg_execution_ms")
+    retry_rate   = reliability.get("retry_rate")
+    p95_ms       = reliability.get("p95_execution_ms")
+
+    if n < 5 or success_rate is None:
+        verdict = "insufficient_data"
+        score   = None
+    elif success_rate >= 0.92 and (avg_ms is None or avg_ms <= 8_000):
+        verdict = "high_confidence"
+        score   = round(success_rate, 3)
+    elif success_rate >= 0.80 and (avg_ms is None or avg_ms <= 15_000):
+        verdict = "moderate"
+        score   = round(success_rate, 3)
+    else:
+        verdict = "low_confidence"
+        score   = round(success_rate, 3)
+
+    # Human-readable explanation for agent logs / UIs
+    parts = []
+    if success_rate is not None:
+        parts.append(f"{success_rate * 100:.1f}% success rate over {n} real bookings")
+    if avg_ms is not None:
+        parts.append(f"avg execution {avg_ms / 1000:.1f}s")
+    if p95_ms is not None:
+        parts.append(f"p95 {p95_ms / 1000:.1f}s")
+    if retry_rate is not None:
+        parts.append(f"{retry_rate * 100:.0f}% retry rate")
+    explanation = ". ".join(parts) + "." if parts else "No booking data collected yet."
+
+    return {
+        "score":        score,
+        "sample_size":  n,
+        "verdict":      verdict,
+        "explanation":  explanation,
+        # Agent hint: if verdict is high_confidence or moderate, safe to route
+        "recommended":  verdict in ("high_confidence", "moderate"),
+    }
 
 
 def _get_api_usage_metrics() -> dict:
@@ -1127,8 +1264,9 @@ def public_metrics():
             "mcp_server":    "POST /mcp  (MCP-over-HTTP, no transport setup needed)",
             "openapi":       f"{os.getenv('LANDING_PAGE_URL', 'https://lastminutedealshq.com')}/openapi.json",
         },
-        "reliability": _get_reliability_metrics(),
-        "api_usage":   _get_api_usage_metrics(),
+        "reliability":   (reliability := _get_reliability_metrics()),
+        "trust_signal":  _compute_trust_signal(reliability),
+        "api_usage":     _get_api_usage_metrics(),
     })
 
 
