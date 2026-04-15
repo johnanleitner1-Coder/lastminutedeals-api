@@ -44,6 +44,8 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import threading
+
 import requests
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
@@ -331,6 +333,106 @@ def _ensure_intent_monitor():
 @app.before_request
 def _lazy_init():
     _ensure_intent_monitor()
+    request._start_time = time.monotonic()
+
+
+@app.after_request
+def _log_request(response):
+    """Fire-and-forget request log to Supabase. Never delays the response."""
+    try:
+        latency_ms = round((time.monotonic() - request._start_time) * 1000)
+    except Exception:
+        latency_ms = None
+
+    path = request.path
+    # Skip noisy internals
+    if path in ("/health", "/sse", "/messages") or path.startswith("/static"):
+        return response
+
+    threading.Thread(
+        target=_write_request_log,
+        args=(path, request.method, response.status_code, latency_ms, _detect_source()),
+        daemon=True,
+    ).start()
+    return response
+
+
+def _detect_source() -> str:
+    """Classify the caller: mcp_agent | smithery | landing_page | api."""
+    # Our own MCP proxy tags its forwarded requests
+    if request.headers.get("X-Mcp-Source"):
+        return "mcp_agent"
+    referer = request.headers.get("Referer", "")
+    landing = os.getenv("LANDING_PAGE_URL", "lastminutedealshq.com")
+    if landing and landing in referer:
+        return "landing_page"
+    ua = request.headers.get("User-Agent", "").lower()
+    if "smithery" in ua:
+        return "smithery"
+    # MCP SSE clients typically use python-requests or mcp-client user agents
+    if any(x in ua for x in ("mcp", "claude", "openai", "anthropic", "gpt")):
+        return "mcp_agent"
+    return "api"
+
+
+def _write_request_log(path: str, method: str, status: int, latency_ms: int | None, source: str):
+    """Write one row to the request_logs Supabase table. Runs in a daemon thread."""
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
+        return
+    try:
+        requests.post(
+            f"{sb_url}/rest/v1/request_logs",
+            headers={
+                "apikey":        sb_secret,
+                "Authorization": f"Bearer {sb_secret}",
+                "Content-Type":  "application/json",
+                "Prefer":        "return=minimal",
+            },
+            json={
+                "path":       path,
+                "method":     method,
+                "status":     status,
+                "latency_ms": latency_ms,
+                "source":     source,
+                "logged_at":  datetime.now(timezone.utc).isoformat(),
+            },
+            timeout=4,
+        )
+    except Exception:
+        pass  # Never let logging break the API
+
+
+def _ensure_request_log_table() -> None:
+    """Create request_logs table in Supabase Postgres if it doesn't exist."""
+    db_url = os.getenv("SUPABASE_DB_URL", "")
+    if not db_url:
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url, connect_timeout=8)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS request_logs (
+                id          BIGSERIAL PRIMARY KEY,
+                logged_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                path        TEXT NOT NULL,
+                method      TEXT NOT NULL,
+                status      INTEGER,
+                latency_ms  INTEGER,
+                source      TEXT        -- 'mcp_agent' | 'smithery' | 'landing_page' | 'api'
+            );
+            CREATE INDEX IF NOT EXISTS request_logs_logged_at_idx ON request_logs (logged_at DESC);
+            CREATE INDEX IF NOT EXISTS request_logs_source_idx    ON request_logs (source);
+        """)
+        cur.close()
+        conn.close()
+        print("[DB] request_logs table ready")
+    except Exception as e:
+        print(f"[DB] request_logs table setup error: {e}")
+
 
 # Protected endpoints require X-API-Key header
 _PROTECTED_PATHS = {"/api/book", "/api/execute", "/execute/guaranteed"}  # /api/customers/<id>/book and wallet routes checked in route
@@ -786,6 +888,74 @@ def _get_reliability_metrics() -> dict:
     return stats
 
 
+def _get_api_usage_metrics() -> dict:
+    """
+    Query request_logs for real API call stats broken down by source.
+    Returns counts for last 24h and last 30d, plus median latency.
+    """
+    db_url = os.getenv("SUPABASE_DB_URL", "")
+    if not db_url:
+        return {}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url, connect_timeout=5)
+        cur  = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                source,
+                COUNT(*)                                        AS calls,
+                ROUND(AVG(latency_ms))                         AS avg_latency_ms,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)) AS median_latency_ms,
+                SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END)  AS success_calls
+            FROM request_logs
+            WHERE logged_at > NOW() - INTERVAL '30 days'
+              AND path IN ('/slots', '/api/book', '/slots/quote')
+            GROUP BY source
+            ORDER BY calls DESC
+        """)
+        rows_30d = cur.fetchall()
+
+        cur.execute("""
+            SELECT COUNT(*), path
+            FROM request_logs
+            WHERE logged_at > NOW() - INTERVAL '24 hours'
+              AND path IN ('/slots', '/api/book')
+            GROUP BY path
+        """)
+        rows_24h = cur.fetchall()
+
+        cur.execute("""
+            SELECT COUNT(*) FROM request_logs
+            WHERE logged_at > NOW() - INTERVAL '30 days'
+              AND path = '/api/book' AND status = 200
+        """)
+        book_attempts_30d = (cur.fetchone() or [0])[0]
+
+        cur.close()
+        conn.close()
+
+        by_source = {
+            row[0]: {"calls": row[1], "avg_latency_ms": row[2],
+                     "median_latency_ms": row[3], "success_calls": row[4]}
+            for row in rows_30d
+        }
+        last_24h = {row[1]: row[0] for row in rows_24h}
+
+        return {
+            "last_30d": {
+                "by_source":          by_source,
+                "checkout_initiated": int(book_attempts_30d),
+            },
+            "last_24h": {
+                "slot_searches":  int(last_24h.get("/slots", 0)),
+                "book_attempts":  int(last_24h.get("/api/book", 0)),
+            },
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.route("/metrics", methods=["GET"])
 def public_metrics():
     """
@@ -941,6 +1111,7 @@ def public_metrics():
             "openapi":       f"{os.getenv('LANDING_PAGE_URL', 'https://lastminutedealshq.com')}/openapi.json",
         },
         "reliability": _get_reliability_metrics(),
+        "api_usage":   _get_api_usage_metrics(),
     })
 
 
@@ -3667,8 +3838,10 @@ def _mcp_sse_proxy():
 def _mcp_messages_proxy():
     """Proxy POST /messages to the internal FastMCP message handler."""
     mcp_url = f"http://127.0.0.1:{MCP_INTERNAL_PORT}/messages"
+    # Tag forwarded requests so downstream /slots and /api/book calls are sourced correctly
+    fwd_headers = {"X-Mcp-Source": "1", "Content-Type": "application/json"}
     resp = requests.post(mcp_url, json=request.get_json(silent=True),
-                         params=request.args, timeout=30)
+                         headers=fwd_headers, params=request.args, timeout=30)
     return jsonify(resp.json()), resp.status_code
 
 
@@ -3685,6 +3858,7 @@ if __name__ == "__main__":
 
     _ensure_website_api_key()
     _ensure_cancellation_queue_table()
+    _ensure_request_log_table()
     _start_retry_scheduler()
     _register_peek_webhook()
     _start_mcp_thread()
