@@ -3514,9 +3514,6 @@ def _build_combined_asgi():
       POST /messages   → FastMCP message handler
       everything else  → Flask booking API (WSGI wrapped as ASGI)
     """
-    import sys, os
-    sys.path.insert(0, os.path.dirname(__file__))
-
     from a2wsgi import WSGIMiddleware
     from starlette.applications import Starlette
     from starlette.routing import Mount, Route
