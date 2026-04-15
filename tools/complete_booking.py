@@ -1276,29 +1276,43 @@ class OCTOBooker(BasePlatformBooker):
             "contact":           contact,
         }
 
-        try:
-            resp = req.post(
-                f"{base_url}/reservations",
-                headers=headers,
-                json=reservation_payload,
-                timeout=30,
-            )
-        except req.RequestException as exc:
-            raise BookingTimeoutError(f"OCTOBooker: reservation request failed: {exc}") from exc
+        for _attempt in range(1, 3):  # 2 attempts
+            try:
+                resp = req.post(
+                    f"{base_url}/reservations",
+                    headers=headers,
+                    json=reservation_payload,
+                    timeout=30,
+                )
+                break
+            except req.RequestException as exc:
+                if _attempt == 2:
+                    raise BookingTimeoutError(
+                        f"OCTOBooker: reservation failed after 2 attempts: {exc}"
+                    ) from exc
+                print(f"[OCTOBooker] Reservation attempt {_attempt} failed, retrying: {exc}")
+                time.sleep(1)
 
         # Some suppliers (Zaui, Ventrata) don't implement /reservations — fall back to /bookings
         # Trigger fallback on any 400/404/405 from /reservations (endpoint may not exist)
         if resp.status_code in (400, 404, 405):
             print(f"[OCTOBooker] /reservations not supported ({resp.status_code}) — trying POST /bookings")
-            try:
-                resp = req.post(
-                    f"{base_url}/bookings",
-                    headers=headers,
-                    json=reservation_payload,
-                    timeout=30,
-                )
-            except req.RequestException as exc:
-                raise BookingTimeoutError(f"OCTOBooker: bookings request failed: {exc}") from exc
+            for _attempt in range(1, 3):  # 2 attempts
+                try:
+                    resp = req.post(
+                        f"{base_url}/bookings",
+                        headers=headers,
+                        json=reservation_payload,
+                        timeout=30,
+                    )
+                    break
+                except req.RequestException as exc:
+                    if _attempt == 2:
+                        raise BookingTimeoutError(
+                            f"OCTOBooker: bookings fallback failed after 2 attempts: {exc}"
+                        ) from exc
+                    print(f"[OCTOBooker] Bookings fallback attempt {_attempt} failed, retrying: {exc}")
+                    time.sleep(1)
 
         if resp.status_code == 409:
             raise BookingUnavailableError(
@@ -1325,17 +1339,22 @@ class OCTOBooker(BasePlatformBooker):
         print(f"[OCTOBooker] Confirming booking: {reservation_uuid}")
         confirm_payload = {"contact": contact, "resellerReference": reseller_ref}
 
-        try:
-            resp = req.post(
-                f"{base_url}/bookings/{reservation_uuid}/confirm",
-                headers=headers,
-                json=confirm_payload,
-                timeout=30,
-            )
-        except req.RequestException as exc:
-            raise BookingTimeoutError(
-                f"OCTOBooker: confirmation request failed: {exc}"
-            ) from exc
+        for _attempt in range(1, 3):  # 2 attempts
+            try:
+                resp = req.post(
+                    f"{base_url}/bookings/{reservation_uuid}/confirm",
+                    headers=headers,
+                    json=confirm_payload,
+                    timeout=30,
+                )
+                break
+            except req.RequestException as exc:
+                if _attempt == 2:
+                    raise BookingTimeoutError(
+                        f"OCTOBooker: confirmation failed after 2 attempts: {exc}"
+                    ) from exc
+                print(f"[OCTOBooker] Confirmation attempt {_attempt} failed, retrying: {exc}")
+                time.sleep(1)
 
         if not resp.ok:
             raise BookingUnknownError(

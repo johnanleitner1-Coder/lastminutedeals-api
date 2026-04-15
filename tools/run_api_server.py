@@ -1361,6 +1361,7 @@ def _fulfill_booking_async(
     """
     stripe = _stripe()
     slot_for_email = get_slot_by_id(slot_id) or {"service_name": service_name or "your booking"}
+    _exec_start = time.monotonic()
 
     try:
         from send_booking_email import send_booking_email
@@ -1386,19 +1387,20 @@ def _fulfill_booking_async(
             supplier_id = platform
 
         record = {
-            "booking_id":        booking_record_id,
-            "session_id":        session_id,
-            "confirmation":      str(confirmation or ""),
-            "platform":          platform,
-            "supplier_id":       supplier_id,
-            "booking_url":       booking_url,
-            "service_name":      service_name,
-            "price_charged":     amount_total / 100,
-            "status":            "booked",
-            "executed_at":       datetime.now(timezone.utc).isoformat(),
-            "customer_email":    customer["email"],
-            "payment_intent_id": payment_intent,
-            "slot_id":           slot_id,
+            "booking_id":           booking_record_id,
+            "session_id":           session_id,
+            "confirmation":         str(confirmation or ""),
+            "platform":             platform,
+            "supplier_id":          supplier_id,
+            "booking_url":          booking_url,
+            "service_name":         service_name,
+            "price_charged":        amount_total / 100,
+            "status":               "booked",
+            "executed_at":          datetime.now(timezone.utc).isoformat(),
+            "customer_email":       customer["email"],
+            "payment_intent_id":    payment_intent,
+            "slot_id":              slot_id,
+            "execution_duration_ms": round((time.monotonic() - _exec_start) * 1000),
         }
         _save_booking_record(booking_record_id, record)
         # Update idempotency record with final status
