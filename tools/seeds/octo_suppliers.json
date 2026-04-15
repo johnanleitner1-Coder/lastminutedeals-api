@@ -63,6 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},

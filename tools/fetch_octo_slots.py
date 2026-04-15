@@ -94,10 +94,20 @@ class OCTOClient:
         # NOTE: "Octo-Capabilities: octo/pricing" is added per-request on
         # availability calls only. Sending it on /products hangs Bokun.
 
-    def get_products(self) -> list[dict]:
-        """Fetch all products — no pricing capability header (avoids Bokun timeout)."""
+    def get_products(self, vendor_id: int | None = None) -> list[dict]:
+        """
+        Fetch products — no pricing capability header (avoids Bokun timeout).
+
+        When vendor_id is provided, uses a vendor-scoped token
+        (Authorization: Bearer KEY/VENDOR_ID) which returns only that
+        vendor's products with no 100-product cap.
+        """
+        headers = {}
+        if vendor_id is not None:
+            headers["Authorization"] = f"Bearer {self.api_key}/{vendor_id}"
         resp = self.session.get(
             f"{self.base_url}/products",
+            headers=headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()
@@ -369,27 +379,43 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
     date_start = now.strftime("%Y-%m-%d")
     date_end   = (now + timedelta(hours=hours_ahead + 24)).strftime("%Y-%m-%d")
 
-    # Fetch product list — retry once on timeout if configured
-    for attempt in range(2 if retry_on_timeout else 1):
-        try:
-            products = client.get_products()
-            print(f"  [{name}] {len(products)} products")
-            break
-        except requests.exceptions.Timeout:
-            if attempt == 0 and retry_on_timeout:
-                print(f"  [{name}] Timeout on /products — retrying with {timeout * 2}s timeout...")
-                client.timeout = timeout * 2
-                continue
-            print(f"  [{name}] ERROR getting products: timed out after {client.timeout}s")
-            return []
-        except requests.HTTPError as exc:
-            print(f"  [{name}] ERROR getting products: {exc.response.status_code} {exc.response.text[:200]}")
-            return []
-        except Exception as exc:
-            print(f"  [{name}] ERROR getting products: {exc}")
-            return []
-    else:
+    # Fetch products — use vendor-scoped tokens if vendor_ids configured,
+    # otherwise fall back to the unscoped call (100-product cap applies).
+    vendor_ids = supplier.get("vendor_ids") or []
+
+    def _fetch_products_for_vendor(vid=None) -> list[dict]:
+        for attempt in range(2 if retry_on_timeout else 1):
+            try:
+                prods = client.get_products(vendor_id=vid)
+                return prods
+            except requests.exceptions.Timeout:
+                if attempt == 0 and retry_on_timeout:
+                    client.timeout = timeout * 2
+                    continue
+                print(f"  [{name}] Timeout fetching products (vendor={vid})")
+                return []
+            except requests.HTTPError as exc:
+                print(f"  [{name}] ERROR products (vendor={vid}): {exc.response.status_code} {exc.response.text[:100]}")
+                return []
+            except Exception as exc:
+                print(f"  [{name}] ERROR products (vendor={vid}): {exc}")
+                return []
         return []
+
+    if vendor_ids:
+        products = []
+        seen_ids: set = set()
+        for vid in vendor_ids:
+            vprods = _fetch_products_for_vendor(vid)
+            new = [p for p in vprods if p.get("id") not in seen_ids]
+            seen_ids.update(p.get("id") for p in new)
+            products.extend(new)
+            print(f"  [{name}] vendor {vid}: {len(vprods)} products ({len(new)} new)")
+            time.sleep(REQUEST_DELAY_S)
+        print(f"  [{name}] {len(products)} products total across {len(vendor_ids)} vendors")
+    else:
+        products = _fetch_products_for_vendor()
+        print(f"  [{name}] {len(products)} products")
 
     slots = []
 
