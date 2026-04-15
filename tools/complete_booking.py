@@ -1244,10 +1244,12 @@ class OCTOBooker(BasePlatformBooker):
             )
 
         headers = {
-            "Authorization":    f"Bearer {api_key}",
-            "Content-Type":     "application/json",
-            "Accept":           "application/json",
-            "Octo-Capabilities": "octo/pricing",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+            "Accept":        "application/json",
+            # Octo-Capabilities: octo/pricing intentionally omitted —
+            # this header hangs Bokun's /products and is not needed for
+            # /reservations or /bookings/confirm.
         }
 
         contact = {

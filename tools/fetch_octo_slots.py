@@ -322,6 +322,9 @@ def octo_availability_to_slot(
         "availability_id": avail.get("id", ""),
         "unit_id":        unit_id,
         "supplier_id":    supplier.get("supplier_id", ""),
+        # vendor_name = resolved business name (e.g. "arctic_adventures") for
+        # per-supplier circuit breakers. Falls back to supplier_id if unresolved.
+        "vendor_name":    supplier_name.lower().replace(" ", "_").replace("-", "_")[:40],
     })
 
     raw = {

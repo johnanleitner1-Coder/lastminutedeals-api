@@ -1244,16 +1244,30 @@ def create_checkout():
         return jsonify({"success": False, "error": "Payment system error. Please try again."}), 500
 
 
+# Session-level idempotency lock: prevents concurrent processing of the same
+# Stripe session on webhook retry. Maps session_id → True while executing.
+_WEBHOOK_IN_FLIGHT: dict[str, bool] = {}
+_WEBHOOK_LOCK = threading.Lock()
+
+
 @app.route("/api/webhook", methods=["POST"])
 def stripe_webhook():
     """
     Handle Stripe webhook events.
-    On checkout.session.completed: fulfill the booking on the source platform.
+
+    Returns 200 immediately after spawning a daemon thread to fulfill the booking.
+    This prevents Stripe from retrying due to slow Bokun API calls (Stripe timeout: 30s).
+
+    Idempotency is enforced at two levels:
+      1. Session-level in-memory lock (_WEBHOOK_IN_FLIGHT) — prevents concurrent
+         duplicate processing within the same process instance.
+      2. Supabase Storage record (webhook_session_{session_id}) — prevents
+         re-processing across process restarts and Railway redeploys.
     """
-    stripe           = _stripe()
-    webhook_secret   = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-    payload          = request.get_data()
-    sig_header       = request.headers.get("Stripe-Signature", "")
+    stripe         = _stripe()
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    payload        = request.get_data()
+    sig_header     = request.headers.get("Stripe-Signature", "")
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
@@ -1263,18 +1277,18 @@ def stripe_webhook():
         return jsonify({"error": str(e)}), 400
 
     if event["type"] == "checkout.session.completed":
-        session          = event["data"]["object"]
-        metadata         = session.get("metadata", {})
+        session    = event["data"]["object"]
+        session_id = session.get("id", "")
+        metadata   = session.get("metadata", {})
 
-        # ── Wallet top-up: credit the wallet immediately ───────────────────────
+        # ── Wallet top-up: fast path — no async needed ────────────────────────
         if metadata.get("event_type") == "wallet_topup":
             wid    = metadata.get("wallet_id", "")
             amount = int(metadata.get("amount_cents", 0))
             if wid and amount > 0:
                 try:
-                    import importlib.util as _ilu
                     spec = _ilu.spec_from_file_location("manage_wallets",
-                                Path(__file__).parent / "manage_wallets.py")
+                               Path(__file__).parent / "manage_wallets.py")
                     wlt_mod = _ilu.module_from_spec(spec)
                     spec.loader.exec_module(wlt_mod)
                     wlt_mod.credit_wallet(wid, amount, "Stripe top-up")
@@ -1283,8 +1297,32 @@ def stripe_webhook():
                     print(f"[WEBHOOK] Wallet credit failed: {wlt_err}")
             return jsonify({"status": "ok"})
 
-        slot_id          = metadata.get("slot_id", "")
-        payment_intent   = session.get("payment_intent", "")
+        # ── Idempotency check (in-memory) — same session already executing ────
+        with _WEBHOOK_LOCK:
+            if _WEBHOOK_IN_FLIGHT.get(session_id):
+                print(f"[WEBHOOK] Already in-flight, ignoring retry: {session_id}")
+                return jsonify({"status": "ok", "note": "already_processing"})
+            _WEBHOOK_IN_FLIGHT[session_id] = True
+
+        # ── Idempotency check (persistent) — already completed ────────────────
+        wh_record_key = f"webhook_session_{session_id[:40]}"
+        existing = _load_booking_record(wh_record_key)
+        if existing and existing.get("status") in ("booked", "failed"):
+            print(f"[WEBHOOK] Already processed session {session_id}: {existing.get('status')}")
+            with _WEBHOOK_LOCK:
+                _WEBHOOK_IN_FLIGHT.pop(session_id, None)
+            return jsonify({"status": "ok", "note": "already_processed"})
+
+        # ── Mark session as processing (persistent, survives redeploy) ─────────
+        _save_booking_record(wh_record_key, {
+            "session_id": session_id,
+            "status":     "processing",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # ── Spawn fulfillment thread — return 200 immediately to Stripe ────────
+        slot_id        = metadata.get("slot_id", "")
+        payment_intent = session.get("payment_intent", "")
         customer = {
             "name":  metadata.get("customer_name", ""),
             "email": metadata.get("customer_email", session.get("customer_email", "")),
@@ -1292,89 +1330,118 @@ def stripe_webhook():
         }
         platform    = metadata.get("platform", "")
         booking_url = metadata.get("booking_url", "")
+        amount_total = session.get("amount_total", 0)
+        service_name = metadata.get("service_name", "")
 
-        print(f"[WEBHOOK] Card authorized: slot={slot_id} customer={customer['email']} pi={payment_intent}")
+        threading.Thread(
+            target=_fulfill_booking_async,
+            args=(session_id, wh_record_key, slot_id, payment_intent,
+                  customer, platform, booking_url, amount_total, service_name),
+            daemon=True,
+            name=f"fulfill-{session_id[:12]}",
+        ).start()
 
-        # Look up slot for email context
-        slot_for_email = get_slot_by_id(slot_id) or {"service_name": metadata.get("service_name", "your booking")}
-
-        # ── Send "booking in progress" email immediately ───────────────────────
-        try:
-            from send_booking_email import send_booking_email
-            send_booking_email("booking_initiated", customer["email"], customer["name"], slot_for_email)
-        except Exception as mail_err:
-            print(f"[WEBHOOK] Initiated email failed (non-fatal): {mail_err}")
-
-        # ── Attempt booking BEFORE capturing payment ──────────────────────────
-        try:
-            confirmation = _fulfill_booking(slot_id, customer, platform, booking_url)
-
-            # Booking succeeded — capture the held payment
-            if payment_intent:
-                stripe.PaymentIntent.capture(payment_intent)
-                print(f"[WEBHOOK] Payment captured: {payment_intent}")
-
-            _mark_booked(slot_id)
-            print(f"[WEBHOOK] Booking confirmed: {confirmation}")
-
-            # Persist booking record for cancellation / verification
-            booking_record_id = f"bk_{slot_id[:12]}"
-            _burl_raw = metadata.get("booking_url", "")
-            try:
-                _burl_j = json.loads(_burl_raw) if isinstance(_burl_raw, str) and _burl_raw.startswith("{") else {}
-                _supplier_id = _burl_j.get("supplier_id", platform)
-            except Exception:
-                _supplier_id = platform
-            _save_booking_record(booking_record_id, {
-                "booking_id":        booking_record_id,
-                "confirmation":      str(confirmation or ""),
-                "platform":          platform,
-                "supplier_id":       _supplier_id,
-                "booking_url":       _burl_raw,
-                "service_name":      metadata.get("service_name", ""),
-                "price_charged":     session.get("amount_total", 0) / 100,
-                "status":            "booked",
-                "executed_at":       datetime.now(timezone.utc).isoformat(),
-                "customer_email":    customer["email"],
-                "payment_intent_id": payment_intent,
-                "slot_id":           slot_id,
-            })
-
-            # ── Send confirmation email ────────────────────────────────────────
-            try:
-                from send_booking_email import send_booking_email
-                _booking_id_for_email = booking_record_id if "booking_record_id" in dir() else ""
-                _cancel_url = (
-                    f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{_booking_id_for_email}"
-                    f"?t={_make_cancel_token(_booking_id_for_email)}"
-                    if _booking_id_for_email else ""
-                )
-                send_booking_email("booking_confirmed", customer["email"], customer["name"],
-                                   slot_for_email, confirmation_number=str(confirmation or ""),
-                                   cancel_url=_cancel_url)
-            except Exception as mail_err:
-                print(f"[WEBHOOK] Confirmation email failed (non-fatal): {mail_err}")
-
-        except Exception as e:
-            print(f"[WEBHOOK] Booking failed: {e}")
-
-            # Booking failed — cancel the hold so the customer is never charged
-            if payment_intent:
-                try:
-                    stripe.PaymentIntent.cancel(payment_intent)
-                    print(f"[WEBHOOK] Payment hold cancelled (customer not charged): {payment_intent}")
-                except Exception as cancel_err:
-                    print(f"[WEBHOOK] Failed to cancel hold: {cancel_err} — manual action required")
-
-            # ── Send failure email ─────────────────────────────────────────────
-            try:
-                from send_booking_email import send_booking_email
-                send_booking_email("booking_failed", customer["email"], customer["name"],
-                                   slot_for_email, error_reason=str(e))
-            except Exception as mail_err:
-                print(f"[WEBHOOK] Failure email failed (non-fatal): {mail_err}")
+        print(f"[WEBHOOK] Fulfillment queued: session={session_id} slot={slot_id}")
 
     return jsonify({"status": "ok"})
+
+
+def _fulfill_booking_async(
+    session_id: str, wh_record_key: str, slot_id: str, payment_intent: str,
+    customer: dict, platform: str, booking_url: str,
+    amount_total: int, service_name: str,
+):
+    """
+    Run in a daemon thread. Executes the full booking lifecycle:
+      1. Send "in progress" email
+      2. Call supplier API (OCTOBooker for Bokun)
+      3. Capture or cancel Stripe payment hold
+      4. Send confirmation or failure email
+      5. Persist final state to Supabase Storage
+    """
+    stripe = _stripe()
+    slot_for_email = get_slot_by_id(slot_id) or {"service_name": service_name or "your booking"}
+
+    try:
+        from send_booking_email import send_booking_email
+        send_booking_email("booking_initiated", customer["email"], customer["name"], slot_for_email)
+    except Exception as mail_err:
+        print(f"[FULFILL] Initiated email failed (non-fatal): {mail_err}")
+
+    try:
+        confirmation = _fulfill_booking(slot_id, customer, platform, booking_url)
+
+        # Booking succeeded — capture the held payment now
+        if payment_intent:
+            stripe.PaymentIntent.capture(payment_intent)
+            print(f"[FULFILL] Payment captured: {payment_intent}")
+
+        _mark_booked(slot_id)
+
+        booking_record_id = f"bk_{slot_id[:12]}"
+        try:
+            burl_j       = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+            supplier_id  = burl_j.get("supplier_id", platform)
+        except Exception:
+            supplier_id = platform
+
+        record = {
+            "booking_id":        booking_record_id,
+            "session_id":        session_id,
+            "confirmation":      str(confirmation or ""),
+            "platform":          platform,
+            "supplier_id":       supplier_id,
+            "booking_url":       booking_url,
+            "service_name":      service_name,
+            "price_charged":     amount_total / 100,
+            "status":            "booked",
+            "executed_at":       datetime.now(timezone.utc).isoformat(),
+            "customer_email":    customer["email"],
+            "payment_intent_id": payment_intent,
+            "slot_id":           slot_id,
+        }
+        _save_booking_record(booking_record_id, record)
+        # Update idempotency record with final status
+        _save_booking_record(wh_record_key, {"session_id": session_id, "status": "booked",
+                                              "booking_id": booking_record_id,
+                                              "completed_at": datetime.now(timezone.utc).isoformat()})
+
+        cancel_url = (
+            f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
+            f"?t={_make_cancel_token(booking_record_id)}"
+        )
+        try:
+            send_booking_email("booking_confirmed", customer["email"], customer["name"],
+                               slot_for_email, confirmation_number=str(confirmation or ""),
+                               cancel_url=cancel_url)
+        except Exception as mail_err:
+            print(f"[FULFILL] Confirmation email failed (non-fatal): {mail_err}")
+
+        print(f"[FULFILL] Done: session={session_id} confirmation={confirmation}")
+
+    except Exception as e:
+        print(f"[FULFILL] Booking failed: {e}")
+
+        if payment_intent:
+            try:
+                stripe.PaymentIntent.cancel(payment_intent)
+                print(f"[FULFILL] Payment hold cancelled (customer not charged): {payment_intent}")
+            except Exception as cancel_err:
+                print(f"[FULFILL] Failed to cancel hold: {cancel_err} — manual action required")
+
+        _save_booking_record(wh_record_key, {"session_id": session_id, "status": "failed",
+                                              "error": str(e)[:500],
+                                              "failed_at": datetime.now(timezone.utc).isoformat()})
+
+        try:
+            send_booking_email("booking_failed", customer["email"], customer["name"],
+                               slot_for_email, error_reason=str(e))
+        except Exception as mail_err:
+            print(f"[FULFILL] Failure email failed (non-fatal): {mail_err}")
+
+    finally:
+        with _WEBHOOK_LOCK:
+            _WEBHOOK_IN_FLIGHT.pop(session_id, None)
 
 
 def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: str):
@@ -1383,15 +1450,22 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
     Imports complete_booking.py (Playwright automation).
     Checks the circuit breaker before attempting OCTO platforms.
     """
-    # ── Circuit breaker check for OCTO suppliers ──────────────────────────────
-    octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+    # ── Resolve per-supplier ID from booking_url ─────────────────────────────
+    # booking_url is a JSON blob that includes supplier_id (e.g. "arctic_adventures",
+    # "bicycle_roma") set during fetch. Use it for per-supplier circuit breakers so
+    # one Bokun supplier failing doesn't trip the breaker for all nine.
     supplier_id = platform
     try:
         burl_j = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
-        supplier_id = burl_j.get("supplier_id", platform)
+        # Prefer granular supplier_id; fall back to platform (e.g. "bokun_reseller")
+        supplier_id = burl_j.get("supplier_id") or burl_j.get("vendor_name") or platform
     except Exception:
         pass
-    is_octo = supplier_id in octo_platforms or platform == "octo"
+
+    octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+    is_octo = platform in octo_platforms or platform == "octo" or (
+        burl_j.get("_type") == "octo" if "burl_j" in dir() else False
+    )
     if is_octo:
         try:
             cb_spec = _ilu.spec_from_file_location("circuit_breaker", Path(__file__).parent / "circuit_breaker.py")
