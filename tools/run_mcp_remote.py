@@ -264,7 +264,6 @@ def get_supplier_info() -> dict:
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },
-        ],
             {
                 "name": "Hillborn Experiences",
                 "destinations": ["Arusha", "Serengeti", "Zanzibar", "Kilimanjaro", "Tanzania"],

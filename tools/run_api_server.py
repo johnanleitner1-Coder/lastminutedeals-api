@@ -3507,6 +3507,230 @@ def _register_peek_webhook() -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _build_combined_asgi():
+    """
+    Build a single ASGI app that serves:
+      GET /sse         → FastMCP SSE stream  (MCP protocol for AI agents)
+      POST /messages   → FastMCP message handler
+      everything else  → Flask booking API (WSGI wrapped as ASGI)
+    """
+    import sys, os
+    sys.path.insert(0, os.path.dirname(__file__))
+
+    from a2wsgi import WSGIMiddleware
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    from starlette.responses import Response
+    from starlette.requests import Request as StarletteRequest
+
+    # Build the MCP server (reuses the same logic as run_mcp_remote.py)
+    from mcp.server.fastmcp import FastMCP
+    import requests as _req
+
+    BOOKING_API = os.getenv("BOOKING_API_URL", f"http://localhost:{PORT}").rstrip("/")
+    API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
+    HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
+
+    mcp = FastMCP(
+        "Last Minute Deals HQ",
+        instructions=(
+            "You have access to real last-minute tour and activity inventory across "
+            "Iceland, Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, "
+            "Romania, and more — sourced live from production booking systems via the "
+            "OCTO open standard. "
+            "Suppliers include Arctic Adventures (Iceland glacier hikes, snowmobiling, "
+            "whale watching, aurora, lava tunnels), Bicycle Roma (Rome e-bike tours, "
+            "food tours, day trips), Pure Morocco Experience (Sahara desert tours, "
+            "Marrakech cultural experiences), Ramen Factory Kyoto (cooking classes, "
+            "workshops), O Turista Tours (Lisbon, Porto, Sintra, Fatima day trips), "
+            "Arctic Sea Tours (North Iceland whale watching), "
+            "Hillborn Experiences (Tanzania ultra-luxury safaris, Mount Kilimanjaro "
+            "climbs, Zanzibar retreats, cultural encounters — East Africa), "
+            "and more. "
+            "Use search_slots to find available experiences, then book_slot to create "
+            "a Stripe checkout session — the customer completes payment and receives "
+            "instant confirmation. Bookings are real and go directly to the supplier."
+        ),
+    )
+
+    def _safe_slot(s: dict) -> dict:
+        return {
+            "slot_id":           s.get("slot_id", ""),
+            "category":          s.get("category", ""),
+            "service_name":      s.get("service_name", ""),
+            "business_name":     s.get("business_name", ""),
+            "location_city":     s.get("location_city", ""),
+            "location_country":  s.get("location_country", ""),
+            "start_time":        s.get("start_time", ""),
+            "end_time":          s.get("end_time", ""),
+            "duration_minutes":  s.get("duration_minutes"),
+            "hours_until_start": s.get("hours_until_start"),
+            "spots_open":        s.get("spots_open"),
+            "price":             s.get("price"),
+            "our_price":         s.get("our_price"),
+            "currency":          s.get("currency", "USD"),
+            "confidence":        s.get("confidence", "high"),
+        }
+
+    @mcp.tool()
+    def search_slots(
+        city: str = "",
+        category: str = "",
+        hours_ahead: float = 72.0,
+        max_price: float = 0.0,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Search for last-minute available tours and activities.
+
+        Returns real production inventory from Arctic Adventures, Bicycle Roma,
+        Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Arctic Sea Tours,
+        Hillborn Experiences, and more — sourced live via the OCTO open booking protocol.
+        Slots are sorted by urgency (soonest first).
+
+        Args:
+            city:        City or country filter, partial match (e.g. "Reykjavik", "Rome", "Iceland").
+                         Leave empty to search all locations.
+            category:    Category filter. Use "experiences" for tours/activities.
+                         Leave empty for all categories.
+            hours_ahead: Return slots starting within this many hours (default: 72).
+            max_price:   Maximum price in USD. Set to 0 to return all prices.
+            limit:       Max results to return (default: 20, max: 100).
+
+        Returns:
+            List of available slot dicts sorted by hours_until_start (soonest first).
+        """
+        params: dict = {"hours_ahead": hours_ahead, "limit": min(int(limit), 100)}
+        if city:
+            params["city"] = city
+        if category:
+            params["category"] = category
+        if max_price and max_price > 0:
+            params["max_price"] = max_price
+        try:
+            r = _req.get(f"{BOOKING_API}/slots", headers=HDRS, params=params, timeout=15)
+            r.raise_for_status()
+            slots = r.json()
+            if not isinstance(slots, list):
+                return [{"error": "Unexpected response from booking API"}]
+            if not slots:
+                return [{"message": f"No slots found for city={city!r} hours_ahead={hours_ahead}."}]
+            return [_safe_slot(s) for s in slots]
+        except Exception as e:
+            return [{"error": f"Could not fetch slots: {e}"}]
+
+    @mcp.tool()
+    def book_slot(
+        slot_id: str,
+        customer_name: str,
+        customer_email: str,
+        customer_phone: str,
+    ) -> dict:
+        """
+        Book a last-minute slot for a customer.
+
+        Creates a Stripe Checkout Session and returns a checkout_url. Direct the
+        customer to that URL to complete payment. The booking is confirmed with the
+        supplier after payment succeeds.
+
+        Args:
+            slot_id:        Slot ID from search_slots results.
+            customer_name:  Full name of the person attending.
+            customer_email: Email address for booking confirmation.
+            customer_phone: Phone number including country code (e.g. +15550001234).
+
+        Returns:
+            On success: { success: true, checkout_url, booking_id, expires_at }
+            On error:   { success: false, error }
+        """
+        try:
+            r = _req.post(f"{BOOKING_API}/api/book", headers=HDRS, json={
+                "slot_id": slot_id,
+                "customer_name": customer_name,
+                "customer_email": customer_email,
+                "customer_phone": customer_phone,
+            }, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except _req.HTTPError as e:
+            try:
+                detail = e.response.json()
+                return {"success": False, "error": detail.get("error", str(e))}
+            except Exception:
+                return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @mcp.tool()
+    def get_booking_status(booking_id: str) -> dict:
+        """
+        Check the status of a booking.
+
+        Args:
+            booking_id: The booking_id returned by book_slot.
+
+        Returns:
+            Booking record with status, confirmation number, and service details.
+        """
+        try:
+            r = _req.get(f"{BOOKING_API}/bookings/{booking_id}", headers=HDRS, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except _req.HTTPError as e:
+            if e.response.status_code == 404:
+                return {"error": f"Booking '{booking_id}' not found."}
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_supplier_info() -> dict:
+        """
+        Returns information about the supplier network and available inventory.
+        Use this before search_slots to understand what destinations and experience types exist.
+        """
+        return {
+            "suppliers": [
+                {"name": "Arctic Adventures", "destinations": ["Reykjavik", "Husafell", "Skaftafell", "Iceland"],
+                 "categories": ["glacier hikes", "ice caves", "snowmobiling", "aurora tours",
+                                "lava tunnels", "diving", "hiking", "whale watching", "multi-day tours"]},
+                {"name": "Arctic Sea Tours", "destinations": ["Dalvik", "North Iceland"],
+                 "categories": ["whale watching", "sea excursions"]},
+                {"name": "Bicycle Roma", "destinations": ["Rome", "Appia Antica", "Castelli Romani", "Orvieto"],
+                 "categories": ["e-bike tours", "cycling", "food tours", "day trips", "guided city tours"]},
+                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara Desert"],
+                 "categories": ["desert tours", "multi-day tours", "cultural experiences"]},
+                {"name": "Ramen Factory Kyoto", "destinations": ["Kyoto", "Japan"],
+                 "categories": ["cooking classes", "ramen workshops", "cultural experiences"]},
+                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra", "Fatima"],
+                 "categories": ["private tours", "day trips", "city tours", "transfers"]},
+                {"name": "Hillborn Experiences", "destinations": ["Arusha", "Serengeti", "Zanzibar", "Kilimanjaro"],
+                 "categories": ["private safaris", "Kilimanjaro climbs", "Zanzibar retreats",
+                                "cultural encounters", "ultra-luxury tours"],
+                 "notes": "Ultra-luxury East African operator. $1M public liability insured."},
+            ],
+            "protocol": "OCTO via Bokun — direct supplier API, production inventory only",
+            "confirmation": "instant",
+            "payment": "Stripe checkout — customer pays on our page, supplier confirmed automatically",
+        }
+
+    # MCP SSE ASGI app
+    mcp_asgi = mcp.sse_app()
+
+    # Flask booking API wrapped as ASGI
+    flask_asgi = WSGIMiddleware(app)
+
+    # Route: /sse and /messages → MCP; everything else → Flask
+    async def _dispatch(scope, receive, send):
+        path = scope.get("path", "")
+        if path in ("/sse", "/messages") or path.startswith("/messages"):
+            await mcp_asgi(scope, receive, send)
+        else:
+            await flask_asgi(scope, receive, send)
+
+    return _dispatch
+
+
 if __name__ == "__main__":
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key:
@@ -3523,8 +3747,11 @@ if __name__ == "__main__":
     _start_retry_scheduler()
     _register_peek_webhook()
 
-    print(f"Booking API starting on http://localhost:{PORT}")
-    print(f"  Health check: http://localhost:{PORT}/health")
-    print(f"  Book endpoint: POST http://localhost:{PORT}/api/book")
+    print(f"Booking API + MCP server starting on http://localhost:{PORT}")
+    print(f"  Health check:    http://localhost:{PORT}/health")
+    print(f"  Book endpoint:   POST http://localhost:{PORT}/api/book")
+    print(f"  MCP SSE:         http://localhost:{PORT}/sse")
     print()
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+
+    import uvicorn
+    uvicorn.run(_build_combined_asgi(), host="0.0.0.0", port=PORT, log_level="warning")
