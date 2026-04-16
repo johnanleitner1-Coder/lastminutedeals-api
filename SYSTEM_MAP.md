@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v6 — test supplier slots purged from production; sync_to_supabase.py permanent filter added)
+**Last updated:** 2026-04-16 (v7 — test supplier slots purged; zombie booking resolved; sync_to_supabase.py permanent filter added)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
