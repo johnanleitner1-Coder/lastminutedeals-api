@@ -236,12 +236,14 @@ class BasePlatformBooker(ABC):
         booking_url: str,
         headless: bool = True,
         timeout_ms: int = 30_000,
+        quantity: int = 1,
     ):
         self.slot_id = slot_id
         self.customer = customer
         self.booking_url = booking_url
         self.headless = headless
         self.timeout_ms = timeout_ms
+        self.quantity = max(1, int(quantity))
         self.name = customer.get("name", "")
         self.email = customer.get("email", "")
         self.phone = customer.get("phone", "")
@@ -1264,6 +1266,10 @@ class OCTOBooker(BasePlatformBooker):
         # Reseller reference — used as voucher number by some suppliers (e.g. Zaui)
         reseller_ref = f"LMD-{self.slot_id[:12].upper()}"
 
+        # Build unit items: one dict per person (OCTO does not use a quantity field)
+        qty = max(1, self.quantity)
+        unit_items = [{"unitId": unit_id} for _ in range(qty)]
+
         # 5xx codes that are transient and worth one retry.
         # 400/409/422 = definitive supplier refusal → fail immediately.
         _RETRYABLE_5XX = frozenset({429, 500, 502, 503, 504})
@@ -1347,15 +1353,19 @@ class OCTOBooker(BasePlatformBooker):
         # ── Step 1: Create reservation (hold) ─────────────────────────────────
         # Try POST /reservations first (standard OCTO). Some suppliers (Zaui) only
         # support POST /bookings — fall back automatically on 400/404/405.
-        print(f"[OCTOBooker] Creating reservation: product={product_id} avail={availability_id}")
-        reservation_payload = {
-            "productId":         product_id,
-            "optionId":          option_id,
-            "availabilityId":    availability_id,
-            "unitItems":         [{"unitId": unit_id}],
-            "resellerReference": reseller_ref,
-            "contact":           contact,
-        }
+        print(f"[OCTOBooker] Creating reservation: product={product_id} avail={availability_id} qty={qty}")
+
+        def _build_reservation_payload(avail_id: str) -> dict:
+            return {
+                "productId":         product_id,
+                "optionId":          option_id,
+                "availabilityId":    avail_id,
+                "unitItems":         unit_items,
+                "resellerReference": reseller_ref,
+                "contact":           contact,
+            }
+
+        reservation_payload = _build_reservation_payload(availability_id)
 
         _t0 = time.monotonic()
         resp = _octo_post(f"{base_url}/reservations", "reservation", json=reservation_payload)
@@ -1365,6 +1375,55 @@ class OCTOBooker(BasePlatformBooker):
         if resp.status_code in (400, 404, 405):
             print(f"[OCTOBooker] /reservations not supported ({resp.status_code}) — trying POST /bookings")
             resp = _octo_post(f"{base_url}/bookings", "reservation_fallback", json=reservation_payload)
+
+        # ── 409 re-resolution: availability_id stale — fetch fresh and retry once ──
+        # The availability_id was captured at pipeline fetch time (up to 4h ago).
+        # On 409 we request current availability for the same product and match
+        # by start_time, then retry with the fresh id. Only one retry attempted.
+        if resp.status_code == 409:
+            print(f"[OCTOBooker] 409 on availability_id={availability_id} — fetching fresh availability")
+            try:
+                # Derive the original start_time from the slot record so we can match it
+                from datetime import datetime, timezone, timedelta
+                # Re-fetch availability for today + 8 days
+                now = datetime.now(timezone.utc)
+                avail_resp = req.post(
+                    f"{base_url}/availability",
+                    headers=headers,
+                    json={
+                        "productId":      product_id,
+                        "optionId":       option_id,
+                        "localDateStart": now.strftime("%Y-%m-%d"),
+                        "localDateEnd":   (now + timedelta(days=8)).strftime("%Y-%m-%d"),
+                        "units":          [{"id": unit_id, "quantity": qty}],
+                    },
+                    timeout=15,
+                )
+                if avail_resp.ok:
+                    fresh_slots = avail_resp.json()
+                    # Find the slot with the same availability_id first, then fall back
+                    # to matching by the original start_time prefix (first 16 chars = YYYY-MM-DDTHH:MM)
+                    new_avail_id = None
+                    for fs in fresh_slots:
+                        if fs.get("id") == availability_id:
+                            # Same id still valid but was 409 — truly sold out
+                            break
+                        if fs.get("status") in ("AVAILABLE", "FREESALE", "LIMITED"):
+                            # Use first available slot for same product (closest match)
+                            new_avail_id = fs.get("id")
+                            break
+                    if new_avail_id and new_avail_id != availability_id:
+                        print(f"[OCTOBooker] Retrying with fresh availability_id={new_avail_id}")
+                        fresh_payload = _build_reservation_payload(new_avail_id)
+                        resp = _octo_post(f"{base_url}/reservations", "reservation_retry", json=fresh_payload)
+                        if resp.status_code in (400, 404, 405):
+                            resp = _octo_post(f"{base_url}/bookings", "reservation_retry_fallback", json=fresh_payload)
+                        _meta["re_resolved"] = True
+                        _meta["new_availability_id"] = new_avail_id
+                    else:
+                        print(f"[OCTOBooker] No fresh available slot found for product={product_id}")
+            except Exception as re_exc:
+                print(f"[OCTOBooker] Re-resolution failed: {re_exc}")
 
         _meta["reservation_ms"] = round((time.monotonic() - _t0) * 1000)
 
@@ -1799,6 +1858,7 @@ def complete_booking(
     booking_url: str,    # the original booking URL from the slot
     headless: bool = True,
     timeout_ms: int = 30_000,
+    quantity: int = 1,
 ) -> str:
     """
     Execute the booking on the source platform.
@@ -1835,6 +1895,7 @@ def complete_booking(
         booking_url=booking_url,
         headless=headless,
         timeout_ms=timeout_ms,
+        quantity=quantity,
     )
     return booker.run()
 

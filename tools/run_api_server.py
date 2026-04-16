@@ -1634,6 +1634,7 @@ def create_checkout():
     customer_name  = (data.get("customer_name") or "").strip()
     customer_email = (data.get("customer_email") or "").strip()
     customer_phone = (data.get("customer_phone") or "").strip()
+    quantity       = max(1, min(int(data.get("quantity") or 1), 20))  # clamp 1–20
     # dry_run=true: skip OCTO supplier call; test payment + webhook flow without
     # touching any real supplier. Safe to use in Stripe test mode for end-to-end testing.
     dry_run = str(data.get("dry_run", "")).lower() in ("true", "1", "yes") or \
@@ -1682,7 +1683,7 @@ def create_checkout():
     if not our_price or float(our_price) <= 0:
         return jsonify({"success": False, "error": "This slot is not available for checkout."}), 400
 
-    price_cents  = int(float(our_price) * 100)
+    price_cents  = int(float(our_price) * 100)   # per-person price in cents
     service_name = slot.get("service_name", "Last-Minute Booking")[:80]
     landing_url  = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com").rstrip("/")
 
@@ -1707,7 +1708,7 @@ def create_checkout():
                     },
                     "unit_amount": price_cents,
                 },
-                "quantity": 1,
+                "quantity": quantity,  # per-person price × quantity = total charge
             }],
             mode="payment",
             payment_intent_data={"capture_method": "manual"},  # HOLD only — charge after booking confirmed
@@ -1724,6 +1725,7 @@ def create_checkout():
                 "platform":       slot.get("platform", ""),
                 "dry_run":        "true" if dry_run else "false",
                 "booking_id":     booking_id,
+                "quantity":       str(quantity),
             },
         )
 
@@ -2170,6 +2172,7 @@ def stripe_webhook():
         amount_total = session.get("amount_total", 0)
         service_name = metadata.get("service_name", "")
         dry_run      = metadata.get("dry_run", "false") == "true"
+        quantity     = max(1, int(metadata.get("quantity") or 1))
         # Use the pre-assigned booking_id if present (new path); fall back to
         # the old derived key for sessions created before this was deployed.
         pending_booking_id = metadata.get("booking_id") or f"bk_{slot_id[:12]}"
@@ -2178,7 +2181,7 @@ def stripe_webhook():
             target=_fulfill_booking_async,
             args=(session_id, wh_record_key, slot_id, payment_intent,
                   customer, platform, booking_url, amount_total, service_name,
-                  dry_run, pending_booking_id),
+                  dry_run, pending_booking_id, quantity),
             daemon=True,
             name=f"fulfill-{session_id[:12]}",
         ).start()
@@ -2224,6 +2227,7 @@ def _fulfill_booking_async(
     amount_total: int, service_name: str,
     dry_run: bool = False,
     pending_booking_id: str = "",
+    quantity: int = 1,
 ):
     """
     Run in a daemon thread. Executes the full booking lifecycle:
@@ -2267,7 +2271,7 @@ def _fulfill_booking_async(
         else:
             # Run supplier call in a sub-thread so we can enforce a hard wall-clock ceiling.
             with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="octo") as ex:
-                fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
+                fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url, quantity)
                 confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
 
         # Capture the payment hold — skip in dry_run (no real money involved)
@@ -2391,7 +2395,7 @@ def _fulfill_booking_async(
             _WEBHOOK_IN_FLIGHT.pop(session_id, None)
 
 
-def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: str):
+def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: str, quantity: int = 1):
     """
     Execute the booking on the source platform after payment is confirmed.
     Imports complete_booking.py (Playwright automation).
@@ -2440,6 +2444,7 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                 customer=customer,
                 platform=platform,
                 booking_url=booking_url,
+                quantity=quantity,
             )
             # OCTOBooker returns {"confirmation": str, "booking_meta": {...}}.
             # Other bookers return a plain string. Handle both.
@@ -2482,8 +2487,21 @@ _SLOT_INTERNAL_FIELDS = frozenset({
 })
 
 def _sanitize_slot(slot: dict) -> dict:
-    """Strip internal fields before returning a slot to any external caller."""
-    return {k: v for k, v in slot.items() if k not in _SLOT_INTERNAL_FIELDS}
+    """Strip internal fields and recompute hours_until_start before returning a slot."""
+    out = {k: v for k, v in slot.items() if k not in _SLOT_INTERNAL_FIELDS}
+    # Recompute hours_until_start from start_time so the value is always current,
+    # not the stale value computed at fetch time (which can be hours old).
+    try:
+        start_iso = out.get("start_time", "")
+        if start_iso:
+            start_dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            hours = (start_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+            out["hours_until_start"] = round(hours, 2)
+    except Exception:
+        pass
+    return out
 
 
 @app.route("/slots", methods=["GET"])
@@ -4655,10 +4673,11 @@ _MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "slot_id":        {"type": "string", "description": "Slot ID from search_slots results. Required."},
-                "customer_name":  {"type": "string", "description": "Full name of the person attending the experience."},
-                "customer_email": {"type": "string", "description": "Email address where booking confirmation will be sent."},
-                "customer_phone": {"type": "string", "description": "Phone number including country code (e.g. +15550001234)."},
+                "slot_id":        {"type": "string",  "description": "Slot ID from search_slots results. Required."},
+                "customer_name":  {"type": "string",  "description": "Full name of the person attending the experience."},
+                "customer_email": {"type": "string",  "description": "Email address where booking confirmation will be sent."},
+                "customer_phone": {"type": "string",  "description": "Phone number including country code (e.g. +15550001234)."},
+                "quantity":       {"type": "integer", "description": "Number of people to book. Default: 1. Price is per person × quantity."},
             },
             "required": ["slot_id", "customer_name", "customer_email", "customer_phone"],
         },

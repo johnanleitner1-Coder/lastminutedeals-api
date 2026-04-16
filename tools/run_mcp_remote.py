@@ -195,6 +195,7 @@ async def book_slot(
     customer_name: str,
     customer_email: str,
     customer_phone: str,
+    quantity: int = 1,
 ) -> dict:
     """
     Book a last-minute slot for a customer.
@@ -219,6 +220,7 @@ async def book_slot(
             "customer_name":  customer_name,
             "customer_email": customer_email,
             "customer_phone": customer_phone,
+            "quantity":       max(1, int(quantity)),
         })
     except httpx.HTTPStatusError as e:
         try:
