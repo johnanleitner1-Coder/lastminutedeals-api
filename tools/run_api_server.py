@@ -2262,7 +2262,8 @@ def _fulfill_booking_async(
             # Simulates success so every other part of the pipeline can be verified.
             import time as _time
             _time.sleep(0.5)  # realistic latency simulation
-            confirmation = f"DRY-RUN-{slot_id[:16].upper()}"
+            confirmation       = f"DRY-RUN-{slot_id[:16].upper()}"
+            supplier_reference = ""
             booking_meta = {
                 "attempts": 0, "retries": 0, "retry_stage": None,
                 "reservation_ms": None, "confirm_ms": None,
@@ -2272,7 +2273,7 @@ def _fulfill_booking_async(
             # Run supplier call in a sub-thread so we can enforce a hard wall-clock ceiling.
             with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="octo") as ex:
                 fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url, quantity)
-                confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
+                confirmation, booking_meta, supplier_reference = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
 
         # Capture the payment hold — skip in dry_run (no real money involved)
         if payment_intent and not dry_run:
@@ -2294,6 +2295,7 @@ def _fulfill_booking_async(
             "booking_id":            booking_record_id,
             "session_id":            session_id,
             "confirmation":          str(confirmation or ""),
+            "supplier_reference":    str(supplier_reference or ""),  # Bokun's own ref (used in webhook cancellations)
             "platform":              platform,
             "supplier_id":           supplier_id,
             "booking_url":           booking_url,
@@ -2446,25 +2448,27 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                 booking_url=booking_url,
                 quantity=quantity,
             )
-            # OCTOBooker returns {"confirmation": str, "booking_meta": {...}}.
+            # OCTOBooker returns {"confirmation": str, "supplier_reference": str, "booking_meta": {...}}.
             # Other bookers return a plain string. Handle both.
             if isinstance(result, dict):
-                confirmation  = result.get("confirmation", "")
-                booking_meta  = result.get("booking_meta", {})
+                confirmation       = result.get("confirmation", "")
+                supplier_reference = result.get("supplier_reference", "")
+                booking_meta       = result.get("booking_meta", {})
             else:
-                confirmation  = result
-                booking_meta  = {}
-            print(f"[FULFILLMENT] Confirmed: {confirmation}")
+                confirmation       = result
+                supplier_reference = ""
+                booking_meta       = {}
+            print(f"[FULFILLMENT] Confirmed: {confirmation} supplier_ref={supplier_reference}")
             # Record success with circuit breaker
             if is_octo:
                 try:
                     cb_mod.record_success(supplier_id)
                 except Exception:
                     pass
-            return confirmation, booking_meta
+            return confirmation, booking_meta, supplier_reference
     except FileNotFoundError:
         print(f"[FULFILLMENT] complete_booking.py not found — manual fulfillment needed")
-        return "manual-fulfillment-required", {}
+        return "manual-fulfillment-required", {}, ""
     except Exception as e:
         # Record failure with circuit breaker
         if is_octo:
@@ -4012,7 +4016,12 @@ def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | 
     for name in names:
         booking_id = name.replace(".json", "")
         record = _load_booking_record(booking_id)
-        if record and record.get("confirmation") == confirmation_code:
+        if not record:
+            continue
+        # Match on OCTO UUID (confirmation) OR Bokun's own reference (supplier_reference).
+        # Bokun webhooks send their reference; OCTO DELETE uses the UUID.
+        if (record.get("confirmation") == confirmation_code
+                or record.get("supplier_reference") == confirmation_code):
             return booking_id, record
     return None, None
 
@@ -4033,6 +4042,25 @@ def bokun_webhook():
     Bokun sends JSON with at minimum:
       { "type": "booking.cancelled", "booking": { "confirmationCode": "...", "status": "CANCELLED" } }
     """
+    # ── Signature verification ────────────────────────────────────────────────
+    # Bokun signs webhook payloads with HMAC-SHA256 using a shared secret set in
+    # Bokun Dashboard → Settings → Integrations → Webhooks.
+    # Set BOKUN_WEBHOOK_SECRET in Railway env vars and in Bokun's dashboard.
+    # If the secret is not configured we allow through with a warning (backwards compat).
+    webhook_secret = os.getenv("BOKUN_WEBHOOK_SECRET", "").strip()
+    if webhook_secret:
+        import hmac as _hmac, hashlib as _hashlib
+        sig_header = request.headers.get("X-Bokun-Signature", "")
+        payload    = request.get_data()
+        expected   = _hmac.new(
+            webhook_secret.encode(), payload, _hashlib.sha256
+        ).hexdigest()
+        if not _hmac.compare_digest(sig_header, expected):
+            print(f"[BOKUN_WEBHOOK] Invalid signature — rejected")
+            return jsonify({"error": "Invalid signature"}), 401
+    else:
+        print("[BOKUN_WEBHOOK] WARNING: BOKUN_WEBHOOK_SECRET not set — skipping signature check")
+
     data = request.get_json(force=True, silent=True) or {}
 
     event_type   = data.get("type", "")

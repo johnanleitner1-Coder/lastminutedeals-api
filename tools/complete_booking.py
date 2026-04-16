@@ -1487,7 +1487,9 @@ class OCTOBooker(BasePlatformBooker):
             )
 
         # Return UUID as confirmation (needed for OCTO DELETE /bookings/{uuid}).
-        # Supplier reference is included in the artifact log.
+        # Also return supplier_reference (Bokun's own ref, e.g. "BK-12345") so the
+        # caller can store it separately — Bokun webhook cancellations identify bookings
+        # by this ref, not the OCTO UUID.
         confirmation = booking_uuid
         print(f"[OCTOBooker] Final confirmation: {confirmation} (supplier ref: {supplier_ref})")
 
@@ -1498,8 +1500,8 @@ class OCTOBooker(BasePlatformBooker):
             safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", self.slot_id)[:24]
             art     = _SUCCESS_DIR / f"confirm_{safe_id}_{ts}.json"
             art.write_text(
-                json.dumps({"confirmation": confirmation, "booking": booking,
-                            "reservation_uuid": reservation_uuid}, indent=2),
+                json.dumps({"confirmation": confirmation, "supplier_reference": supplier_ref,
+                            "booking": booking, "reservation_uuid": reservation_uuid}, indent=2),
                 encoding="utf-8",
             )
             print(f"[OCTOBooker] Confirmation artifact saved: {art}")
@@ -1508,7 +1510,7 @@ class OCTOBooker(BasePlatformBooker):
 
         # Return dict so callers can record per-step timing and retry counts.
         # Non-OCTO bookers return a plain string — callers must handle both.
-        return {"confirmation": confirmation, "booking_meta": _meta}
+        return {"confirmation": confirmation, "supplier_reference": supplier_ref, "booking_meta": _meta}
 
 
 # ── Rezdy API booker (pure HTTP — Rezdy Agent API format) ─────────────────────
