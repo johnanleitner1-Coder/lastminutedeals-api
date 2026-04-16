@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v5 — session 4–5 bug fixes applied; all critical/high/medium bugs resolved; D-series Bokun-audit bugs fixed; Railway env vars confirmed)
+**Last updated:** 2026-04-16 (v6 — test supplier slots purged from production; sync_to_supabase.py permanent filter added)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -86,6 +86,8 @@
 
 **Trigger:** `run_pipeline.bat` — local laptop, every ~4h via Task Scheduler
 **Status:** ✅ Bokun path working | ⚠️ All other platforms disabled
+**Inventory (2026-04-16):** 1,491 live slots in Supabase | 904 within 72h window | 14 cities | 4 categories
+**Test supplier guard:** `sync_to_supabase.py` filters `_TEST_SUPPLIER_NAMES` before every upsert — Zaui/Ventrata/Peek test slots cannot re-enter production
 
 ### Step 1: fetch_octo_slots.py
 

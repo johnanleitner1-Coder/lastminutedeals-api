@@ -91,6 +91,14 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+## Session 6 Fixes — Slot Inventory Audit (commit 5dcb876)
+
+| # | Severity | File | Bug | Fix |
+|---|---|---|---|---|
+| I-1 | HIGH | `sync_to_supabase.py` + Supabase | 263 test-mode supplier slots (Zaui Test, Ventrata Edinburgh Explorer, Peek Pro Test) in live production inventory — unbookable, served to real users; one real customer booked a Zaui test slot leaving zombie booking `bk_6aab082e36ec` | Immediate: deleted all 263 rows from Supabase. Permanent: `_TEST_SUPPLIER_NAMES` filter strips test slots before every upsert; `delete_test_supplier_slots()` purges any that slip through |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -98,4 +106,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Sessions 1–3 (batch commits) | 41 |
 | Session 4 (simplify) | 5 |
 | Session 5 (deep Bokun audit) | 8 |
-| **Total** | **54** |
+| Session 6 (slot inventory audit) | 1 |
+| **Total** | **55** |
