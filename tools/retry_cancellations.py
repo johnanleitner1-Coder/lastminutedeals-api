@@ -121,9 +121,8 @@ def _cancel_octo(supplier_id: str, booking_uuid: str) -> tuple[bool, str, bool]:
         r = requests.delete(
             f"{base_url}/bookings/{booking_uuid}",
             headers={
-                "Authorization":     f"Bearer {api_key}",
-                "Octo-Capabilities": "octo/pricing",
-                "Content-Type":      "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
             },
             timeout=15,
         )

@@ -660,8 +660,9 @@ def _build_failed_html(customer_name: str, slot: dict, error_reason: str) -> tup
     first_name = customer_name.split()[0] if customer_name else "there"
     reason_text = error_reason or "The slot was no longer available when we tried to confirm it."
     brand_name = os.environ.get("EMAIL_FROM_NAME", "LastMinuteDeals")
-    # Use the booking URL or fall back to the site root
-    retry_url  = slot.get("booking_url") or "https://lastminutedealshq.com"
+    # Use booking_url only if it's a real HTTP link — OCTO slots store a JSON blob here
+    _raw_burl  = slot.get("booking_url", "")
+    retry_url  = _raw_burl if isinstance(_raw_burl, str) and _raw_burl.startswith("http") else "https://lastminutedealshq.com"
 
     html_body = f"""
           <!-- Hero -->

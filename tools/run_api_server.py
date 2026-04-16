@@ -1151,8 +1151,12 @@ def _get_reliability_metrics() -> dict:
             and item["name"].endswith(".json")
             and not item["name"].startswith("cancellation_queue/")
             and not item["name"].startswith("circuit_breaker/")
+            and not item["name"].startswith("config/")
             and not item["name"].startswith("idem_")
             and not item["name"].startswith("webhook_session_")
+            and not item["name"].startswith("cleanup_")
+            and not item["name"].startswith("pending_exec_")
+            and not item["name"].startswith("inbound_emails/")
         ]
 
         last_booking_at  = None
@@ -2545,6 +2549,7 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
     # "bicycle_roma") set during fetch. Use it for per-supplier circuit breakers so
     # one Bokun supplier failing doesn't trip the breaker for all nine.
     supplier_id = platform
+    burl_j = {}
     try:
         burl_j = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
         # Prefer granular supplier_id; fall back to platform (e.g. "bokun_reseller")
@@ -2553,9 +2558,7 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
         pass
 
     octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
-    is_octo = platform in octo_platforms or platform == "octo" or (
-        burl_j.get("_type") == "octo" if "burl_j" in dir() else False
-    )
+    is_octo = platform in octo_platforms or platform == "octo" or burl_j.get("_type") == "octo"
     if is_octo:
         try:
             cb_spec = _ilu.spec_from_file_location("circuit_breaker", Path(__file__).parent / "circuit_breaker.py")
@@ -3921,9 +3924,8 @@ def _cancel_octo_booking(platform: str, confirmation: str, max_attempts: int = 3
             r = requests.delete(
                 f"{base_url}/bookings/{confirmation}",
                 headers={
-                    "Authorization":     f"Bearer {api_key}",
-                    "Octo-Capabilities": "octo/pricing",
-                    "Content-Type":      "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type":  "application/json",
                 },
                 timeout=15,
             )
@@ -4181,6 +4183,12 @@ def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | 
                 n = item.get("name", "")
                 if (n.endswith(".json")
                         and not n.startswith("cancellation_queue/")
+                        and not n.startswith("circuit_breaker/")
+                        and not n.startswith("config/")
+                        and not n.startswith("idem_")
+                        and not n.startswith("webhook_session_")
+                        and not n.startswith("cleanup_")
+                        and not n.startswith("pending_exec_")
                         and not n.startswith("inbound_emails/")):
                     names.append(n)
             if len(page) < page_size:
@@ -4429,12 +4437,17 @@ def self_serve_cancel(booking_id: str):
         already_done = True
 
     if already_done:
+        refund_html = (
+            "A full refund has been issued to your original payment method. It typically appears within 3–5 business days."
+            if refund_issued else
+            "Your cancellation has been recorded. If a charge was made, our team will process your refund within 3–5 business days."
+        )
         return f"""<!DOCTYPE html><html><head><title>Booking Cancelled</title></head>
         <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
         <div style="font-size:48px;margin-bottom:16px;">✓</div>
         <h2 style="color:#0f172a;">Booking cancelled</h2>
-        <p style="color:#64748b;">Your booking for <strong>{service}</strong> has been cancelled
-        and a full refund has been issued. It typically appears within 3–5 business days.</p>
+        <p style="color:#64748b;">Your booking for <strong>{service}</strong> has been cancelled.
+        {refund_html}</p>
         <p style="color:#64748b;">Check your email for confirmation.</p>
         <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
         background:#0f172a;color:#fff;border-radius:8px;text-decoration:none;">Browse More Deals</a>

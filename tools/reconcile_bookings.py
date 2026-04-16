@@ -58,7 +58,15 @@ def _list_bookings() -> list[dict]:
                 break
             for item in page:
                 n = item.get("name", "")
-                if n and n.endswith(".json") and not n.startswith("cancellation_queue/"):
+                if (n and n.endswith(".json")
+                        and not n.startswith("cancellation_queue/")
+                        and not n.startswith("circuit_breaker/")
+                        and not n.startswith("config/")
+                        and not n.startswith("idem_")
+                        and not n.startswith("webhook_session_")
+                        and not n.startswith("cleanup_")
+                        and not n.startswith("pending_exec_")
+                        and not n.startswith("inbound_emails/")):
                     names.append(n)
             if len(page) < page_size:
                 break  # last page
@@ -113,8 +121,7 @@ def _verify_octo_booking(supplier_id: str, confirmation: str) -> tuple[str, str]
         r = requests.get(
             f"{base_url}/bookings/{confirmation}",
             headers={
-                "Authorization":     f"Bearer {api_key}",
-                "Octo-Capabilities": "octo/pricing",
+                "Authorization": f"Bearer {api_key}",
             },
             timeout=15,
         )
