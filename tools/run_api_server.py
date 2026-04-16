@@ -4029,37 +4029,28 @@ def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | 
 @app.route("/api/bokun/webhook", methods=["POST"])
 def bokun_webhook():
     """
-    Receive Bokun booking status change webhooks.
+    Receive Bokun HTTP Booking notification webhooks.
 
     When a supplier cancels a booking in their Bokun dashboard, Bokun POSTs
     here. We look up the booking by Bokun confirmation code, issue a Stripe
     refund, and email the customer.
 
-    Register this URL in:
-    Bokun Dashboard → Settings → Integrations → Webhooks → Add Endpoint
-    URL: https://api.lastminutedealshq.com/api/bokun/webhook
+    Bokun's HTTP notification system does not send HMAC signatures.
+    Auth is done via a secret token in the URL query string:
+      https://api.lastminutedealshq.com/api/bokun/webhook?token=TOKEN
 
-    Bokun sends JSON with at minimum:
-      { "type": "booking.cancelled", "booking": { "confirmationCode": "...", "status": "CANCELLED" } }
+    Set BOKUN_WEBHOOK_TOKEN in Railway env vars and append it to the URL
+    in Bokun Dashboard → Settings → Connections → Integrated systems → Edit.
     """
-    # ── Signature verification ────────────────────────────────────────────────
-    # Bokun signs webhook payloads with HMAC-SHA256 using a shared secret set in
-    # Bokun Dashboard → Settings → Integrations → Webhooks.
-    # Set BOKUN_WEBHOOK_SECRET in Railway env vars and in Bokun's dashboard.
-    # If the secret is not configured we allow through with a warning (backwards compat).
-    webhook_secret = os.getenv("BOKUN_WEBHOOK_SECRET", "").strip()
-    if webhook_secret:
-        import hmac as _hmac, hashlib as _hashlib
-        sig_header = request.headers.get("X-Bokun-Signature", "")
-        payload    = request.get_data()
-        expected   = _hmac.new(
-            webhook_secret.encode(), payload, _hashlib.sha256
-        ).hexdigest()
-        if not _hmac.compare_digest(sig_header, expected):
-            print(f"[BOKUN_WEBHOOK] Invalid signature — rejected")
-            return jsonify({"error": "Invalid signature"}), 401
+    # ── Token verification ────────────────────────────────────────────────────
+    webhook_token = os.getenv("BOKUN_WEBHOOK_TOKEN", "").strip()
+    if webhook_token:
+        provided = request.args.get("token", "")
+        if not hmac.compare_digest(webhook_token, provided):
+            print("[BOKUN_WEBHOOK] Invalid token — rejected")
+            return jsonify({"error": "Unauthorized"}), 401
     else:
-        print("[BOKUN_WEBHOOK] WARNING: BOKUN_WEBHOOK_SECRET not set — skipping signature check")
+        print("[BOKUN_WEBHOOK] WARNING: BOKUN_WEBHOOK_TOKEN not set — skipping auth check")
 
     data = request.get_json(force=True, silent=True) or {}
 
