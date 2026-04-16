@@ -196,6 +196,39 @@ def _save_booking_record(booking_id: str, record: dict) -> None:
     except Exception:
         pass
 
+def _list_booking_records(prefix: str = "") -> list[dict]:
+    """
+    List booking record metadata from Supabase Storage.
+    Returns a list of dicts with at least a "name" key.
+    Falls back to local .tmp/bookings.json keys if Supabase unavailable.
+    """
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
+        try:
+            r = requests.post(
+                f"{sb_url}/storage/v1/object/list/bookings",
+                headers={**_sb_storage_headers(), "Content-Type": "application/json"},
+                json={"prefix": prefix, "limit": 1000},
+                timeout=8,
+            )
+            if r.status_code == 200:
+                return [
+                    {"name": item["name"].removesuffix(".json")}
+                    for item in r.json()
+                    if isinstance(item, dict) and item.get("name", "").endswith(".json")
+                ]
+        except Exception:
+            pass
+    # Local fallback
+    if _BOOKINGS_FILE.exists():
+        try:
+            local = json.loads(_BOOKINGS_FILE.read_text(encoding="utf-8"))
+            return [{"name": k} for k in local if not prefix or k.startswith(prefix)]
+        except Exception:
+            pass
+    return []
+
+
 def _make_receipt(result_dict: dict, customer_email: str = "") -> dict:
     """
     Build a signed execution receipt from a result dict.
@@ -1631,9 +1664,13 @@ def book_direct():
         }), 402
 
     # ── Idempotency: reject retries that arrive while first call is still running ──
+    # Key includes a 5-minute timestamp bucket so duplicate suppression only applies
+    # within the same execution window. After the bucket expires, intentional retries
+    # (e.g. after a network error where no charge occurred) are not blocked.
     import hashlib as _hl
+    _ts_bucket = int(time.time()) // 300  # 5-minute window
     _idem_key = _hl.sha256(
-        f"{slot_id}:{customer_email}:{wallet_id}".encode()
+        f"{slot_id}:{customer_email}:{wallet_id}:{_ts_bucket}".encode()
     ).hexdigest()[:32]
     with _DIRECT_LOCK:
         if _DIRECT_IN_FLIGHT.get(_idem_key):
@@ -1645,10 +1682,14 @@ def book_direct():
             }), 409
         _DIRECT_IN_FLIGHT[_idem_key] = True
 
-    # ── Spending limit check (if configured on the wallet) ───────────────────
+    # ── Spending limit check ─────────────────────────────────────────────────
+    # Per-wallet limit takes precedence; fall back to the module default ($400).
+    # To remove the cap on a specific wallet: set spending_limit_cents=null via
+    # PUT /api/wallets/{id}/spending-limit — that sets it to None, which still
+    # falls back to the module default. To allow >$400, explicitly set a higher value.
     service_name = slot.get("service_name", "Booking")
-    spending_limit = wallet.get("spending_limit_cents")
-    if spending_limit is not None and amount_cents > spending_limit:
+    spending_limit = wallet.get("spending_limit_cents") or _DEFAULT_AUTONOMOUS_LIMIT_CENTS
+    if amount_cents > spending_limit:
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({
@@ -1661,6 +1702,22 @@ def book_direct():
             "required_cents":   amount_cents,
         }), 403
 
+    # ── Crash-recovery record ───────────────────────────────────────────────
+    # Written BEFORE debit so a process crash between debit and refund is detectable.
+    # On startup, _reconcile_pending_debits() scans for wallet_debited=true records
+    # and issues the missing refund.
+    _recovery_key = f"pending_exec_{_idem_key[:24]}"
+    _save_booking_record(_recovery_key, {
+        "recovery_key":   _recovery_key,
+        "status":         "pending_execution",
+        "wallet_id":      wallet_id,
+        "amount_cents":   amount_cents,
+        "slot_id":        slot_id,
+        "customer_email": customer_email,
+        "wallet_debited": False,
+        "created_at":     datetime.now(timezone.utc).isoformat(),
+    })
+
     # Debit wallet — atomic before starting fulfillment
     try:
         debited = wlt_mod.debit_wallet(
@@ -1668,15 +1725,29 @@ def book_direct():
             f"Booking: {service_name} ({slot_id[:12]})"
         )
     except Exception as debit_exc:
+        _save_booking_record(_recovery_key, {"status": "debit_failed", "resolved": True})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({"status": "failed", "error": str(debit_exc)[:200],
                         "failure_reason": "debit_failed"}), 500
     if not debited:
+        _save_booking_record(_recovery_key, {"status": "debit_failed", "resolved": True})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({"status": "failed", "error": "Wallet debit failed. Please try again.",
                         "failure_reason": "debit_failed"}), 500
+
+    # Mark debit as having occurred — crash recovery watches for this
+    _save_booking_record(_recovery_key, {
+        "recovery_key":   _recovery_key,
+        "status":         "pending_execution",
+        "wallet_id":      wallet_id,
+        "amount_cents":   amount_cents,
+        "slot_id":        slot_id,
+        "customer_email": customer_email,
+        "wallet_debited": True,
+        "debited_at":     datetime.now(timezone.utc).isoformat(),
+    })
 
     # Wallet debited — now execute fulfillment synchronously so we can return
     # the confirmation directly. Use a short-lived thread with a hard join timeout
@@ -1708,6 +1779,8 @@ def book_direct():
         except Exception as refund_err:
             print(f"[DIRECT] Wallet refund failed after booking failure: {refund_err} — "
                   f"manual refund needed for {wallet_id} ${amount_cents/100:.2f}")
+        _save_booking_record(_recovery_key, {"status": "refunded", "resolved": True,
+                                              "refunded_at": datetime.now(timezone.utc).isoformat()})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({
@@ -1754,6 +1827,10 @@ def book_direct():
 
     balance_after = wlt_mod.get_balance(wallet_id) or 0
 
+    # Mark recovery record resolved — no crash refund needed
+    _save_booking_record(_recovery_key, {"status": "completed", "resolved": True,
+                                          "booking_id": booking_record_id,
+                                          "completed_at": datetime.now(timezone.utc).isoformat()})
     # Release in-flight lock — booking is complete, slot marked booked, no duplicate possible
     with _DIRECT_LOCK:
         _DIRECT_IN_FLIGHT.pop(_idem_key, None)
@@ -1903,6 +1980,11 @@ def stripe_webhook():
 # ~95 s. This ceiling aborts the supplier call and cancels the payment hold so the
 # customer is never left waiting indefinitely.
 _MAX_BOOKING_TIMEOUT_S = 45
+
+# Default per-transaction spending cap for autonomous wallet bookings.
+# Wallets with an explicit spending_limit_cents override this. Protects against
+# runaway agents or compromised wallet_ids draining large balances in one call.
+_DEFAULT_AUTONOMOUS_LIMIT_CENTS = 40_000  # $400.00
 
 
 def _classify_failure(exc: Exception) -> str:
@@ -4434,6 +4516,63 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
         return {"error": f"Unknown tool: {name}"}
 
 
+def _reconcile_pending_debits() -> None:
+    """
+    Startup reconciliation: scan Supabase Storage for pending_exec_* records where
+    wallet_debited=True but resolved is not set. These are bookings where the process
+    was killed after the wallet was debited but before fulfillment completed.
+
+    For each stranded record: issue a refund and mark it resolved so the agent can retry.
+    """
+    try:
+        items = _list_booking_records(prefix="pending_exec_")
+    except Exception as e:
+        print(f"[RECONCILE] Could not list booking records: {e}")
+        return
+
+    stranded = items  # prefix filter already applied
+    if not stranded:
+        return
+
+    wlt_mod = _load_module("manage_wallets")
+    if not wlt_mod:
+        print("[RECONCILE] manage_wallets unavailable — skipping reconciliation")
+        return
+
+    for item in stranded:
+        key = item.get("name", "")
+        try:
+            record = _load_booking_record(key)
+            if not record:
+                continue
+            if record.get("resolved"):
+                continue
+            if not record.get("wallet_debited"):
+                # Crash before debit — just mark resolved, nothing to refund
+                _save_booking_record(key, {**record, "resolved": True,
+                                           "resolved_reason": "pre_debit_crash"})
+                continue
+
+            wallet_id    = record.get("wallet_id", "")
+            amount_cents = record.get("amount_cents", 0)
+            slot_id      = record.get("slot_id", "")
+            if not wallet_id or not amount_cents:
+                continue
+
+            # Refund the stranded debit
+            wlt_mod.credit_wallet(
+                wallet_id, amount_cents,
+                f"Crash-recovery refund: {slot_id[:12]}"
+            )
+            _save_booking_record(key, {**record, "resolved": True,
+                                       "resolved_reason": "crash_refund",
+                                       "refunded_at": datetime.now(timezone.utc).isoformat()})
+            print(f"[RECONCILE] Refunded stranded debit: wallet={wallet_id} "
+                  f"${amount_cents/100:.2f} slot={slot_id}")
+        except Exception as e:
+            print(f"[RECONCILE] Failed to reconcile {key}: {e}")
+
+
 def _register_peek_webhook() -> None:
     """
     Register our /webhooks/peek endpoint with Peek Pro's OCTO API on startup.
@@ -4705,6 +4844,7 @@ if __name__ == "__main__":
     _ensure_request_log_table()
     _start_retry_scheduler()
     _register_peek_webhook()
+    _reconcile_pending_debits()   # refund any wallet debits stranded by a prior crash
     _start_mcp_thread()
 
     print(f"Booking API + MCP server starting on http://localhost:{PORT}")
