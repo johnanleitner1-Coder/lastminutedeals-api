@@ -2286,7 +2286,7 @@ def search_slots():
     city        = request.args.get("city", "").strip()
     hours_ahead = request.args.get("hours_ahead", 72, type=int)
     max_price   = request.args.get("max_price", type=float)
-    limit       = min(request.args.get("limit", 50, type=int), 500)
+    limit       = min(request.args.get("limit", 200, type=int), 1000)
 
     if sb_url and sb_secret:
         try:
@@ -4385,8 +4385,10 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista, "
-            "Factory Alliance Kyoto, Boka Bliss Montenegro, TourTransfer Bucharest), "
+            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista Tours, "
+            "Factory Alliance Kyoto, Boka Bliss Montenegro, TourTransfer Bucharest, "
+            "Hillborn Experiences Tanzania, REDRIB Experience Finland, "
+            "Íshestar Riding Tours Iceland, Marvel Egypt Tours), "
             "Ventrata, Zaui, and Peek Pro via the OCTO open booking protocol. "
             "Slots are sorted by urgency (soonest first)."
         ),
@@ -4403,7 +4405,7 @@ _MCP_TOOLS = [
                 "category":    {"type": "string",  "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
                 "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 72."},
                 "max_price":   {"type": "number",  "description": "Maximum price in USD. Omit or set to 0 for all prices."},
-                "limit":       {"type": "integer", "description": "Max number of results to return. Default: 20, max: 100."},
+                "limit":       {"type": "integer", "description": "Max number of results to return. Default: 200, max: 500."},
             },
         },
     },
@@ -4481,7 +4483,7 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
         if arguments.get("category"):    params["category"]    = arguments["category"]
         if arguments.get("hours_ahead"): params["hours_ahead"] = arguments["hours_ahead"]
         if arguments.get("max_price"):   params["max_price"]   = arguments["max_price"]
-        params["limit"] = arguments.get("limit", 20)
+        params["limit"] = arguments.get("limit", 200)
         r = requests.get(f"{base}/slots", headers=hdrs, params=params, timeout=15)
         return r.json()
 
@@ -4668,12 +4670,12 @@ def _start_mcp_thread():
 
     @mcp.tool()
     def search_slots(city: str = "", category: str = "", hours_ahead: float = 72.0,
-                     max_price: float = 0.0, limit: int = 20) -> list[dict]:
+                     max_price: float = 0.0, limit: int = 200) -> list[dict]:
         """Search last-minute tours and activities. Returns live production inventory
         sorted by urgency (soonest first).
         Args: city (partial match, e.g. "Reykjavik"), category (e.g. "experiences"),
-        hours_ahead (default 72), max_price (0=no limit), limit (max 100)."""
-        p = {"hours_ahead": hours_ahead, "limit": min(int(limit), 100)}
+        hours_ahead (default 72), max_price (0=no limit), limit (default 200, max 500)."""
+        p = {"hours_ahead": hours_ahead, "limit": min(int(limit), 500)}
         if city: p["city"] = city
         if category: p["category"] = category
         if max_price > 0: p["max_price"] = max_price
