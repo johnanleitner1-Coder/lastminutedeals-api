@@ -27,6 +27,7 @@ claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/sse
   PORT                   — Server port (Railway sets this automatically)
 """
 
+import asyncio
 import os
 import time
 
@@ -41,8 +42,14 @@ API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
 HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PORT        = int(os.getenv("PORT", "8080"))
 
-# Shared async HTTP client — connection pool, keep-alive, no blocking
-_client = httpx.AsyncClient(headers=HDRS, timeout=15.0)
+# Shared async HTTP client — connection pool, keep-alive, no blocking.
+# Separate connect vs read timeouts: fast-fail on connection, generous on read.
+_TIMEOUT = httpx.Timeout(10.0, connect=3.0)
+_client  = httpx.AsyncClient(headers=HDRS, timeout=_TIMEOUT)
+
+# Concurrency guard — cap simultaneous outbound API calls to prevent
+# request storms from hammering the booking API or Supabase under burst load.
+_SEMAPHORE = asyncio.Semaphore(10)
 
 # ── Slot cache: serve identical searches from memory for 60 seconds ───────────
 _SLOTS_CACHE: dict = {}      # params_key → {"slots": [...], "expires": float}
@@ -76,28 +83,28 @@ async def _api_get(path: str, params: dict = None, retries: int = 2) -> dict | l
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
         try:
-            r = await _client.get(f"{BOOKING_API}{path}", params=params or {})
+            async with _SEMAPHORE:
+                r = await _client.get(f"{BOOKING_API}{path}", params=params or {})
             r.raise_for_status()
             return r.json()
         except (httpx.TimeoutException, httpx.ConnectError) as e:
             last_exc = e
             if attempt < retries - 1:
-                import asyncio
                 await asyncio.sleep(0.5)
         except httpx.HTTPStatusError as e:
             if e.response.status_code < 500:
                 raise   # 4xx — don't retry
             last_exc = e
             if attempt < retries - 1:
-                import asyncio
                 await asyncio.sleep(0.5)
     raise last_exc
 
 
 async def _api_post(path: str, body: dict) -> dict:
     """Async POST. Never blocks the event loop."""
-    r = await _client.post(f"{BOOKING_API}{path}", json=body,
-                           timeout=30.0)
+    async with _SEMAPHORE:
+        r = await _client.post(f"{BOOKING_API}{path}", json=body,
+                               timeout=httpx.Timeout(30.0, connect=3.0))
     r.raise_for_status()
     return r.json()
 
