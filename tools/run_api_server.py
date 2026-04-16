@@ -1467,15 +1467,35 @@ def create_checkout():
                 "booking_url":    slot.get("booking_url", ""),
                 "platform":       slot.get("platform", ""),
                 "dry_run":        "true" if dry_run else "false",
+                # booking_id is pre-assigned so agent can poll get_booking_status
+                # before the human completes payment
+                "booking_id":     f"bk_{slot_id[:12]}_{session.id[-8:]}",
             },
         )
-        result = {"success": True, "checkout_url": session.url}
+        booking_id = f"bk_{slot_id[:12]}_{session.id[-8:]}"
+
+        # Create a pending record immediately — agent can poll this before human pays
+        _save_booking_record(booking_id, {
+            "booking_id":     booking_id,
+            "session_id":     session.id,
+            "slot_id":        slot_id,
+            "service_name":   service_name,
+            "customer_email": customer_email,
+            "status":         "pending_payment",
+            "checkout_url":   session.url,
+            "dry_run":        dry_run,
+            "created_at":     datetime.now(timezone.utc).isoformat(),
+        })
+
+        result = {"success": True, "checkout_url": session.url,
+                  "booking_id": booking_id, "status": "pending_payment"}
         # Store idempotency record so duplicate requests return same URL
         if idempotency_key:
             _IDEMPOTENCY_CACHE[idempotency_key] = {"result": result}
             _save_booking_record(f"idem_{idempotency_key[:40]}", {
                 "idempotency_key": idempotency_key,
                 "checkout_url":    session.url,
+                "booking_id":      booking_id,
                 "slot_id":         slot_id,
                 "created_at":      datetime.now(timezone.utc).isoformat(),
             })
@@ -1784,12 +1804,15 @@ def stripe_webhook():
         amount_total = session.get("amount_total", 0)
         service_name = metadata.get("service_name", "")
         dry_run      = metadata.get("dry_run", "false") == "true"
+        # Use the pre-assigned booking_id if present (new path); fall back to
+        # the old derived key for sessions created before this was deployed.
+        pending_booking_id = metadata.get("booking_id") or f"bk_{slot_id[:12]}"
 
         threading.Thread(
             target=_fulfill_booking_async,
             args=(session_id, wh_record_key, slot_id, payment_intent,
                   customer, platform, booking_url, amount_total, service_name,
-                  dry_run),
+                  dry_run, pending_booking_id),
             daemon=True,
             name=f"fulfill-{session_id[:12]}",
         ).start()
@@ -1829,6 +1852,7 @@ def _fulfill_booking_async(
     customer: dict, platform: str, booking_url: str,
     amount_total: int, service_name: str,
     dry_run: bool = False,
+    pending_booking_id: str = "",
 ):
     """
     Run in a daemon thread. Executes the full booking lifecycle:
@@ -1882,7 +1906,9 @@ def _fulfill_booking_async(
 
         _mark_booked(slot_id)
 
-        booking_record_id = f"bk_{slot_id[:12]}"
+        # Use the pre-assigned pending booking_id so polling agents see the
+        # status transition: pending_payment → booked on the same ID.
+        booking_record_id = pending_booking_id or f"bk_{slot_id[:12]}"
         try:
             burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
             supplier_id = burl_j.get("supplier_id", platform)
@@ -1970,6 +1996,18 @@ def _fulfill_booking_async(
             "error":         str(e)[:500],
             "failed_at":     datetime.now(timezone.utc).isoformat(),
         })
+        # Also update the pending booking record so agents polling get_booking_status
+        # see the failure instead of "pending_payment" indefinitely.
+        if pending_booking_id:
+            _save_booking_record(pending_booking_id, {
+                "booking_id":     pending_booking_id,
+                "session_id":     session_id,
+                "slot_id":        slot_id,
+                "status":         "failed",
+                "failure_reason": failure_reason,
+                "error":          str(e)[:500],
+                "failed_at":      datetime.now(timezone.utc).isoformat(),
+            })
 
         try:
             send_booking_email("booking_failed", customer["email"], customer["name"],
@@ -4415,7 +4453,10 @@ def _start_mcp_thread():
 
         execution_mode controls the payment path — declare what your agent is authorised to do:
 
-          "approval"   (default) — returns a checkout_url the customer opens to pay via Stripe.
+          "approval"   (default) — returns checkout_url (for the customer to pay) AND
+                                   booking_id with status "pending_payment". Share checkout_url
+                                   with the customer, then poll get_booking_status(booking_id)
+                                   to detect when payment completes and status becomes "booked".
                                    Safe for consumer-facing assistants; no autonomous charge.
 
           "autonomous" — executes the booking and charges the wallet immediately.
