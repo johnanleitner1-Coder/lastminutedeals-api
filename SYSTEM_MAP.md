@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v3 — added 4th booking path, circuit breaker, wallet concurrency, webhook gaps, retry queue details, reconcile behavior, peek webhook, new bugs #11–#13)
+**Last updated:** 2026-04-16 (v4 — full route audit, stripe_customers .tmp gap, SMS/market-insights .tmp gaps, disabled platforms, undocumented endpoints, new bugs #20–#22)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -977,7 +977,74 @@ Fix required:
 
 ---
 
-## 15. Multi-Quantity Booking — All Paths
+## 15. Supporting & Utility Endpoints (Non-Booking)
+
+These endpoints exist and are wired but were not covered in the main booking flows.
+
+| Endpoint | Auth | Purpose | Data source | Status |
+|---|---|---|---|---|
+| GET /health | None | Slot count + DB success rates | Supabase (slot count) + Postgres (rates always null — TCP blocked) | ✅ partial |
+| GET /metrics | None | Public perf beacon: slot count, platform count, success rates, fill velocity | Supabase slots + market_insights (.tmp/insights/ — empty after redeploy) | ⚠️ |
+| GET /slots | None | Search slots with category/city/hours_ahead/max_price filter | Supabase REST, paginated (1000/page), falls back to .tmp/ | ✅ |
+| GET /slots/{slot_id}/quote | None | Confirm availability + price for one slot | Supabase + .tmp/booked_slots.json | ⚠️ dedup lost on redeploy |
+| POST /api/keys/register | None | Register free API key (name + email → lmd_... key) | Supabase Storage config/api_keys.json ✅ persists | ✅ |
+| POST /test/dry-run | X-API-Key | Trigger dry-run fulfillment (no real booking, no charge) | Uses get_slot_by_id → Supabase | ✅ |
+| GET /verify/{booking_id} | None | Public receipt verification with HMAC signature check | Supabase Storage | ✅ |
+| GET /bookings/{booking_id} | None | Booking status poll | Supabase Storage | ✅ (execute/guaranteed not found — Bug #7) |
+| GET /intent/list | X-API-Key | List all intent sessions for caller | .tmp/intent_sessions.json (lost on redeploy) | ❌ |
+| GET /insights/market | None | Market intelligence: success rates, fill velocity, optimal windows | .tmp/insights/ — empty after Railway redeploy | ❌ on Railway |
+| GET /insights/platform/{name} | None | Per-platform reliability stats | .tmp/insights/ — same gap | ❌ on Railway |
+| GET /api/watcher/status | None | Real-time watcher health + last poll timestamps | .tmp/watcher_status.json — local only, watcher not running | ❌ on Railway |
+| POST /api/subscribe | None | SMS opt-in from landing page | .tmp/sms_subscribers.json — local only (Bug #22) | ❌ on Railway |
+| POST /api/webhooks/subscribe | None | Subscribe to deal alert webhook | .tmp/webhook_subscriptions.json — local only (Bug #13) | ❌ on Railway |
+| POST /api/webhooks/unsubscribe | None | Cancel webhook subscription | .tmp/webhook_subscriptions.json — local only | ❌ on Railway |
+| POST /admin/refresh-slots | X-API-Key | Run full slot pipeline in-process on Railway | Writes to Supabase, .tmp/ | ⚠️ |
+| GET /api/inbound-email/list | X-API-Key | List stored inbound emails | Supabase Storage inbound_emails/ | ✅ |
+| GET /sse | None | SSE stream — proxied to embedded FastMCP thread | — | ✅ |
+| POST /messages | None | FastMCP message handler | — | ✅ |
+| GET /mcp | None | MCP server info + tool list | — | ✅ |
+| POST /mcp | X-API-Key optional | MCP JSON-RPC 2.0 tool calls | — | ✅ |
+
+---
+
+## 15a. Disabled Platforms & Inactive Tools
+
+The following fetchers and Playwright completers exist in code but are NOT currently active.
+Only the OCTO/Bokun path runs in production.
+
+**Slot fetchers (all disabled — only `fetch_octo_slots.py` runs):**
+- `fetch_mindbody_slots.py` — Mindbody Open API (wellness/fitness). Bot-detection issues. Blocked.
+- `fetch_eventbrite_slots.py` — Eventbrite API. Requires API key. Disabled.
+- `fetch_booksy_slots.py` — Booksy (salons/beauty). No partner access yet.
+- `fetch_dice_slots.py` — Dice.fm events. Disabled.
+- `fetch_fareharbor_slots.py` — FareHarbor (tours/activities). Disabled.
+- `fetch_liquidspace_slots.py` — LiquidSpace (workspace bookings). OAuth required.
+- `fetch_luma_slots.py` — Lu.ma events. Disabled.
+- `fetch_meetup_slots.py` — Meetup groups. Disabled.
+- `fetch_rezdy_slots.py` — Rezdy (tour operators). Disabled.
+- `fetch_seatgeek_slots.py` — SeatGeek (events/sports). Disabled.
+- `fetch_ticketmaster_slots.py` — Ticketmaster. High bot-detection. Disabled.
+
+**Real-time watcher (NOT running):**
+- `watch_slots_realtime.py` — Polls eventbrite/luma/meetup/seatgeek every 45-60s.
+  Not started. `/api/watcher/status` always returns `{"running": false}` on Railway.
+
+**Playwright booking completers in `complete_booking.py` (NOT used in production):**
+- `EventbriteBooker`, `MindbodyBooker`, `LumaBooker`, `MeetupBooker`, `TicketmasterBooker`
+  (Playwright/browser automation — Playwright not installed on Railway)
+- `RezdyBooker` (HTTP/API-based — would work without Playwright but platform disabled)
+- `LiquidSpaceBooker` (OAuth2/API-based — would work without Playwright but platform disabled)
+- `GenericBooker` — fallback that NEVER raises exceptions; flags for manual review.
+  Risk: if a platform routes to GenericBooker incorrectly, it reports "success" with no real booking.
+- `OCTOBooker` ✅ — only active completer. Pure HTTP. No Playwright required.
+
+**SDK & client tools (not server-side components):**
+- `lmd_sdk.py` — Python SDK wrapping the Railway API. Client-side only.
+- `run_mcp_server.py` — LOCAL MCP server reading from `.tmp/` files on laptop. Not Railway.
+
+---
+
+## 16. Multi-Quantity Booking — All Paths
 
 | Booking Path | Quantity Supported? | Notes |
 |---|---|---|
@@ -1021,6 +1088,11 @@ Fix required:
 | Landing page | Cloudflare Pages | ✅ | Rebuilt every pipeline run |
 | Slot discovery | Local Windows laptop | ⚠️ | No cloud scheduling — fails if laptop sleeps |
 | Pricing history | Google Sheets | ❌ | OAuth token expired — urgency pricing disabled |
+| Booked slot dedup | .tmp/booked_slots.json (ALL paths) | ❌ | Lost on Railway redeploy — fast dedup breaks; Stripe path degrades gracefully via OCTO 409; execute/guaranteed double-booking risk |
+| Stripe customer records | .tmp/stripe_customers.json | ❌ | LOCAL ONLY — ALL saved-card customers lost on every Railway redeploy (Bug #20) |
+| SMS subscriber list | .tmp/sms_subscribers.json | ❌ | LOCAL ONLY — subscriptions lost on Railway redeploy (Bug #22) |
+| Market insights data | .tmp/insights/ directory | ❌ | LOCAL ONLY — /insights/market and /execute/best reliability data lost on redeploy (Bug #21) |
+| Watcher status | .tmp/watcher_status.json | ❌ | LOCAL ONLY — watcher not running; /api/watcher/status always returns "not started" |
 | SMS alerts | Twilio | 🔲 | Implemented, not activated |
 | Social posting | Twitter/Reddit/Telegram | 🔲 | Scripts exist, not running |
 
@@ -1056,6 +1128,9 @@ Fix required:
 | 17 | No real end-to-end booking test completed | All paths | Unknown if OCTOBooker actually works | Run one real booking (cheapest slot) |
 | 18 | No partial refund/cancellation support for multi-qty bookings | All cancel paths | All-or-nothing only | Design and implement partial cancel |
 | 19 | Wallet storage uses single shared JSON file — read-modify-write race condition | `manage_wallets.py` | Under concurrent wallet bookings: balance overwrites possible | Per-wallet file or Supabase Postgres row locking |
+| 20 | `stripe_customers.json` stored in `.tmp/` only — NO Supabase persistence | `run_api_server.py:737` | All registered customers with saved cards are LOST on every Railway redeploy; `book_with_saved_card` returns 404 for all customers after redeploy | Persist customer records to Supabase Storage (like API keys) |
+| 21 | Market insights data in `.tmp/insights/` only | `market_insights.py:49` | `/insights/market` returns empty after redeploy; `/execute/best` maximize_success goal has no platform reliability data | Move outcomes + snapshot to Supabase Storage |
+| 22 | SMS subscribers in `.tmp/sms_subscribers.json` only | `send_sms_alert.py:40` | SMS subscriptions lost on Railway redeploy; no alerts ever sent from Railway (also reads `.tmp/aggregated_slots.json`) | Persist subscriptions to Supabase Storage; trigger alerts from pipeline |
 
 ---
 
