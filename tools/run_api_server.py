@@ -640,6 +640,10 @@ DATA_FILE   = Path(".tmp/aggregated_slots.json")
 BOOKED_FILE = Path(".tmp/booked_slots.json")
 PORT        = int(os.getenv("BOOKING_SERVER_PORT", "5050"))
 
+# MCP search_slots cache — avoids repeated Supabase pagination on burst agent calls
+_MCP_SLOTS_CACHE: dict = {}   # cache_key → {"slots": [...], "expires": float}
+_MCP_SLOTS_CACHE_TTL = 60     # seconds
+
 
 def _load_booked() -> set:
     """Load set of slot_ids that have already been booked."""
@@ -4630,7 +4634,7 @@ _MCP_TOOLS = [
                 "category":    {"type": "string",  "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
                 "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
                 "max_price":   {"type": "number",  "description": "Maximum price in USD. Omit or set to 0 for all prices."},
-                "limit":       {"type": "integer", "description": "Optionally cap results. Omit to get all available slots (recommended)."},
+                "limit":       {"type": "integer", "description": "Max results to return. Default: 100. Increase for broader searches (e.g. 500)."},
             },
         },
     },
@@ -4705,14 +4709,27 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     if name == "search_slots":
         # Call Supabase directly — avoids HTTP loopback which can deadlock
         # gunicorn workers when the handler thread blocks waiting for itself.
+        # Default limit 100 (one Supabase page, ~1s). Cache results 60s to
+        # absorb burst agent calls without re-paginating on every request.
+        hours_ahead = float(arguments.get("hours_ahead") or 168)
+        category    = str(arguments.get("category") or "")
+        city        = str(arguments.get("city") or "")
+        budget      = float(arguments.get("max_price") or 0)
+        limit       = int(arguments.get("limit") or 100)
+
+        cache_key = f"{hours_ahead}|{category}|{city}|{budget}|{limit}"
+        now = time.time()
+        cached = _MCP_SLOTS_CACHE.get(cache_key)
+        if cached and cached["expires"] > now:
+            return cached["slots"]
+
         slots = _load_slots_from_supabase(
-            hours_ahead = float(arguments.get("hours_ahead") or 168),
-            category    = str(arguments.get("category") or ""),
-            city        = str(arguments.get("city") or ""),
-            budget      = float(arguments.get("max_price") or 0),
-            limit       = int(arguments.get("limit") or 10_000),
+            hours_ahead=hours_ahead, category=category,
+            city=city, budget=budget, limit=limit,
         )
-        return [_sanitize_slot(s) for s in slots]
+        result = [_sanitize_slot(s) for s in slots]
+        _MCP_SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _MCP_SLOTS_CACHE_TTL}
+        return result
 
     elif name == "book_slot":
         r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
