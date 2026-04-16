@@ -259,6 +259,7 @@ def octo_availability_to_slot(
     option_id: str,
     unit_id: str,
     supplier: dict,
+    hours_ahead: float = 72.0,
 ) -> dict | None:
     """
     Convert one OCTO availability record into our normalized slot schema.
@@ -277,8 +278,8 @@ def octo_availability_to_slot(
     now = datetime.now(timezone.utc)
     hours_until = (start_dt - now).total_seconds() / 3600
 
-    # Only keep slots in the future and within 72 hours
-    if hours_until < 0 or hours_until > 72:
+    # Only keep slots in the future and within the requested window
+    if hours_until < 0 or hours_until > hours_ahead:
         return None
 
     start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -461,7 +462,8 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
             continue
 
         for avail in availability:
-            slot = octo_availability_to_slot(avail, product, option_id, unit_id, supplier)
+            slot = octo_availability_to_slot(avail, product, option_id, unit_id, supplier,
+                                             hours_ahead=hours_ahead)
             if slot:
                 slots.append(slot)
 
@@ -474,8 +476,8 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Fetch OCTO slot availability")
-    parser.add_argument("--hours-ahead", type=float, default=72.0,
-                        help="Only include slots within this many hours (default: 72)")
+    parser.add_argument("--hours-ahead", type=float, default=168.0,
+                        help="Only include slots within this many hours (default: 168 = 1 week)")
     parser.add_argument("--test-only", action="store_true",
                         help="Only run suppliers with test_mode=true")
     args = parser.parse_args()

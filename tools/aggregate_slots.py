@@ -71,8 +71,8 @@ def refresh_hours_until(slot: dict) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Aggregate and deduplicate platform slot files")
-    parser.add_argument("--hours-ahead", type=float, default=72.0,
-                        help="Only include slots within this many hours (default: 72)")
+    parser.add_argument("--hours-ahead", type=float, default=168.0,
+                        help="Only include slots within this many hours (default: 168 = 1 week)")
     parser.add_argument("--tmp-dir", default=str(TMP_DIR),
                         help="Directory containing *_slots.json files")
     args = parser.parse_args()

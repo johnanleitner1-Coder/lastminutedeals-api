@@ -720,7 +720,7 @@ def _load_slots_from_supabase(
     category: str = "",
     city: str = "",
     budget: float = 0,
-    limit: int = 2000,
+    limit: int = 10000,
 ) -> list[dict]:
     """
     Load slots from Supabase with optional filters.
@@ -732,7 +732,12 @@ def _load_slots_from_supabase(
 
     if sb_url and sb_secret:
         try:
-            hdrs   = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+            hdrs   = {
+                "apikey": sb_secret,
+                "Authorization": f"Bearer {sb_secret}",
+                # Tell PostgREST not to apply its own row cap on top of our limit param
+                "Prefer": "count=none",
+            }
             now_iso     = datetime.now(timezone.utc).isoformat()
             horizon_dt  = datetime.now(timezone.utc) + timedelta(hours=hours_ahead)
             horizon_iso = horizon_dt.isoformat()
@@ -2284,13 +2289,17 @@ def search_slots():
 
     category    = request.args.get("category", "").strip()
     city        = request.args.get("city", "").strip()
-    hours_ahead = request.args.get("hours_ahead", 72, type=int)
+    hours_ahead = request.args.get("hours_ahead", 168, type=int)
     max_price   = request.args.get("max_price", type=float)
     limit       = request.args.get("limit", 0, type=int) or 10_000  # 0 = no limit
 
     if sb_url and sb_secret:
         try:
-            hdrs = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+            hdrs = {
+                "apikey": sb_secret,
+                "Authorization": f"Bearer {sb_secret}",
+                "Prefer": "count=none",  # bypass PostgREST default row cap
+            }
             now_iso     = datetime.now(timezone.utc).isoformat()
             param_list: list[tuple] = [
                 ("limit", limit),
@@ -2908,7 +2917,7 @@ def execute_best():
         category=category,
         city=city,
         budget=float(budget) if budget else 0,
-        limit=2000,
+        limit=10000,
     )
 
     # Filter candidates
@@ -3402,7 +3411,7 @@ def execute_guaranteed():
         category=category,
         city=city,
         budget=float(budget) if budget else 0,
-        limit=2000,
+        limit=10000,
     )
 
     engine = eng_mod.ExecutionEngine(slots=fresh_slots, booked_ids=booked_ids)
@@ -4403,7 +4412,7 @@ _MCP_TOOLS = [
             "properties": {
                 "city":        {"type": "string",  "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
                 "category":    {"type": "string",  "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
-                "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 72."},
+                "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
                 "max_price":   {"type": "number",  "description": "Maximum price in USD. Omit or set to 0 for all prices."},
                 "limit":       {"type": "integer", "description": "Optionally cap results. Omit to get all available slots (recommended)."},
             },
@@ -4669,12 +4678,12 @@ def _start_mcp_thread():
         )}
 
     @mcp.tool()
-    def search_slots(city: str = "", category: str = "", hours_ahead: float = 72.0,
+    def search_slots(city: str = "", category: str = "", hours_ahead: float = 168.0,
                      max_price: float = 0.0) -> list[dict]:
         """Search last-minute tours and activities. Returns all available inventory
         sorted by urgency (soonest first). Use city/category/hours_ahead/max_price
         to narrow results. Args: city (partial match, e.g. "Reykjavik"),
-        category (e.g. "experiences"), hours_ahead (default 72), max_price (0=no limit)."""
+        category (e.g. "experiences"), hours_ahead (default 168 = 1 week), max_price (0=no limit)."""
         p = {"hours_ahead": hours_ahead, "limit": 10000}
         if city: p["city"] = city
         if category: p["category"] = category
