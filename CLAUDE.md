@@ -66,6 +66,22 @@ credentials.json, token.json  # Google OAuth (gitignored)
 
 **Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
 
+## Code Fix Protocol (MANDATORY — follow every time)
+
+These rules exist because bugs in this project tend to appear as the same pattern in multiple files. Missing one instance breaks the system even if another is fixed.
+
+**Before marking any bug fixed:**
+1. Grep all files for the exact pattern being fixed — not just the file where you found it
+2. Ask explicitly: "does this logic appear anywhere else in the codebase?"
+3. Fix every instance before committing
+
+**After every fix session:**
+1. Update `docs/bug_audit_log.md` with every bug fixed, its severity, file, and commit hash
+2. Update `SYSTEM_MAP.md` — mark fixed bugs as FIXED, add any new gaps found
+3. Do this before reporting the session complete — not when asked
+
+Failure to follow this protocol is the primary source of regressions and missed bugs in this project.
+
 ## Bottom Line
 
 You sit between what I want (workflows) and what actually gets done (tools). Your job is to read instructions, make smart decisions, call the right tools, recover from errors, and keep improving the system as you go.
