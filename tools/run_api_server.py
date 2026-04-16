@@ -89,6 +89,13 @@ _BOOKINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
 # For cross-instance dedup, the Supabase Storage record acts as the persistent lock.
 _IDEMPOTENCY_CACHE: dict = {}   # {key: {"booking_id": str, "result": dict}}
 
+# ── Autonomous booking in-flight lock ─────────────────────────────────────────
+# Prevents double-debit if an agent retries while the first call is still executing.
+# Key: sha256(slot_id + customer_email + wallet_id) — naturally unique per booking attempt.
+# Value: True while in-flight. Cleared on success or refund.
+_DIRECT_IN_FLIGHT: dict[str, bool] = {}
+_DIRECT_LOCK = threading.Lock()
+
 def _signing_secret() -> str:
     """Return the HMAC signing secret, generating and persisting one if absent."""
     key = os.getenv("LMD_SIGNING_SECRET", "")
@@ -1474,7 +1481,11 @@ def create_checkout():
         )
         booking_id = f"bk_{slot_id[:12]}_{session.id[-8:]}"
 
-        # Create a pending record immediately — agent can poll this before human pays
+        # Create a pending record immediately — agent can poll this before human pays.
+        # Stripe checkout sessions expire after 24 hours by default.
+        from datetime import timedelta
+        _now = datetime.now(timezone.utc)
+        _expires_at = (_now + timedelta(hours=24)).isoformat()
         _save_booking_record(booking_id, {
             "booking_id":     booking_id,
             "session_id":     session.id,
@@ -1482,13 +1493,16 @@ def create_checkout():
             "service_name":   service_name,
             "customer_email": customer_email,
             "status":         "pending_payment",
+            "payment_status": "unpaid",
             "checkout_url":   session.url,
+            "expires_at":     _expires_at,
             "dry_run":        dry_run,
-            "created_at":     datetime.now(timezone.utc).isoformat(),
+            "created_at":     _now.isoformat(),
         })
 
         result = {"success": True, "checkout_url": session.url,
-                  "booking_id": booking_id, "status": "pending_payment"}
+                  "booking_id": booking_id, "status": "pending_payment",
+                  "payment_status": "unpaid", "expires_at": _expires_at}
         # Store idempotency record so duplicate requests return same URL
         if idempotency_key:
             _IDEMPOTENCY_CACHE[idempotency_key] = {"result": result}
@@ -1616,13 +1630,51 @@ def book_direct():
             "required_cents": amount_cents,
         }), 402
 
-    # Debit wallet — atomic before starting fulfillment
+    # ── Idempotency: reject retries that arrive while first call is still running ──
+    import hashlib as _hl
+    _idem_key = _hl.sha256(
+        f"{slot_id}:{customer_email}:{wallet_id}".encode()
+    ).hexdigest()[:32]
+    with _DIRECT_LOCK:
+        if _DIRECT_IN_FLIGHT.get(_idem_key):
+            return jsonify({
+                "status":         "failed",
+                "error":          "A booking for this slot is already in progress. "
+                                  "Please wait for the first request to complete before retrying.",
+                "failure_reason": "duplicate_in_flight",
+            }), 409
+        _DIRECT_IN_FLIGHT[_idem_key] = True
+
+    # ── Spending limit check (if configured on the wallet) ───────────────────
     service_name = slot.get("service_name", "Booking")
-    debited = wlt_mod.debit_wallet(
-        wallet_id, amount_cents,
-        f"Booking: {service_name} ({slot_id[:12]})"
-    )
+    spending_limit = wallet.get("spending_limit_cents")
+    if spending_limit is not None and amount_cents > spending_limit:
+        with _DIRECT_LOCK:
+            _DIRECT_IN_FLIGHT.pop(_idem_key, None)
+        return jsonify({
+            "status":           "failed",
+            "error":            f"Transaction exceeds wallet spending limit "
+                                f"(${spending_limit/100:.2f} per booking). "
+                                f"This booking costs ${amount_cents/100:.2f}.",
+            "failure_reason":   "spending_limit_exceeded",
+            "spending_limit_cents": spending_limit,
+            "required_cents":   amount_cents,
+        }), 403
+
+    # Debit wallet — atomic before starting fulfillment
+    try:
+        debited = wlt_mod.debit_wallet(
+            wallet_id, amount_cents,
+            f"Booking: {service_name} ({slot_id[:12]})"
+        )
+    except Exception as debit_exc:
+        with _DIRECT_LOCK:
+            _DIRECT_IN_FLIGHT.pop(_idem_key, None)
+        return jsonify({"status": "failed", "error": str(debit_exc)[:200],
+                        "failure_reason": "debit_failed"}), 500
     if not debited:
+        with _DIRECT_LOCK:
+            _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({"status": "failed", "error": "Wallet debit failed. Please try again.",
                         "failure_reason": "debit_failed"}), 500
 
@@ -1656,6 +1708,8 @@ def book_direct():
         except Exception as refund_err:
             print(f"[DIRECT] Wallet refund failed after booking failure: {refund_err} — "
                   f"manual refund needed for {wallet_id} ${amount_cents/100:.2f}")
+        with _DIRECT_LOCK:
+            _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({
             "status":         "failed",
             "failure_reason": failure_reason,
@@ -1699,6 +1753,10 @@ def book_direct():
                                    "completed_at": datetime.now(timezone.utc).isoformat()})
 
     balance_after = wlt_mod.get_balance(wallet_id) or 0
+
+    # Release in-flight lock — booking is complete, slot marked booked, no duplicate possible
+    with _DIRECT_LOCK:
+        _DIRECT_IN_FLIGHT.pop(_idem_key, None)
 
     print(f"[DIRECT] Autonomous booking complete: {booking_record_id} "
           f"confirmation={confirmation} wallet={wallet_id} charged=${our_price:.2f}")
@@ -1746,6 +1804,24 @@ def stripe_webhook():
         return jsonify({"error": "Invalid signature"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+    if event["type"] == "checkout.session.expired":
+        # Mark the pending booking record as expired so polling agents resolve cleanly
+        session    = event["data"]["object"]
+        metadata   = session.get("metadata", {})
+        booking_id = metadata.get("booking_id", "")
+        slot_id    = metadata.get("slot_id", "")
+        if booking_id:
+            existing = _load_booking_record(booking_id)
+            if existing and existing.get("status") == "pending_payment":
+                existing.update({
+                    "status":         "expired",
+                    "payment_status": "expired",
+                    "expired_at":     datetime.now(timezone.utc).isoformat(),
+                })
+                _save_booking_record(booking_id, existing)
+                print(f"[WEBHOOK] Checkout expired: {booking_id} slot={slot_id}")
+        return jsonify({"status": "ok"})
 
     if event["type"] == "checkout.session.completed":
         session    = event["data"]["object"]
@@ -3944,6 +4020,41 @@ def wallet_transactions(wallet_id: str):
 
     txs = wlt.get("transactions", [])[-50:]
     return jsonify({"wallet_id": wallet_id, "transactions": txs})
+
+
+@app.route("/api/wallets/<wallet_id>/spending-limit", methods=["PUT"])
+def wallet_set_spending_limit(wallet_id: str):
+    """
+    Set or remove the per-transaction spending limit on a wallet.
+
+    Body:
+      { "limit_dollars": 50.0 }   — cap each booking at $50
+      { "limit_dollars": null }    — remove cap (unlimited)
+
+    Requires master X-API-Key (not the wallet's own key) — this is an admin operation.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not _validate_api_key(api_key):
+        return jsonify({"error": "Unauthorized."}), 401
+
+    data = request.get_json(force=True, silent=True) or {}
+    limit_dollars = data.get("limit_dollars")
+    limit_cents = None if limit_dollars is None else int(float(limit_dollars) * 100)
+
+    wlt_mod = _load_module("manage_wallets")
+    if not wlt_mod:
+        return jsonify({"error": "Wallet system unavailable."}), 503
+
+    if not wlt_mod.get_wallet(wallet_id):
+        return jsonify({"error": "Wallet not found."}), 404
+
+    wlt_mod.set_spending_limit(wallet_id, limit_cents)
+    return jsonify({
+        "wallet_id":            wallet_id,
+        "spending_limit_cents": limit_cents,
+        "spending_limit_dollars": limit_dollars,
+        "message": "Spending limit updated." if limit_cents is not None else "Spending limit removed.",
+    })
 
 
 # ── Admin: slot refresh ───────────────────────────────────────────────────────

@@ -188,8 +188,18 @@ def credit_wallet(wallet_id: str, amount_cents: int, description: str = "Top-up"
 
 # ── Wallet creation ───────────────────────────────────────────────────────────
 
-def create_wallet(name: str, email: str, stripe_customer_id: str = "") -> dict:
-    """Create a new wallet. Returns the wallet record."""
+def create_wallet(
+    name: str,
+    email: str,
+    stripe_customer_id: str = "",
+    spending_limit_cents: int | None = None,
+) -> dict:
+    """Create a new wallet. Returns the wallet record.
+
+    spending_limit_cents: optional per-transaction cap. If set, any single booking
+    that exceeds this amount will be rejected with failure_reason="spending_limit_exceeded".
+    Useful for restricting untrusted agents. None = no limit.
+    """
     wallets = _load_wallets()
 
     # Return existing wallet if email already registered
@@ -201,22 +211,39 @@ def create_wallet(name: str, email: str, stripe_customer_id: str = "") -> dict:
     api_key   = _generate_api_key()
 
     record = {
-        "wallet_id":          wallet_id,
-        "api_key":            api_key,
-        "owner_name":         name,
-        "owner_email":        email,
-        "balance_cents":      0,
-        "currency":           "usd",
-        "stripe_customer_id": stripe_customer_id,
-        "created_at":         datetime.now(timezone.utc).isoformat(),
-        "last_funded":        None,
-        "last_used":          None,
-        "transactions":       [],
+        "wallet_id":            wallet_id,
+        "api_key":              api_key,
+        "owner_name":           name,
+        "owner_email":          email,
+        "balance_cents":        0,
+        "currency":             "usd",
+        "stripe_customer_id":   stripe_customer_id,
+        "spending_limit_cents": spending_limit_cents,  # None = no per-transaction cap
+        "created_at":           datetime.now(timezone.utc).isoformat(),
+        "last_funded":          None,
+        "last_used":            None,
+        "transactions":         [],
     }
 
     wallets[wallet_id] = record
     _save_wallets(wallets)
     return record
+
+
+def set_spending_limit(wallet_id: str, limit_cents: int | None) -> bool:
+    """Set or remove the per-transaction spending limit on a wallet.
+
+    limit_cents=None removes the limit entirely (unlimited).
+    limit_cents=0 effectively blocks all autonomous bookings.
+    Returns True on success, False if wallet not found.
+    """
+    wallets = _load_wallets()
+    wlt = wallets.get(wallet_id)
+    if not wlt:
+        return False
+    wlt["spending_limit_cents"] = limit_cents
+    _save_wallets(wallets)
+    return True
 
 
 # ── Top-up Stripe payment link ────────────────────────────────────────────────
