@@ -97,16 +97,32 @@ _DIRECT_IN_FLIGHT: dict[str, bool] = {}
 _DIRECT_LOCK = threading.Lock()
 
 def _signing_secret() -> str:
-    """Return the HMAC signing secret, generating and persisting one if absent."""
-    key = os.getenv("LMD_SIGNING_SECRET", "")
+    """Return the HMAC signing secret from LMD_SIGNING_SECRET env var.
+
+    MUST be set as a persistent Railway/environment variable — NOT .tmp/ which is wiped
+    on every redeploy, invalidating all outstanding cancel links.
+
+    Raises RuntimeError at startup if unset so the misconfiguration is caught immediately.
+    """
+    key = os.getenv("LMD_SIGNING_SECRET", "").strip()
     if key:
         return key
+    # Legacy: read from .tmp/ if still present (survives only same container lifetime)
     secret_file = Path(".tmp/.signing_secret")
     if secret_file.exists():
-        return secret_file.read_text().strip()
-    key = secrets.token_hex(32)
-    secret_file.write_text(key)
-    return key
+        persisted = secret_file.read_text().strip()
+        if persisted:
+            print("[WARNING] LMD_SIGNING_SECRET not set — reading from .tmp/ (cancel links "
+                  "will break on next Railway redeploy). Set LMD_SIGNING_SECRET in env vars.")
+            return persisted
+    # No key anywhere — generate an ephemeral one and warn loudly.
+    # Ephemeral key means cancel links only work until next restart.
+    import secrets as _s
+    ephemeral = _s.token_hex(32)
+    print("[ERROR] LMD_SIGNING_SECRET is not set. Using an ephemeral key — cancel links "
+          "will be invalid after any restart or redeploy. "
+          "Set LMD_SIGNING_SECRET in Railway environment variables immediately.")
+    return ephemeral
 
 def _sign_record(record: dict) -> str:
     """Return HMAC-SHA256 hex signature over the stable JSON representation."""
@@ -1981,7 +1997,8 @@ def book_direct():
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
-            confirmation, booking_meta = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
+            # _fulfill_booking returns a 3-tuple: (confirmation, booking_meta, supplier_reference)
+            confirmation, booking_meta, supplier_reference = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
     except Exception as exc:
         fulfill_error = exc
 
@@ -1994,7 +2011,9 @@ def book_direct():
         except Exception as refund_err:
             print(f"[DIRECT] Wallet refund failed after booking failure: {refund_err} — "
                   f"manual refund needed for {wallet_id} ${amount_cents/100:.2f}")
-        _save_booking_record(_recovery_key, {"status": "refunded", "resolved": True,
+        # Merge into existing recovery record to preserve wallet_id/amount_cents for reconcile
+        _existing_rec = _load_booking_record(_recovery_key) or {}
+        _save_booking_record(_recovery_key, {**_existing_rec, "status": "refunded", "resolved": True,
                                               "refunded_at": datetime.now(timezone.utc).isoformat()})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
@@ -2007,7 +2026,8 @@ def book_direct():
 
     # Fulfillment succeeded — persist record and return confirmation
     _mark_booked(slot_id)
-    booking_record_id = f"bk_{slot_id[:12]}"
+    import uuid as _uuid_mod
+    booking_record_id = f"bk_{slot_id[:12]}_{_uuid_mod.uuid4().hex[:8]}"
     try:
         burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
         supplier_id = burl_j.get("supplier_id", platform)
@@ -2018,6 +2038,7 @@ def book_direct():
         "booking_id":            booking_record_id,
         "session_id":            session_id,
         "confirmation":          str(confirmation or ""),
+        "supplier_reference":    str(supplier_reference or ""),
         "platform":              platform,
         "supplier_id":           supplier_id,
         "service_name":          service_name,
@@ -2042,8 +2063,9 @@ def book_direct():
 
     balance_after = wlt_mod.get_balance(wallet_id) or 0
 
-    # Mark recovery record resolved — no crash refund needed
-    _save_booking_record(_recovery_key, {"status": "completed", "resolved": True,
+    # Mark recovery record resolved — merge to preserve wallet_id/amount_cents fields
+    _existing_rec = _load_booking_record(_recovery_key) or {}
+    _save_booking_record(_recovery_key, {**_existing_rec, "status": "completed", "resolved": True,
                                           "booking_id": booking_record_id,
                                           "completed_at": datetime.now(timezone.utc).isoformat()})
     # Release in-flight lock — booking is complete, slot marked booked, no duplicate possible
@@ -2144,10 +2166,12 @@ def stripe_webhook():
             _WEBHOOK_IN_FLIGHT[session_id] = True
 
         # ── Idempotency check (persistent) — already completed ────────────────
+        # Only suppress for "booked" — a prior "failed" attempt should be retried
+        # (Stripe retries its webhook for up to 3 days; the next attempt may succeed).
         wh_record_key = f"webhook_session_{session_id[:40]}"
         existing = _load_booking_record(wh_record_key)
-        if existing and existing.get("status") in ("booked", "failed"):
-            print(f"[WEBHOOK] Already processed session {session_id}: {existing.get('status')}")
+        if existing and existing.get("status") == "booked":
+            print(f"[WEBHOOK] Already processed session {session_id}: booked")
             with _WEBHOOK_LOCK:
                 _WEBHOOK_IN_FLIGHT.pop(session_id, None)
             return jsonify({"status": "ok", "note": "already_processed"})
@@ -2875,12 +2899,15 @@ def book_with_saved_card(customer_id: str):
         pass
 
     try:
-        confirmation = _fulfill_booking(slot_id, customer, slot.get("platform", ""), slot.get("booking_url", ""))
+        # _fulfill_booking returns a 3-tuple: (confirmation, booking_meta, supplier_reference)
+        confirmation, booking_meta, supplier_reference = _fulfill_booking(
+            slot_id, customer, slot.get("platform", ""), slot.get("booking_url", ""))
         stripe.PaymentIntent.capture(pi.id)
         _mark_booked(slot_id)
 
         # Persist booking record so DELETE /bookings/{id} can cancel it later
-        booking_record_id = f"bk_{slot_id[:12]}"
+        import uuid as _uuid_mod
+        booking_record_id = f"bk_{slot_id[:12]}_{_uuid_mod.uuid4().hex[:8]}"
         booking_url_raw = slot.get("booking_url", "")
         try:
             _burl = json.loads(booking_url_raw) if isinstance(booking_url_raw, str) else (booking_url_raw or {})
@@ -2891,6 +2918,7 @@ def book_with_saved_card(customer_id: str):
         _save_booking_record(booking_record_id, {
             "booking_id":        booking_record_id,
             "confirmation":      str(confirmation or ""),
+            "supplier_reference": str(supplier_reference or ""),
             "platform":          slot.get("platform", ""),
             "supplier_id":       _supplier_id,
             "booking_url":       booking_url_raw,
@@ -3723,7 +3751,12 @@ def verify_booking(booking_id: str):
     expected_sig = f"sha256={_sign_record(check_record)}"
     signature_valid = hmac.compare_digest(stored_sig, expected_sig)
 
-    return jsonify({**record, "verified": signature_valid}), 200
+    # Return only non-PII fields — this is a public endpoint for receipt verification.
+    # Customer email, phone, payment IDs etc. are not exposed.
+    _PII_FIELDS = {"customer_email", "customer_phone", "customer_name", "payment_intent_id",
+                   "wallet_id", "booking_url"}
+    public_record = {k: v for k, v in record.items() if k not in _PII_FIELDS}
+    return jsonify({**public_record, "verified": signature_valid}), 200
 
 
 # ── Booking cancellation ──────────────────────────────────────────────────────
@@ -3880,7 +3913,12 @@ def _queue_octo_retry(booking_id: str, supplier_id: str, confirmation: str,
 
 @app.route("/bookings/<booking_id>", methods=["GET"])
 def get_booking(booking_id: str):
-    """Return booking status by ID. Used by MCP get_booking_status tool."""
+    """Return booking status by ID. Used by MCP get_booking_status tool.
+    Requires X-API-Key to prevent unauthenticated enumeration of booking records (IDOR).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not _validate_api_key(api_key):
+        return jsonify({"error": "Unauthorized. Valid X-API-Key required."}), 401
     record = _load_booking_record(booking_id)
     if not record:
         return jsonify({"error": f"Booking '{booking_id}' not found."}), 404
@@ -3966,22 +4004,30 @@ def cancel_booking(booking_id: str):
                 print(f"[CANCEL] OCTO cancel queued for automatic retry: {booking_id}")
 
     # ── Step 3: Update booking record ────────────────────────────────────────
+    # Only mark as "cancelled" if the customer has been refunded (or there was nothing to refund).
+    # If Stripe failed, flag as "cancellation_refund_failed" so it gets reviewed/retried.
+    stripe_ok = stripe_result.get("success", True)
     cancelled_at = datetime.now(timezone.utc).isoformat()
-    record["status"]       = "cancelled"
-    record["cancelled_at"] = cancelled_at
     record["cancellation_details"] = {"stripe": stripe_result, "octo": octo_result}
+    if stripe_ok:
+        record["status"]       = "cancelled"
+        record["cancelled_at"] = cancelled_at
+    else:
+        record["status"]              = "cancellation_refund_failed"
+        record["cancellation_flag_at"] = cancelled_at
     _save_booking_record(booking_id, record)
 
     return jsonify({
-        "success":        True,
+        "success":        stripe_ok,
         "booking_id":     booking_id,
-        "status":         "cancelled",
+        "status":         record["status"],
         "stripe_result":  stripe_result.get("action"),
         "refund_id":      stripe_result.get("refund_id"),
+        "stripe_error":   stripe_result.get("error") if not stripe_ok else None,
         "platform_result": octo_result.get("detail"),
         "octo_queued_for_retry": octo_queued,
         "cancelled_at":   cancelled_at,
-    }), 200
+    }), 200 if stripe_ok else 502
 
 
 # ── Supplier-initiated cancellation (Bokun webhook) ───────────────────────────
@@ -3990,28 +4036,40 @@ def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | 
     """
     Scan Supabase Storage bookings bucket for a record whose confirmation field
     matches confirmation_code. Returns (booking_id, record) or (None, None).
+    Paginates in pages of 500 to avoid the hard Storage list cap.
     """
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if not sb_url:
         return None, None
     headers = _sb_storage_headers()
-    try:
-        r = requests.post(
-            f"{sb_url}/storage/v1/object/list/bookings",
-            headers={**headers, "Content-Type": "application/json"},
-            json={"prefix": "", "limit": 500, "offset": 0},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return None, None
-        names = [
-            item["name"] for item in r.json()
-            if item.get("name", "").endswith(".json")
-            and not item["name"].startswith("cancellation_queue/")
-            and not item["name"].startswith("inbound_emails/")
-        ]
-    except Exception:
-        return None, None
+
+    names: list[str] = []
+    offset = 0
+    page_size = 500
+    while True:
+        try:
+            r = requests.post(
+                f"{sb_url}/storage/v1/object/list/bookings",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"prefix": "", "limit": page_size, "offset": offset},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                break
+            page = r.json()
+            if not page:
+                break
+            for item in page:
+                n = item.get("name", "")
+                if (n.endswith(".json")
+                        and not n.startswith("cancellation_queue/")
+                        and not n.startswith("inbound_emails/")):
+                    names.append(n)
+            if len(page) < page_size:
+                break  # last page
+            offset += page_size
+        except Exception:
+            break
 
     for name in names:
         booking_id = name.replace(".json", "")
@@ -4091,6 +4149,18 @@ def bokun_webhook():
         stripe_result = _refund_stripe(stripe_client, payment_intent)
         if not stripe_result["success"]:
             print(f"[BOKUN_WEBHOOK] ⚠ Stripe refund failed for {booking_id}: {stripe_result.get('error')}")
+            # Do not mark as cancelled — customer has not been refunded yet.
+            # Flag for manual review instead.
+            record["status"]              = "cancellation_refund_failed"
+            record["cancellation_details"] = {"stripe": stripe_result, "bokun_event": event_type}
+            record["cancellation_flag_at"]  = datetime.now(timezone.utc).isoformat()
+            _save_booking_record(booking_id, record)
+            return jsonify({
+                "received":   True,
+                "action":     "refund_failed",
+                "booking_id": booking_id,
+                "error":      stripe_result.get("error"),
+            }), 200
 
     cancelled_at = datetime.now(timezone.utc).isoformat()
     record["status"]       = "cancelled"
@@ -4189,20 +4259,34 @@ def self_serve_cancel(booking_id: str):
 
         if stripe_client.api_key and payment_intent:
             stripe_result = _refund_stripe(stripe_client, payment_intent)
+            if not stripe_result["success"]:
+                print(f"[SELF_CANCEL] ⚠ Stripe refund failed for {booking_id}: {stripe_result.get('error')}")
 
         supplier_id  = record.get("supplier_id", record.get("platform", ""))
         confirmation = record.get("confirmation", "")
         octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+        octo_result  = {"success": True, "detail": "No OCTO booking"}
         if supplier_id in octo_platforms and confirmation:
-            _cancel_octo_booking(supplier_id, confirmation)
+            octo_result = _cancel_octo_booking(supplier_id, confirmation)
+            if not octo_result["success"] and not octo_result.get("permanent"):
+                # Queue for automatic background retry
+                price_charged = float(record.get("price_charged", 0))
+                _queue_octo_retry(booking_id, supplier_id, confirmation, payment_intent, price_charged)
 
         cancelled_at = datetime.now(timezone.utc).isoformat()
         record["status"]       = "cancelled"
         record["cancelled_at"] = cancelled_at
         record["cancelled_by"] = "customer_self_serve"
+        record["cancellation_details"] = {"stripe": stripe_result, "octo": octo_result}
         _save_booking_record(booking_id, record)
 
-        # Notify customer
+        # Notify customer — refund_status reflects actual outcome
+        refund_issued = stripe_result.get("action") in ("refunded", "hold_cancelled")
+        if refund_issued:
+            refund_desc = "A full refund has been issued to your original payment method."
+        else:
+            refund_desc = ("Your cancellation has been recorded. "
+                           "If a charge was made, our team will process your refund within 3–5 business days.")
         try:
             email_mod = _load_module("send_booking_email")
             if email_mod and record.get("customer_email"):
@@ -4219,10 +4303,10 @@ def self_serve_cancel(booking_id: str):
                     customer_name=record.get("customer_name", ""),
                     slot=slot,
                     confirmation_number=booking_id,
-                    refund_status="A full refund has been issued to your original payment method.",
+                    refund_status=refund_desc,
                 )
-        except Exception:
-            pass
+        except Exception as _mail_err:
+            print(f"[SELF_CANCEL] Cancellation email failed (non-fatal): {_mail_err}")
 
         already_done = True
 
@@ -4458,7 +4542,21 @@ def peek_webhook():
     Payload fields used:
       booking.uuid      — OCTO booking UUID (matches our 'confirmation' field)
       booking.status    — CONFIRMED | CANCELLED | ON_HOLD | EXPIRED | etc.
+
+    Auth: PEEK_WEBHOOK_SECRET env var verified against X-Peek-Signature header
+    or ?token= query param.
     """
+    # Verify webhook authenticity using PEEK_WEBHOOK_SECRET
+    peek_secret = os.getenv("PEEK_WEBHOOK_SECRET", "").strip()
+    if peek_secret:
+        provided = (request.headers.get("X-Peek-Signature", "")
+                    or request.args.get("token", ""))
+        if not hmac.compare_digest(peek_secret, provided):
+            print("[PEEK_WEBHOOK] Invalid auth token — rejected")
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    else:
+        print("[PEEK_WEBHOOK] WARNING: PEEK_WEBHOOK_SECRET not set — accepting unauthenticated events")
+
     try:
         data = request.get_json(force=True, silent=True) or {}
     except Exception:

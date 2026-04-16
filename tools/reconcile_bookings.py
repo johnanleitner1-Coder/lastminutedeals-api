@@ -39,24 +39,33 @@ def _headers() -> dict:
 
 
 def _list_bookings() -> list[dict]:
-    """Fetch all booking records from Supabase Storage."""
-    try:
-        r = requests.post(
-            f"{SB_URL}/storage/v1/object/list/bookings",
-            headers={**_headers(), "Content-Type": "application/json"},
-            json={"prefix": "", "limit": 1000, "offset": 0},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return []
-        names = [
-            item["name"] for item in r.json()
-            if item.get("name") and not item["name"].startswith("cancellation_queue/")
-            and item["name"].endswith(".json")
-        ]
-    except Exception as e:
-        print(f"[RECONCILE] Failed to list bookings: {e}")
-        return []
+    """Fetch all booking records from Supabase Storage. Paginates to handle >1000 records."""
+    names: list[str] = []
+    offset = 0
+    page_size = 500
+    while True:
+        try:
+            r = requests.post(
+                f"{SB_URL}/storage/v1/object/list/bookings",
+                headers={**_headers(), "Content-Type": "application/json"},
+                json={"prefix": "", "limit": page_size, "offset": offset},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                break
+            page = r.json()
+            if not page:
+                break
+            for item in page:
+                n = item.get("name", "")
+                if n and n.endswith(".json") and not n.startswith("cancellation_queue/"):
+                    names.append(n)
+            if len(page) < page_size:
+                break  # last page
+            offset += page_size
+        except Exception as e:
+            print(f"[RECONCILE] Failed to list bookings (offset={offset}): {e}")
+            break
 
     records = []
     for name in names:

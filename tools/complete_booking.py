@@ -1177,8 +1177,11 @@ class GenericBooker(BasePlatformBooker):
                 except Exception:
                     continue
 
-        print("[complete_booking] [Generic] Could not fully automate — flagging for manual review")
-        return f"Manual fulfillment needed — {self.booking_url}"
+        print("[complete_booking] [Generic] Could not fully automate — raising for manual review")
+        raise BookingUnknownError(
+            f"GenericBooker: could not automate booking for URL {self.booking_url}. "
+            "Implement a platform-specific booker or add this URL to a supported platform."
+        )
 
 
 # ── OCTO API booker (pure HTTP — no Playwright) ───────────────────────────────
@@ -1882,12 +1885,16 @@ def complete_booking(
         BookingTimeoutError      — page did not load or action timed out
         BookingUnknownError      — unexpected failure (screenshot saved to .tmp/booking_failures/)
     """
-    if not PLAYWRIGHT_AVAILABLE:
-        print("[complete_booking] WARNING: Playwright not installed — returning manual fulfillment token")
-        return "Manual fulfillment required — install playwright"
-
     platform_key = platform.strip().lower()
     booker_cls = PLATFORM_MAP.get(platform_key, GenericBooker)
+
+    # Only block on Playwright absence for bookers that actually use a browser.
+    # OCTOBooker overrides run() to use pure HTTP — it must not be blocked here.
+    if not PLAYWRIGHT_AVAILABLE and booker_cls is not OCTOBooker:
+        raise RuntimeError(
+            f"Playwright not installed — cannot automate {booker_cls.__name__}. "
+            "Install with: pip install playwright && playwright install chromium"
+        )
 
     print(f"[complete_booking] Dispatching to {booker_cls.__name__} for platform='{platform}'")
 

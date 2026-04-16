@@ -152,12 +152,18 @@ def main() -> None:
     print(f"[RETRY] Processing {len(names)} pending cancellation(s)...")
 
     for name in names:
-        path  = f"cancellation_queue/{name}"
+        # name is the full path returned by Supabase list API (e.g. "cancellation_queue/bk_xxx.json").
+        # Do NOT prepend the prefix again — that creates a double-prefix 404.
+        path  = name
         entry = _storage_get(path)
         if not entry:
             continue
 
-        booking_id   = entry.get("booking_id", name.replace(".json", ""))
+        # Skip terminal entries — they have already been fully processed.
+        if entry.get("status") in ("exhausted", "permanent_error", "resolved"):
+            continue
+
+        booking_id   = entry.get("booking_id") or name.split("/")[-1].replace(".json", "")
         supplier_id  = entry.get("supplier_id", "")
         confirmation = entry.get("confirmation", "")
         attempts     = entry.get("attempts", 0)

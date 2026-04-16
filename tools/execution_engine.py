@@ -299,12 +299,23 @@ class ExecutionEngine:
         if not mod:
             raise RuntimeError("complete_booking.py not available — Playwright not installed")
 
-        return mod.complete_booking(
+        result = mod.complete_booking(
             slot_id=slot.get("slot_id", ""),
             customer=customer,
             platform=slot.get("platform", ""),
             booking_url=slot.get("booking_url", ""),
         )
+
+        # OCTOBooker.run() returns a dict with "confirmation", "supplier_reference",
+        # "booking_meta" keys. Other bookers return a plain string confirmation.
+        if isinstance(result, dict):
+            confirmation = result.get("confirmation", "")
+            # Store supplier_reference and booking_meta on the slot for downstream use
+            slot["_supplier_reference"] = result.get("supplier_reference", "")
+            slot["_booking_meta"]       = result.get("booking_meta", {})
+            return str(confirmation)
+
+        return result
 
     # ── Payment execution ─────────────────────────────────────────────────────
 
