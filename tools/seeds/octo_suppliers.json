@@ -63,7 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -94,7 +94,14 @@
       "471620P":                    {"name": "Boka Bliss",           "city": "Kotor",     "country": "ME"},
       "5577093P":                   {"name": "TourTransfer Bucharest", "city": "Bucharest", "country": "RO"},
       "RED":                        {"name": "REDRIB Experience",    "city": "Helsinki",  "country": "FI"},
-      "REGULAR BIKES LUNGOTEVERE":  {"name": "Bicycle Roma",         "city": "Rome",      "country": "IT"}
+      "REGULAR BIKES LUNGOTEVERE":  {"name": "Bicycle Roma",         "city": "Rome",      "country": "IT"},
+      "ISHESTAR":                   {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
+      "RIDING":                     {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
+      "HORSE":                      {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
+      "MARVEL":                     {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
+      "EGYPT":                      {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
+      "LUXOR":                      {"name": "Marvel Egypt Tours",    "city": "Luxor",     "country": "EG"},
+      "ASWAN":                      {"name": "Marvel Egypt Tours",    "city": "Aswan",     "country": "EG"}
     }
   },
   {
