@@ -174,13 +174,15 @@ def _save_booking_record(booking_id: str, record: dict) -> None:
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
         try:
-            requests.post(
+            r = requests.post(
                 f"{sb_url}/storage/v1/object/bookings/{booking_id}.json",
                 headers={**_sb_storage_headers(), "Content-Type": "application/json",
                          "x-upsert": "true"},
                 data=json.dumps(record),
                 timeout=8,
             )
+            if r.status_code not in (200, 201):
+                print(f"[BOOKINGS] Supabase Storage write returned {r.status_code}: {r.text[:200]}")
         except Exception as e:
             print(f"[BOOKINGS] Supabase Storage write failed: {e}")
     # Always write local backup too
@@ -1553,6 +1555,11 @@ def create_checkout():
     landing_url  = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com").rstrip("/")
 
     try:
+        import uuid as _uuid
+        # Pre-generate booking_id before the Stripe call — cannot reference
+        # session.id inside the create() arguments (UnboundLocalError).
+        booking_id = f"bk_{slot_id[:12]}_{_uuid.uuid4().hex[:8]}"
+
         # ── Auth hold (capture_method=manual) — card is NOT charged yet ───────
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -1584,12 +1591,9 @@ def create_checkout():
                 "booking_url":    slot.get("booking_url", ""),
                 "platform":       slot.get("platform", ""),
                 "dry_run":        "true" if dry_run else "false",
-                # booking_id is pre-assigned so agent can poll get_booking_status
-                # before the human completes payment
-                "booking_id":     f"bk_{slot_id[:12]}_{session.id[-8:]}",
+                "booking_id":     booking_id,
             },
         )
-        booking_id = f"bk_{slot_id[:12]}_{session.id[-8:]}"
 
         # Create a pending record immediately — agent can poll this before human pays.
         # Stripe checkout sessions expire after 24 hours by default.
