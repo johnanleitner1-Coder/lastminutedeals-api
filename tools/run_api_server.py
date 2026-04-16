@@ -735,31 +735,41 @@ def _load_slots_from_supabase(
             hdrs   = {
                 "apikey": sb_secret,
                 "Authorization": f"Bearer {sb_secret}",
-                # Tell PostgREST not to apply its own row cap on top of our limit param
                 "Prefer": "count=none",
             }
             now_iso     = datetime.now(timezone.utc).isoformat()
             horizon_dt  = datetime.now(timezone.utc) + timedelta(hours=hours_ahead)
             horizon_iso = horizon_dt.isoformat()
-            # Use list of tuples so requests sends two start_time params (PostgREST AND logic)
-            param_list: list[tuple] = [
-                ("limit", limit),
+            base_params: list[tuple] = [
                 ("order", "start_time.asc"),
-                ("start_time", f"gt.{now_iso}"),    # exclude already-started slots
+                ("start_time", f"gt.{now_iso}"),
             ]
             if hours_ahead:
-                param_list.append(("start_time", f"lte.{horizon_iso}"))
+                base_params.append(("start_time", f"lte.{horizon_iso}"))
             if category:
-                param_list.append(("category", f"eq.{category}"))
+                base_params.append(("category", f"eq.{category}"))
             if city:
-                param_list.append(("location_city", f"ilike.%{city}%"))
+                base_params.append(("location_city", f"ilike.%{city}%"))
             if budget:
-                param_list.append(("our_price", f"lte.{budget}"))
-            resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
-                                params=param_list, timeout=10)
-            if resp.status_code == 200:
-                result = []
-                for row in resp.json():
+                base_params.append(("our_price", f"lte.{budget}"))
+
+            # Paginate through Supabase — max-rows server config caps each response
+            # at 1000 rows regardless of limit param. Page until we have all records
+            # or we've reached the caller's requested limit.
+            PAGE_SIZE = 1000
+            result: list = []
+            offset = 0
+            while len(result) < limit:
+                fetch_n = min(PAGE_SIZE, limit - len(result))
+                page_params = base_params + [("limit", fetch_n), ("offset", offset)]
+                resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
+                                    params=page_params, timeout=10)
+                if resp.status_code != 200:
+                    break
+                page = resp.json()
+                if not page:
+                    break
+                for row in page:
                     if row.get("raw"):
                         try:
                             result.append(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"])
@@ -767,7 +777,10 @@ def _load_slots_from_supabase(
                         except Exception:
                             pass
                     result.append(row)
-                return result
+                if len(page) < fetch_n:
+                    break  # last page — no more rows
+                offset += fetch_n
+            return result
         except Exception as e:
             print(f"[SLOTS] Supabase load failed, falling back to local: {e}")
 
@@ -2298,29 +2311,38 @@ def search_slots():
             hdrs = {
                 "apikey": sb_secret,
                 "Authorization": f"Bearer {sb_secret}",
-                "Prefer": "count=none",  # bypass PostgREST default row cap
+                "Prefer": "count=none",
             }
             now_iso     = datetime.now(timezone.utc).isoformat()
-            param_list: list[tuple] = [
-                ("limit", limit),
+            base_params: list[tuple] = [
                 ("order", "start_time.asc"),
-                ("start_time", f"gt.{now_iso}"),   # exclude already-started slots
+                ("start_time", f"gt.{now_iso}"),
             ]
             if hours_ahead:
                 horizon_iso = (datetime.now(timezone.utc) + timedelta(hours=hours_ahead)).isoformat()
-                param_list.append(("start_time", f"lte.{horizon_iso}"))
+                base_params.append(("start_time", f"lte.{horizon_iso}"))
             if category:
-                param_list.append(("category", f"eq.{category}"))
+                base_params.append(("category", f"eq.{category}"))
             if city:
-                param_list.append(("location_city", f"ilike.%{city}%"))   # % wildcards required for partial match
+                base_params.append(("location_city", f"ilike.%{city}%"))
             if max_price is not None:
-                param_list.append(("our_price", f"lte.{max_price}"))
-            resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs, params=param_list, timeout=10)
-            if resp.status_code == 200:
-                rows = resp.json()
-                # Restore full slot from raw JSONB where available
-                result = []
-                for row in rows:
+                base_params.append(("our_price", f"lte.{max_price}"))
+
+            # Paginate — Supabase max-rows config caps each response at 1000
+            PAGE_SIZE = 1000
+            result: list = []
+            offset = 0
+            while len(result) < limit:
+                fetch_n = min(PAGE_SIZE, limit - len(result))
+                page_params = base_params + [("limit", fetch_n), ("offset", offset)]
+                resp = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
+                                    params=page_params, timeout=10)
+                if resp.status_code != 200:
+                    break
+                page = resp.json()
+                if not page:
+                    break
+                for row in page:
                     if row.get("raw"):
                         try:
                             result.append(_sanitize_slot(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"]))
@@ -2328,7 +2350,10 @@ def search_slots():
                         except Exception:
                             pass
                     result.append(_sanitize_slot(row))
-                return jsonify(result)
+                if len(page) < fetch_n:
+                    break  # last page
+                offset += fetch_n
+            return jsonify(result)
         except Exception as e:
             print(f"Supabase search failed: {e}")
 
