@@ -40,11 +40,11 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-
-import threading
 
 import requests
 from flask import Flask, jsonify, request
@@ -770,8 +770,15 @@ def _generate_api_key() -> str:
 # Stored in Supabase Storage so data survives Railway redeploys.
 _SB_CUSTOMERS_PATH = "config/stripe_customers.json"
 CUSTOMERS_FILE = Path(".tmp/stripe_customers.json")  # local cache only
+_CUSTOMERS_MEM_CACHE: dict | None = None
+_CUSTOMERS_CACHE_AT: float = 0.0
+_CUSTOMERS_CACHE_TTL = 30  # seconds
 
 def _load_customers() -> dict:
+    global _CUSTOMERS_MEM_CACHE, _CUSTOMERS_CACHE_AT
+    import time as _time
+    if _CUSTOMERS_MEM_CACHE is not None and (_time.monotonic() - _CUSTOMERS_CACHE_AT) < _CUSTOMERS_CACHE_TTL:
+        return _CUSTOMERS_MEM_CACHE
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
         try:
@@ -786,17 +793,26 @@ def _load_customers() -> dict:
                     CUSTOMERS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 except Exception:
                     pass
+                _CUSTOMERS_MEM_CACHE = data
+                _CUSTOMERS_CACHE_AT = _time.monotonic()
                 return data
         except Exception:
             pass
     if CUSTOMERS_FILE.exists():
         try:
-            return json.loads(CUSTOMERS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(CUSTOMERS_FILE.read_text(encoding="utf-8"))
+            _CUSTOMERS_MEM_CACHE = data
+            _CUSTOMERS_CACHE_AT = _time.monotonic()
+            return data
         except Exception:
             pass
     return {}
 
 def _save_customers(customers: dict) -> None:
+    global _CUSTOMERS_MEM_CACHE, _CUSTOMERS_CACHE_AT
+    import time as _time
+    _CUSTOMERS_MEM_CACHE = customers
+    _CUSTOMERS_CACHE_AT = _time.monotonic()
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
         try:
@@ -819,8 +835,15 @@ def _save_customers(customers: dict) -> None:
 # Stored in Supabase Storage so data survives Railway redeploys.
 _SB_WEBHOOKS_PATH = "config/webhook_subscriptions.json"
 WEBHOOKS_FILE = Path(".tmp/webhook_subscriptions.json")  # local cache only
+_WEBHOOKS_MEM_CACHE: dict | None = None
+_WEBHOOKS_CACHE_AT: float = 0.0
+_WEBHOOKS_CACHE_TTL = 30  # seconds
 
 def _load_webhooks() -> dict:
+    global _WEBHOOKS_MEM_CACHE, _WEBHOOKS_CACHE_AT
+    import time as _time
+    if _WEBHOOKS_MEM_CACHE is not None and (_time.monotonic() - _WEBHOOKS_CACHE_AT) < _WEBHOOKS_CACHE_TTL:
+        return _WEBHOOKS_MEM_CACHE
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
         try:
@@ -835,17 +858,26 @@ def _load_webhooks() -> dict:
                     WEBHOOKS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 except Exception:
                     pass
+                _WEBHOOKS_MEM_CACHE = data
+                _WEBHOOKS_CACHE_AT = _time.monotonic()
                 return data
         except Exception:
             pass
     if WEBHOOKS_FILE.exists():
         try:
-            return json.loads(WEBHOOKS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(WEBHOOKS_FILE.read_text(encoding="utf-8"))
+            _WEBHOOKS_MEM_CACHE = data
+            _WEBHOOKS_CACHE_AT = _time.monotonic()
+            return data
         except Exception:
             pass
     return {}
 
 def _save_webhooks(subs: dict) -> None:
+    global _WEBHOOKS_MEM_CACHE, _WEBHOOKS_CACHE_AT
+    import time as _time
+    _WEBHOOKS_MEM_CACHE = subs
+    _WEBHOOKS_CACHE_AT = _time.monotonic()
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
         try:
@@ -2108,8 +2140,7 @@ def book_direct():
 
     # Fulfillment succeeded — persist record and return confirmation
     _mark_booked(slot_id)
-    import uuid as _uuid_mod
-    booking_record_id = f"bk_{slot_id[:12]}_{_uuid_mod.uuid4().hex[:8]}"
+    booking_record_id = f"bk_{slot_id[:12]}_{uuid.uuid4().hex[:8]}"
     try:
         burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
         supplier_id = burl_j.get("supplier_id", platform)
@@ -2590,6 +2621,11 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
 # exposing it lets agents bypass our platform and book directly at the original price.
 # price is our cost basis — exposing it reveals our markup and enables arbitrage.
 # business_id, api_key_env, and data_source are internal operational fields.
+_PII_FIELDS = frozenset({
+    "customer_email", "customer_phone", "customer_name", "payment_intent_id",
+    "wallet_id", "booking_url",
+})
+
 _SLOT_INTERNAL_FIELDS = frozenset({
     "booking_url", "price", "original_price", "markup_pct", "our_markup",
     "business_id", "data_source", "test_group", "scraped_at",
@@ -2988,8 +3024,7 @@ def book_with_saved_card(customer_id: str):
         _mark_booked(slot_id)
 
         # Persist booking record so DELETE /bookings/{id} can cancel it later
-        import uuid as _uuid_mod
-        booking_record_id = f"bk_{slot_id[:12]}_{_uuid_mod.uuid4().hex[:8]}"
+        booking_record_id = f"bk_{slot_id[:12]}_{uuid.uuid4().hex[:8]}"
         booking_url_raw = slot.get("booking_url", "")
         try:
             _burl = json.loads(booking_url_raw) if isinstance(booking_url_raw, str) else (booking_url_raw or {})
@@ -3835,8 +3870,6 @@ def verify_booking(booking_id: str):
 
     # Return only non-PII fields — this is a public endpoint for receipt verification.
     # Customer email, phone, payment IDs etc. are not exposed.
-    _PII_FIELDS = {"customer_email", "customer_phone", "customer_name", "payment_intent_id",
-                   "wallet_id", "booking_url"}
     public_record = {k: v for k, v in record.items() if k not in _PII_FIELDS}
     return jsonify({**public_record, "verified": signature_valid}), 200
 

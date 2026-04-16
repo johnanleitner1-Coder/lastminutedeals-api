@@ -91,10 +91,8 @@ def _load_wallets() -> dict:
             )
             if r.status_code == 200:
                 data = r.json()
-                # Populate in-process cache
                 _WALLETS_MEM_CACHE = data
                 _WALLETS_CACHE_AT  = _time_mod.time()
-                # Write local cache
                 try:
                     WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
                     WALLETS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -103,7 +101,6 @@ def _load_wallets() -> dict:
                 return data
         except Exception as e:
             print(f"[WALLETS] Supabase load failed, using local cache: {e}")
-    # Fallback: local cache
     if WALLETS_FILE.exists():
         try:
             return json.loads(WALLETS_FILE.read_text(encoding="utf-8"))
@@ -116,15 +113,13 @@ def _save_wallets(wallets: dict) -> None:
     Invalidates the in-process cache so subsequent reads get fresh data.
     """
     global _WALLETS_MEM_CACHE, _WALLETS_CACHE_AT
-    _WALLETS_MEM_CACHE = wallets  # update cache inline (avoids stale read after write)
+    _WALLETS_MEM_CACHE = wallets
     _WALLETS_CACHE_AT  = _time_mod.time()
-    # Local write always
     try:
         WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
         WALLETS_FILE.write_text(json.dumps(wallets, indent=2), encoding="utf-8")
     except Exception:
         pass
-    # Supabase Storage write (survives redeploys)
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if sb_url and sb_secret:
@@ -300,8 +295,6 @@ def create_topup_session(wallet_id: str, amount_cents: int) -> str:
     api_base    = os.getenv("BOOKING_SERVER_HOST", "http://localhost:5050").rstrip("/")
 
     # Ensure Stripe customer exists for this wallet.
-    # Re-read wallets inside the same load cycle to avoid TOCTOU race:
-    # do NOT call _load_wallets() again after creating the customer — use the already-loaded dict.
     cid = wlt.get("stripe_customer_id", "")
     if not cid:
         cust = _stripe.Customer.create(
@@ -310,11 +303,9 @@ def create_topup_session(wallet_id: str, amount_cents: int) -> str:
             metadata={"wallet_id": wallet_id},
         )
         cid = cust["id"]
-        # Update in the same wallets dict we already loaded — avoids a second read
-        # that could race with concurrent writes
-        _wallets_cache = _load_wallets()
-        _wallets_cache[wallet_id]["stripe_customer_id"] = cid
-        _save_wallets(_wallets_cache)
+        wallets = _load_wallets()
+        wallets[wallet_id]["stripe_customer_id"] = cid
+        _save_wallets(wallets)
 
     session = _stripe.checkout.Session.create(
         customer=cid,
