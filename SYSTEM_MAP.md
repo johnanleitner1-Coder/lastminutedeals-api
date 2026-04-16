@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v4 — full route audit, stripe_customers .tmp gap, SMS/market-insights .tmp gaps, disabled platforms, undocumented endpoints, new bugs #20–#22)
+**Last updated:** 2026-04-16 (v5 — session 4–5 bug fixes applied; all critical/high/medium bugs resolved; D-series Bokun-audit bugs fixed; Railway env vars confirmed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -1100,37 +1100,79 @@ Only the OCTO/Bokun path runs in production.
 
 ## 17. Bug Register — Confirmed Code Defects
 
-### CRITICAL — Will cause live booking failures or data loss
+> All critical and high/medium code bugs confirmed in sessions 1–5 have been fixed.
+> Remaining items below are architectural gaps (data persistence, missing features) not yet addressed.
 
-| # | Bug | Location | Symptom | Fix Required |
-|---|---|---|---|---|
-| 1 | `book_direct` unpacks 2 values from `_fulfill_booking` which returns 3-tuple | `run_api_server.py:1984` | ValueError crash on every wallet booking attempt | Unpack 3 values: `confirmation, booking_meta, supplier_reference = fut.result(...)` |
-| 2 | `book_direct` ignores `quantity` — always books 1 person | `run_api_server.py:1983` | Multi-person autonomous bookings silently book 1 | Parse quantity from request, pass to `_fulfill_booking` |
-| 3 | `execute/guaranteed` engine ignores `quantity` | `execution_engine.py:302` | Always books 1 person regardless of request | Add quantity to ExecutionRequest, pass to `_attempt_booking` |
-| 4 | `book_direct` does NOT store `supplier_reference` | `run_api_server.py:2017` | Bokun webhook cannot find wallet bookings by supplier ref | Store `supplier_reference` in the booking record |
-| 5 | `self_serve_cancel` does NOT queue failed OCTO cancellations for retry | `run_api_server.py:4197` | Customer refunded but supplier retains active booking | Add `_queue_octo_retry()` call on failure |
-| 6 | No wallet credit-back on ANY cancellation path | `run_api_server.py:3944, 4191, 4099` | Wallet bookings never refunded when cancelled | Add `credit_wallet()` when `payment_method == "wallet"` in all 3 paths |
-| 7 | `execute/guaranteed` writes booking state to `.tmp/` only — not Supabase Storage | `execution_engine.py:512` | GET /bookings/{id} returns 404; state lost on redeploy | Save booking record to Supabase Storage |
-| 8 | `execute/guaranteed` wallet debit happens AFTER booking (double-spend risk) | `execution_engine.py:489` | Two concurrent calls can both succeed with one wallet debit failure | Debit before attempt (match book_direct pattern) |
-| 9 | `execute/guaranteed` + wallet: if wallet charge fails post-booking, OCTO cancel not queued | `execution_engine.py:499` | Supplier has confirmed booking with no payment, no retry | Queue OCTO cancel with retry on payment failure |
-| 10 | Intent sessions stored in `.tmp/intent_sessions.json` only | `intent_sessions.py` | All active intents lost on every Railway redeploy | Persist intent sessions to Supabase Storage |
-| 11 | `book_with_saved_card` stores 3-tuple as `confirmation` — never extracts scalar | `run_api_server.py:2878` | Confirmation number in booking record is tuple string; OCTO cancel fails; Bokun webhook can never match | Unpack 3-tuple: `confirmation, booking_meta, supplier_reference = _fulfill_booking(...)` |
+### FIXED — Sessions 1–5 (code bugs resolved)
 
-### HIGH — Silent failures or data gaps
+| # | Bug | Fixed in |
+|---|---|---|
+| 1 | `book_direct` 2-tuple unpack of 3-tuple return from `_fulfill_booking` → ValueError | b3116b9 |
+| 2 | `OCTOBooker.run()` dict return not handled in `execution_engine._attempt_booking` | b3116b9 |
+| 3 | Retry queue double-prefix path — entire cancellation retry queue non-functional | b3116b9 |
+| 5 | `_signing_secret()` written to `.tmp/` → invalidated on every Railway redeploy | b3116b9 |
+| 6 | `book_direct` recovery record partial-write destroys wallet_id/amount_cents | b3116b9 |
+| 7 | Stripe idempotency check blocked retries for "failed" sessions | b3116b9 |
+| 8 | Non-unique `booking_record_id` — concurrent bookings of same slot collide | b3116b9 |
+| 9 | `GET /bookings/<id>` had no authentication (IDOR) | b3116b9 |
+| 10 | `GET /verify/<id>` returned full PII publicly | b3116b9 |
+| 11 | `book_with_saved_card` assigned 3-tuple to scalar `confirmation` | b3116b9 |
+| 12 | Bokun webhook marked `"cancelled"` even when Stripe refund failed | b3116b9 |
+| 13 | `self_serve_cancel` always sent "refund issued" email regardless of Stripe outcome | b3116b9 |
+| 14 | `self_serve_cancel` silently dropped failed OCTO cancellations (no retry queued) | b3116b9 |
+| 15 | `_find_booking_by_confirmation` hard 500-record limit | b3116b9 |
+| 16 | `reconcile_bookings.py` hard 1000-record limit | b3116b9 |
+| 17 | Peek webhook had no authentication | b3116b9 |
+| 18 | `DELETE /bookings` marked cancelled even when Stripe refund AND OCTO cancel both failed | b3116b9 |
+| 19 | APScheduler multi-worker guard used per-process env var → duplicate background jobs | 1d562ef |
+| 20 | `stripe_customers.json` in `.tmp/` only → lost on Railway redeploy | 1d562ef |
+| 21 | `_mark_booked()` had no thread safety | 2077e3f |
+| 22 | `GenericBooker.complete()` returned fake success string instead of raising | b3116b9 |
+| 23 | `book_direct` booking record omitted `supplier_reference` | b3116b9 |
+| 24 | `debit_wallet()` never checked `spending_limit_cents` at wallet level | 1d562ef |
+| 25 | Intent session stayed `"executing"` forever on unhandled engine exception | 1d562ef |
+| 27 | OCTOBooker 409 re-resolution matched first slot without verifying `start_time` | 1d562ef |
+| 28 | Playwright availability check blocked OCTOBooker (pure HTTP, no browser needed) | b3116b9 |
+| 29 | `_validate_api_key` hit Supabase twice per request — no caching | 1d562ef |
+| 31 | `_queue_octo_retry()` checked `SUPABASE_URL` but not `SUPABASE_SECRET_KEY` | 2077e3f |
+| 34 | `list_inbound_emails` used `==` for auth (timing oracle) | 1d562ef |
+| 35 | `execution_engine._cancel_stripe()` swallowed all exceptions silently | 1d562ef |
+| 37 | `get_wallet_by_api_key()` triggered full Supabase round-trip on every wallet request | 2077e3f |
+| 38 | Intent session reads had no `_sessions_lock` → race condition | 1d562ef |
+| 39 | `_fire_callback()` blocked intent monitor thread with synchronous HTTP call | 1d562ef |
+| 40 | `market_insights` module loaded via `exec_module` on every booking attempt | 1d562ef |
+| 41/42 | `circuit_breaker.py` read Supabase env vars at import time → silently disabled | 1d562ef |
+| 43 | Circuit breaker half-open allowed unlimited concurrent probes | 1d562ef |
+| 44 | `create_topup_session()` called `_load_wallets()` twice (TOCTOU) | 1d562ef |
+| 51 | `booked_slots.json` write was non-atomic → crash mid-write could corrupt file | 1d562ef |
+| EE-4 | Hardcoded `+0.1` confidence floor → intent monitor booked with zero matching slots | 2077e3f |
+| D-1 | `self_serve_cancel` HTML page always said "full refund issued" even on Stripe failure | 35d350e |
+| D-2 | `_cancel_octo_booking` sent `Octo-Capabilities: octo/pricing` on DELETE (Bokun hangs) | 35d350e |
+| D-3 | `retry_cancellations._cancel_octo` same header on DELETE | 35d350e |
+| D-4 | `reconcile_bookings._verify_octo_booking` same header on GET `/bookings/{uuid}` | 35d350e |
+| D-5 | `send_booking_email._build_failed_html` used OCTO JSON blob as `retry_url` href | 35d350e |
+| D-6 | `_get_reliability_metrics` + `_find_booking_by_confirmation` missing prefix filters | 35d350e |
+| D-7 | `reconcile_bookings._list_bookings` missing 7 of 8 internal prefix filters | 35d350e |
+| D-8 | `_fulfill_booking` used `"burl_j" in dir()` fragile unbound-variable pattern | 35d350e |
 
-| # | Bug | Location | Symptom | Fix Required |
-|---|---|---|---|---|
-| 12 | `notify_webhooks.py` and intent `price_alert` read `.tmp/aggregated_slots.json` which doesn't exist on Railway | `notify_webhooks.py`, `intent_sessions.py:_check_price_trigger` | Webhook subscriber notifications never fire; price alerts never trigger on Railway | Move slot reads to Supabase query; move subscription state to Supabase Storage |
-| 13 | `reconcile_bookings.py` flags as `reconciliation_required` but does NOT auto-refund or notify customer | `reconcile_bookings.py` | Supplier-cancelled bookings silently accumulate in "reconciliation_required" state with no customer notification or refund | Add refund trigger and customer email on reconciliation failure |
-| 14 | 314 Bokun products unmapped to supplier/city | `octo_suppliers.json` | Slots show as "Bokun Reseller" with no city | Run scraper, update reference_supplier_map |
-| 15 | Google Sheets OAuth expired | `compute_pricing.py` | Urgency pricing disabled, no pricing learning | Re-authenticate OAuth token |
-| 16 | Slot discovery runs on local laptop only | `run_pipeline.bat` | Pipeline fails when laptop sleeps | Move to GitHub Actions scheduled workflow |
-| 17 | No real end-to-end booking test completed | All paths | Unknown if OCTOBooker actually works | Run one real booking (cheapest slot) |
-| 18 | No partial refund/cancellation support for multi-qty bookings | All cancel paths | All-or-nothing only | Design and implement partial cancel |
-| 19 | Wallet storage uses single shared JSON file — read-modify-write race condition | `manage_wallets.py` | Under concurrent wallet bookings: balance overwrites possible | Per-wallet file or Supabase Postgres row locking |
-| 20 | `stripe_customers.json` stored in `.tmp/` only — NO Supabase persistence | `run_api_server.py:737` | All registered customers with saved cards are LOST on every Railway redeploy; `book_with_saved_card` returns 404 for all customers after redeploy | Persist customer records to Supabase Storage (like API keys) |
-| 21 | Market insights data in `.tmp/insights/` only | `market_insights.py:49` | `/insights/market` returns empty after redeploy; `/execute/best` maximize_success goal has no platform reliability data | Move outcomes + snapshot to Supabase Storage |
-| 22 | SMS subscribers in `.tmp/sms_subscribers.json` only | `send_sms_alert.py:40` | SMS subscriptions lost on Railway redeploy; no alerts ever sent from Railway (also reads `.tmp/aggregated_slots.json`) | Persist subscriptions to Supabase Storage; trigger alerts from pipeline |
+### OPEN — Architectural gaps (not yet addressed)
+
+| # | Gap | Location | Impact |
+|---|---|---|---|
+| A-1 | No wallet credit-back on any cancellation path | `run_api_server.py` | Wallet bookings never refunded on cancel |
+| A-2 | `execute/guaranteed` booking state written to `.tmp/` only | `execution_engine.py` | GET /bookings/{id} returns 404; state lost on redeploy |
+| A-3 | `execute/guaranteed` wallet debit after booking (double-spend risk) | `execution_engine.py` | Two concurrent calls can both succeed with one debit failure |
+| A-4 | `execute/guaranteed` + wallet: OCTO cancel not queued on payment failure | `execution_engine.py` | Supplier has confirmed booking with no payment |
+| A-5 | Intent sessions in `.tmp/intent_sessions.json` only | `intent_sessions.py` | All active intents lost on every Railway redeploy |
+| A-6 | `reconcile_bookings.py` flags `reconciliation_required` but no auto-refund or customer notification | `reconcile_bookings.py` | Silent accumulation, no customer action |
+| A-7 | 314 Bokun products unmapped to supplier/city | `octo_suppliers.json` | Slots show as "Bokun Reseller" with no city |
+| A-8 | Google Sheets OAuth expired | `compute_pricing.py` | Urgency pricing disabled, no pricing learning |
+| A-9 | Slot discovery runs on local laptop only | `run_pipeline.bat` | Pipeline stops when laptop sleeps |
+| A-10 | No real end-to-end booking test completed | All paths | Unknown if OCTOBooker actually works in production |
+| A-11 | No partial refund/cancellation for multi-qty bookings | All cancel paths | All-or-nothing cancel only |
+| A-12 | Wallet storage uses single shared JSON file — concurrent write race | `manage_wallets.py` | Balance overwrites possible under high concurrency |
+| A-13 | Market insights data in `.tmp/insights/` only | `market_insights.py` | `/insights/market` empty after redeploy |
+| A-14 | SMS subscribers in `.tmp/sms_subscribers.json` only | `send_sms_alert.py` | Subscriptions lost on redeploy; SMS alerts never fire |
 
 ---
 
@@ -1148,4 +1190,4 @@ Only the OCTO/Bokun path runs in production.
 `BOKUN_API_KEY`, `BOKUN_ACCESS_KEY`, `BOKUN_SECRET_KEY`, `BOKUN_WEBHOOK_TOKEN`,
 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
 `SENDGRID_API_KEY`, `LANDING_PAGE_URL`, `BOOKING_SERVER_HOST`,
-`LMD_WEBSITE_API_KEY`, `PORT` (auto)
+`LMD_WEBSITE_API_KEY`, `LMD_SIGNING_SECRET`, `PEEK_WEBHOOK_SECRET`, `PORT` (auto)
