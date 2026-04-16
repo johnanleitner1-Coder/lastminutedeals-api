@@ -445,19 +445,70 @@ def _write_request_log(path: str, method: str, status: int, latency_ms: int | No
 
 
 def _pg_connect(timeout: int = 8):
-    """Connect to Supabase Postgres, handling special characters in password."""
+    """Connect to Supabase Postgres.
+    urlparse and psycopg2's own URI parser both fail when the password
+    contains unencoded special chars like '/', '&', or '@'. We parse
+    manually: strip the scheme, split on the last '@' to isolate the
+    credentials block, then split credentials on the first ':'.
+    """
     import psycopg2
-    from urllib.parse import urlparse, unquote
+    from urllib.parse import unquote
     db_url = os.getenv("SUPABASE_DB_URL", "")
     if not db_url:
         return None
-    p = urlparse(db_url)
+
+    # Strip scheme
+    raw = db_url
+    for scheme in ("postgresql://", "postgres://"):
+        if raw.startswith(scheme):
+            raw = raw[len(scheme):]
+            break
+
+    # Split credentials from host on the LAST '@'
+    # Works even when the password contains '@' (unlikely but safe)
+    last_at = raw.rfind("@")
+    if last_at < 0:
+        # No credentials in URL — try connecting as-is
+        return psycopg2.connect(db_url, connect_timeout=timeout)
+
+    creds    = raw[:last_at]          # "user:password"
+    hostpart = raw[last_at + 1:]      # "host:port/dbname" or "host/dbname"
+
+    # Split credentials on first ':' only
+    colon = creds.find(":")
+    if colon >= 0:
+        user = unquote(creds[:colon])
+        password = unquote(creds[colon + 1:])
+    else:
+        user = unquote(creds)
+        password = ""
+
+    # Parse host:port/dbname
+    slash = hostpart.find("/")
+    if slash >= 0:
+        hostport = hostpart[:slash]
+        dbname   = hostpart[slash + 1:].split("?")[0] or "postgres"
+    else:
+        hostport = hostpart.split("?")[0]
+        dbname   = "postgres"
+
+    colon2 = hostport.rfind(":")
+    if colon2 >= 0:
+        host = hostport[:colon2]
+        try:
+            port = int(hostport[colon2 + 1:])
+        except ValueError:
+            port = 5432
+    else:
+        host = hostport
+        port = 5432
+
     return psycopg2.connect(
-        host=p.hostname,
-        port=p.port or 5432,
-        dbname=(p.path or "/postgres").lstrip("/"),
-        user=unquote(p.username or ""),
-        password=unquote(p.password or ""),
+        host=host,
+        port=port,
+        dbname=dbname,
+        user=user,
+        password=password,
         connect_timeout=timeout,
         sslmode="require",
     )
@@ -1284,24 +1335,32 @@ def public_metrics():
     cities: set = set()
     next_slot_hours = None
 
+    # Prefer local aggregated file; fall back to Supabase on Railway where .tmp/ is ephemeral
+    slots: list = []
     if DATA_FILE.exists():
         try:
             slots = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-            slot_count = len(slots)
-            for s in slots:
-                p = float(s.get("our_price") or s.get("price") or 0)
-                if p > 0:
-                    priced_count += 1
-                if s.get("category"):
-                    categories.add(s["category"])
-                if s.get("location_city"):
-                    cities.add(s["location_city"])
-                h = s.get("hours_until_start")
-                if h is not None and h >= 0:
-                    if next_slot_hours is None or h < next_slot_hours:
-                        next_slot_hours = h
         except Exception:
             pass
+    if not slots:
+        # On Railway the local file doesn't survive deploys — query Supabase directly
+        try:
+            slots = _load_slots_from_supabase(hours_ahead=168, limit=10000)
+        except Exception:
+            pass
+    slot_count = len(slots)
+    for s in slots:
+        p = float(s.get("our_price") or s.get("price") or 0)
+        if p > 0:
+            priced_count += 1
+        if s.get("category"):
+            categories.add(s["category"])
+        if s.get("location_city"):
+            cities.add(s["location_city"])
+        h = s.get("hours_until_start")
+        if h is not None and h >= 0:
+            if next_slot_hours is None or h < next_slot_hours:
+                next_slot_hours = h
 
     # ── Booking performance (from market_insights) ─────────────────────────────
     success_rate   = None
@@ -4512,14 +4571,16 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     base = f"http://localhost:{PORT}"
 
     if name == "search_slots":
-        params = {}
-        if arguments.get("city"):        params["city"]        = arguments["city"]
-        if arguments.get("category"):    params["category"]    = arguments["category"]
-        if arguments.get("hours_ahead"): params["hours_ahead"] = arguments["hours_ahead"]
-        if arguments.get("max_price"):   params["max_price"]   = arguments["max_price"]
-        params["limit"] = arguments.get("limit", 10_000)
-        r = requests.get(f"{base}/slots", headers=hdrs, params=params, timeout=15)
-        return r.json()
+        # Call Supabase directly — avoids HTTP loopback which can deadlock
+        # gunicorn workers when the handler thread blocks waiting for itself.
+        slots = _load_slots_from_supabase(
+            hours_ahead = float(arguments.get("hours_ahead") or 168),
+            category    = str(arguments.get("category") or ""),
+            city        = str(arguments.get("city") or ""),
+            budget      = float(arguments.get("max_price") or 0),
+            limit       = int(arguments.get("limit") or 10_000),
+        )
+        return [_sanitize_slot(s) for s in slots]
 
     elif name == "book_slot":
         r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
