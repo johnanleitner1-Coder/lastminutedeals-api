@@ -150,6 +150,14 @@ def debit_wallet(wallet_id: str, amount_cents: int, description: str = "") -> bo
     if not wlt:
         raise ValueError(f"Wallet not found: {wallet_id}")
 
+    # Enforce per-transaction spending limit if set on this wallet
+    spending_limit = wlt.get("spending_limit_cents")
+    if spending_limit is not None and amount_cents > spending_limit:
+        raise ValueError(
+            f"Transaction exceeds wallet spending limit: "
+            f"${spending_limit/100:.2f} per booking, requested ${amount_cents/100:.2f}"
+        )
+
     current = wlt.get("balance_cents", 0)
     if current < amount_cents:
         raise ValueError(
@@ -270,7 +278,9 @@ def create_topup_session(wallet_id: str, amount_cents: int) -> str:
     landing_url = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com").rstrip("/")
     api_base    = os.getenv("BOOKING_SERVER_HOST", "http://localhost:5050").rstrip("/")
 
-    # Ensure Stripe customer exists for this wallet
+    # Ensure Stripe customer exists for this wallet.
+    # Re-read wallets inside the same load cycle to avoid TOCTOU race:
+    # do NOT call _load_wallets() again after creating the customer — use the already-loaded dict.
     cid = wlt.get("stripe_customer_id", "")
     if not cid:
         cust = _stripe.Customer.create(
@@ -279,9 +289,11 @@ def create_topup_session(wallet_id: str, amount_cents: int) -> str:
             metadata={"wallet_id": wallet_id},
         )
         cid = cust["id"]
-        wallets = _load_wallets()
-        wallets[wallet_id]["stripe_customer_id"] = cid
-        _save_wallets(wallets)
+        # Update in the same wallets dict we already loaded — avoids a second read
+        # that could race with concurrent writes
+        _wallets_cache = _load_wallets()
+        _wallets_cache[wallet_id]["stripe_customer_id"] = cid
+        _save_wallets(_wallets_cache)
 
     session = _stripe.checkout.Session.create(
         customer=cid,

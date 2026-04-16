@@ -153,10 +153,12 @@ class IntentSessionStore:
             return session
 
     def get(self, intent_id: str) -> dict | None:
-        return _load_sessions().get(intent_id)
+        with _sessions_lock:
+            return _load_sessions().get(intent_id)
 
     def list_by_api_key(self, api_key: str) -> list[dict]:
-        return [s for s in _load_sessions().values() if s.get("api_key") == api_key]
+        with _sessions_lock:
+            return [s for s in _load_sessions().values() if s.get("api_key") == api_key]
 
     def update_status(self, intent_id: str, status: str, result: dict | None = None, note: str = ""):
         with _sessions_lock:
@@ -188,7 +190,9 @@ class IntentSessionStore:
         """Return sessions that are currently monitoring and not expired."""
         now = datetime.now(timezone.utc)
         out = []
-        for s in _load_sessions().values():
+        with _sessions_lock:
+            sessions = _load_sessions()
+        for s in sessions.values():
             if s.get("status") not in ("monitoring",):
                 continue
             expires = s.get("expires_at", "")
@@ -231,7 +235,9 @@ class IntentSessionStore:
 # ── Callback dispatcher ───────────────────────────────────────────────────────
 
 def _fire_callback(session: dict, event: str, payload: dict):
-    """POST status change event to the session's callback_url (if set)."""
+    """POST status change event to the session's callback_url (if set).
+    Runs in a daemon thread to avoid blocking the monitor loop.
+    """
     url = session.get("callback_url", "")
     if not url:
         return
@@ -242,10 +248,15 @@ def _fire_callback(session: dict, event: str, payload: dict):
         "ts":        datetime.now(timezone.utc).isoformat(),
         **payload,
     }
-    try:
-        _req.post(url, json=body, timeout=10)
-    except Exception as e:
-        print(f"[INTENT] Callback to {url} failed: {e}")
+
+    def _post():
+        try:
+            _req.post(url, json=body, timeout=10)
+        except Exception as e:
+            print(f"[INTENT] Callback to {url} failed: {e}")
+
+    import threading as _threading
+    _threading.Thread(target=_post, daemon=True, name="intent-callback").start()
 
 
 # ── Execution engine loader ───────────────────────────────────────────────────
@@ -356,7 +367,14 @@ def execute_intent(session: dict, store: IntentSessionStore) -> bool:
     store.update_status(intent_id, "executing", note=f"Attempting booking (confidence={confidence:.2f})")
     _fire_callback(session, "executing", {"confidence_score": confidence})
 
-    result = engine.execute(req)
+    try:
+        result = engine.execute(req)
+    except Exception as _exec_err:
+        # Execution raised unexpectedly — move out of "executing" so session isn't stuck forever.
+        store.update_status(intent_id, "failed",
+            note=f"Unhandled execution error: {_exec_err}")
+        _fire_callback(session, "failed", {"error": str(_exec_err)[:300]})
+        return False
 
     if result.success:
         store.update_status(intent_id, "completed", result=result.to_dict(),

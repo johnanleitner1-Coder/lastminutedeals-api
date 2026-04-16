@@ -602,11 +602,18 @@ def _start_retry_scheduler() -> None:
         print("APScheduler not installed — cancellation retry cron will not run")
         return
 
-    # In gunicorn multi-worker mode, only start scheduler in the master/first worker
-    # to avoid duplicate runs. Check via an env sentinel.
-    if os.environ.get("_RETRY_SCHEDULER_STARTED"):
-        return
-    os.environ["_RETRY_SCHEDULER_STARTED"] = "1"
+    # In gunicorn multi-worker mode, only start scheduler in the first worker.
+    # os.environ is per-process, so we use a file-based lock instead.
+    # All Railway workers share the same filesystem within a deployment.
+    _scheduler_lock = Path(".tmp/_scheduler.pid")
+    try:
+        _scheduler_lock.parent.mkdir(parents=True, exist_ok=True)
+        # Exclusive create — fails if file already exists
+        fd = os.open(str(_scheduler_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+    except FileExistsError:
+        return  # another worker already started the scheduler
 
     def _run_retry() -> None:
         try:
@@ -733,26 +740,48 @@ def _save_api_keys(keys: dict) -> None:
         except Exception as e:
             print(f"[API_KEYS] Supabase save failed (local write succeeded): {e}")
 
+_API_KEYS_MEM_CACHE: dict = {}
+_API_KEYS_CACHE_AT: float = 0.0
+_API_KEYS_CACHE_TTL = 30  # seconds — reload from Supabase at most once per 30s
+
 def _validate_api_key(key: str) -> bool:
+    """Validate API key with in-process cache (30s TTL) to avoid Supabase round-trips."""
     if not key:
         return False
-    keys = _load_api_keys()
-    if key not in keys:
-        return False
-    # Increment usage count
-    keys[key]["usage_count"] = keys[key].get("usage_count", 0) + 1
-    keys[key]["last_used"] = datetime.now(timezone.utc).isoformat()
-    _save_api_keys(keys)
-    return True
+    global _API_KEYS_MEM_CACHE, _API_KEYS_CACHE_AT
+    now = time.time()
+    if now - _API_KEYS_CACHE_AT > _API_KEYS_CACHE_TTL:
+        _API_KEYS_MEM_CACHE = _load_api_keys()
+        _API_KEYS_CACHE_AT  = now
+    return key in _API_KEYS_MEM_CACHE
 
 def _generate_api_key() -> str:
     import secrets
     return "lmd_" + secrets.token_hex(24)
 
 # ── Stripe customers (saved payment methods) ──────────────────────────────────
-CUSTOMERS_FILE = Path(".tmp/stripe_customers.json")
+# Stored in Supabase Storage so data survives Railway redeploys.
+_SB_CUSTOMERS_PATH = "config/stripe_customers.json"
+CUSTOMERS_FILE = Path(".tmp/stripe_customers.json")  # local cache only
 
 def _load_customers() -> dict:
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
+        try:
+            r = requests.get(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_CUSTOMERS_PATH}",
+                headers=_sb_storage_headers(), timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                try:
+                    CUSTOMERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    CUSTOMERS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
+        except Exception:
+            pass
     if CUSTOMERS_FILE.exists():
         try:
             return json.loads(CUSTOMERS_FILE.read_text(encoding="utf-8"))
@@ -761,13 +790,47 @@ def _load_customers() -> dict:
     return {}
 
 def _save_customers(customers: dict) -> None:
-    CUSTOMERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CUSTOMERS_FILE.write_text(json.dumps(customers, indent=2), encoding="utf-8")
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
+        try:
+            requests.post(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_CUSTOMERS_PATH}",
+                headers={**_sb_storage_headers(), "Content-Type": "application/json",
+                         "x-upsert": "true"},
+                data=json.dumps(customers),
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[CUSTOMERS] Supabase save failed: {e}")
+    try:
+        CUSTOMERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CUSTOMERS_FILE.write_text(json.dumps(customers, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 # ── Webhook subscriptions ─────────────────────────────────────────────────────
-WEBHOOKS_FILE = Path(".tmp/webhook_subscriptions.json")
+# Stored in Supabase Storage so data survives Railway redeploys.
+_SB_WEBHOOKS_PATH = "config/webhook_subscriptions.json"
+WEBHOOKS_FILE = Path(".tmp/webhook_subscriptions.json")  # local cache only
 
 def _load_webhooks() -> dict:
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
+        try:
+            r = requests.get(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_WEBHOOKS_PATH}",
+                headers=_sb_storage_headers(), timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                try:
+                    WEBHOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    WEBHOOKS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
+        except Exception:
+            pass
     if WEBHOOKS_FILE.exists():
         try:
             return json.loads(WEBHOOKS_FILE.read_text(encoding="utf-8"))
@@ -776,6 +839,18 @@ def _load_webhooks() -> dict:
     return {}
 
 def _save_webhooks(subs: dict) -> None:
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if sb_url:
+        try:
+            requests.post(
+                f"{sb_url}/storage/v1/object/bookings/{_SB_WEBHOOKS_PATH}",
+                headers={**_sb_storage_headers(), "Content-Type": "application/json",
+                         "x-upsert": "true"},
+                data=json.dumps(subs),
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[WEBHOOKS] Supabase save failed: {e}")
     WEBHOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     WEBHOOKS_FILE.write_text(json.dumps(subs, indent=2), encoding="utf-8")
 
@@ -4701,7 +4776,7 @@ def list_inbound_emails():
     api_key = (request.headers.get("X-Api-Key") or
                request.args.get("api_key", ""))
     valid_key = os.getenv("LMD_WEBSITE_API_KEY", "")
-    if api_key != valid_key:
+    if not valid_key or not hmac.compare_digest(api_key, valid_key):
         return jsonify({"error": "Unauthorized"}), 401
 
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")

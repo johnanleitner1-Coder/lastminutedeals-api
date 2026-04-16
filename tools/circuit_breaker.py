@@ -26,15 +26,23 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-SB_URL    = os.getenv("SUPABASE_URL", "").rstrip("/")
-SB_SECRET = os.getenv("SUPABASE_SECRET_KEY", "")
+def _get_sb_url() -> str:
+    return os.getenv("SUPABASE_URL", "").rstrip("/")
+
+def _get_sb_secret() -> str:
+    return os.getenv("SUPABASE_SECRET_KEY", "")
+
+# Module-level aliases for backward compatibility (resolved at call time via _cb_headers)
+SB_URL    = ""  # do not use directly — call _get_sb_url() to get current value
+SB_SECRET = ""  # do not use directly — call _get_sb_secret() to get current value
 
 FAILURE_THRESHOLD = 5
 COOLDOWN_SECONDS  = 300   # 5 minutes
 
 
 def _cb_headers() -> dict:
-    return {"apikey": SB_SECRET, "Authorization": f"Bearer {SB_SECRET}"}
+    secret = _get_sb_secret()
+    return {"apikey": secret, "Authorization": f"Bearer {secret}"}
 
 
 def _cb_path(supplier_id: str) -> str:
@@ -43,11 +51,11 @@ def _cb_path(supplier_id: str) -> str:
 
 def _load_state(supplier_id: str) -> dict:
     """Load circuit breaker state for supplier. Returns default (closed) if not found."""
-    if not SB_URL or not SB_SECRET:
+    if not _get_sb_url() or not _get_sb_secret():
         return {"state": "closed", "failures": 0}
     try:
         r = _req.get(
-            f"{SB_URL}/storage/v1/object/bookings/{_cb_path(supplier_id)}",
+            f"{_get_sb_url()}/storage/v1/object/bookings/{_cb_path(supplier_id)}",
             headers=_cb_headers(), timeout=5,
         )
         if r.status_code == 200:
@@ -58,11 +66,11 @@ def _load_state(supplier_id: str) -> dict:
 
 
 def _save_state(supplier_id: str, state: dict) -> None:
-    if not SB_URL or not SB_SECRET:
+    if not _get_sb_url() or not _get_sb_secret():
         return
     try:
         _req.post(
-            f"{SB_URL}/storage/v1/object/bookings/{_cb_path(supplier_id)}",
+            f"{_get_sb_url()}/storage/v1/object/bookings/{_cb_path(supplier_id)}",
             headers={**_cb_headers(), "Content-Type": "application/json", "x-upsert": "true"},
             data=json.dumps(state),
             timeout=5,
@@ -88,10 +96,24 @@ def is_open(supplier_id: str) -> tuple[bool, str]:
                     remaining = int(COOLDOWN_SECONDS - elapsed)
                     return True, f"Circuit open for {supplier_id} — {remaining}s cooldown remaining ({state.get('failures', 0)} consecutive failures)"
                 else:
-                    # Cooldown elapsed — move to half-open (allow one probe)
-                    state["state"] = "half_open"
+                    # Cooldown elapsed — transition to half_open and allow exactly ONE probe.
+                    # Mark probe_started_at so concurrent callers see half_open and are blocked.
+                    state["state"]            = "half_open"
+                    state["probe_started_at"] = now.isoformat()
                     _save_state(supplier_id, state)
                     return False, "half_open probe allowed"
+            except Exception:
+                pass
+
+    if state.get("state") == "half_open":
+        # Allow only one probe through. Concurrent calls are blocked until the probe resolves.
+        probe_started = state.get("probe_started_at")
+        if probe_started:
+            try:
+                probe_age = (now - datetime.fromisoformat(probe_started)).total_seconds()
+                if probe_age < 30:
+                    # Probe in flight — block concurrent callers
+                    return True, f"Circuit half_open: probe in progress for {supplier_id}"
             except Exception:
                 pass
 
@@ -135,27 +157,47 @@ def record_failure(supplier_id: str, reason: str = "") -> None:
 
 
 def get_all_states() -> dict:
-    """Return circuit breaker states for all suppliers — used in /metrics."""
+    """Return circuit breaker states for all suppliers — used in /metrics.
+    Uses concurrent fetches to avoid N sequential round-trips (was O(n*5s) blocking).
+    """
+    sb_url = _get_sb_url()
+    if not sb_url:
+        return {}
     try:
         r = _req.post(
-            f"{SB_URL}/storage/v1/object/list/bookings",
+            f"{sb_url}/storage/v1/object/list/bookings",
             headers={**_cb_headers(), "Content-Type": "application/json"},
             json={"prefix": "circuit_breaker/", "limit": 100},
             timeout=5,
         )
         if r.status_code != 200:
             return {}
-        states = {}
-        for item in r.json():
-            name = item.get("name", "")
-            supplier_id = name.replace("circuit_breaker/", "").replace(".json", "")
-            if supplier_id:
-                rec = _req.get(
-                    f"{SB_URL}/storage/v1/object/bookings/{name}",
-                    headers=_cb_headers(), timeout=5,
-                )
-                if rec.status_code == 200:
-                    states[supplier_id] = rec.json()
-        return states
+        items = r.json()
     except Exception:
         return {}
+
+    import concurrent.futures as _cf
+
+    def _fetch(item):
+        name = item.get("name", "")
+        # name may be "circuit_breaker/supplier.json" or just "supplier.json" depending on API version
+        supplier_id = name.split("/")[-1].replace(".json", "")
+        if not supplier_id:
+            return None, None
+        try:
+            rec = _req.get(
+                f"{sb_url}/storage/v1/object/bookings/{name}",
+                headers=_cb_headers(), timeout=5,
+            )
+            if rec.status_code == 200:
+                return supplier_id, rec.json()
+        except Exception:
+            pass
+        return None, None
+
+    states = {}
+    with _cf.ThreadPoolExecutor(max_workers=min(len(items) or 1, 10)) as pool:
+        for supplier_id, state in pool.map(_fetch, items):
+            if supplier_id and state:
+                states[supplier_id] = state
+    return states

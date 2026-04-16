@@ -345,8 +345,9 @@ class ExecutionEngine:
             import os, stripe
             stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
             stripe.PaymentIntent.cancel(payment_intent_id)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[ENGINE] Stripe hold cancel failed for {payment_intent_id}: {e} — "
+                  "manual review required to ensure customer was not charged")
 
     def _cancel_octo(self, platform: str, confirmation: str) -> bool:
         """
@@ -453,6 +454,16 @@ class ExecutionEngine:
         confidence = self._compute_confidence(req)
         log: list[AttemptRecord] = []
 
+        # Load market_insights once per execute() call, not once per attempt
+        _ins_mod = None
+        try:
+            _ins_spec = importlib.util.spec_from_file_location("market_insights", TOOLS_DIR / "market_insights.py")
+            if _ins_spec:
+                _ins_mod = importlib.util.module_from_spec(_ins_spec)
+                _ins_spec.loader.exec_module(_ins_mod)
+        except Exception:
+            pass
+
         strategies = [
             ("exact",         "Original slot"),
             ("exact",         "Retry original slot"),  # same slot, transient failure retry
@@ -518,13 +529,15 @@ class ExecutionEngine:
                         ))
                         continue
 
-                    # Mark booked
+                    # Mark booked — write atomically via a temp file to avoid partial writes
                     self.booked_ids.add(sid)
                     booked_file = ROOT / ".tmp" / "booked_slots.json"
                     try:
                         existing = json.loads(booked_file.read_text(encoding="utf-8")) if booked_file.exists() else []
                         existing.append(sid)
-                        booked_file.write_text(json.dumps(existing), encoding="utf-8")
+                        tmp = booked_file.with_suffix(".tmp")
+                        tmp.write_text(json.dumps(existing), encoding="utf-8")
+                        tmp.replace(booked_file)  # atomic rename
                     except Exception:
                         pass
 
@@ -536,13 +549,10 @@ class ExecutionEngine:
 
                     savings = round(float(slot.get("original_price") or price) - price, 2)
 
-                    # Record to market insights
+                    # Record to market insights (module loaded once above)
                     try:
-                        ins_spec = importlib.util.spec_from_file_location("market_insights", TOOLS_DIR / "market_insights.py")
-                        if ins_spec:
-                            ins_mod = importlib.util.module_from_spec(ins_spec)
-                            ins_spec.loader.exec_module(ins_mod)
-                            ins_mod.record_booking_outcome(
+                        if _ins_mod:
+                            _ins_mod.record_booking_outcome(
                                 platform=plat,
                                 category=slot.get("category", ""),
                                 city=slot.get("location_city", ""),
@@ -552,7 +562,7 @@ class ExecutionEngine:
                                 hours_before_start=slot.get("hours_until_start") or 0,
                                 slot_id=sid,
                             )
-                            ins_mod.record_slot_booked(sid, plat, slot.get("category", ""), slot.get("location_city", ""), price)
+                            _ins_mod.record_slot_booked(sid, plat, slot.get("category", ""), slot.get("location_city", ""), price)
                     except Exception:
                         pass
 
@@ -579,13 +589,10 @@ class ExecutionEngine:
                         slot_id=sid, service_name=name, platform=plat, price=price,
                         outcome="booking_failed", error=err,
                     ))
-                    # Record failure to market insights
+                    # Record failure to market insights (module loaded once above)
                     try:
-                        ins_spec = importlib.util.spec_from_file_location("market_insights", TOOLS_DIR / "market_insights.py")
-                        if ins_spec:
-                            ins_mod = importlib.util.module_from_spec(ins_spec)
-                            ins_spec.loader.exec_module(ins_mod)
-                            ins_mod.record_booking_outcome(
+                        if _ins_mod:
+                            _ins_mod.record_booking_outcome(
                                 platform=plat, category=slot.get("category", ""),
                                 city=slot.get("location_city", ""), success=False,
                                 attempts=attempt_num, price=price,

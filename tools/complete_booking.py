@@ -1404,17 +1404,23 @@ class OCTOBooker(BasePlatformBooker):
                 )
                 if avail_resp.ok:
                     fresh_slots = avail_resp.json()
-                    # Find the slot with the same availability_id first, then fall back
-                    # to matching by the original start_time prefix (first 16 chars = YYYY-MM-DDTHH:MM)
+                    # Original start_time (YYYY-MM-DDTHH:MM prefix) for exact-time matching.
+                    # Falls back to date-only if not present (e.g. open-ended experiences).
+                    orig_start = (params.get("start_time") or "")[:16]  # "YYYY-MM-DDTHH:MM"
+
                     new_avail_id = None
                     for fs in fresh_slots:
                         if fs.get("id") == availability_id:
-                            # Same id still valid but was 409 — truly sold out
+                            # Same id still present but 409 — truly sold out, don't rebook
                             break
-                        if fs.get("status") in ("AVAILABLE", "FREESALE", "LIMITED"):
-                            # Use first available slot for same product (closest match)
-                            new_avail_id = fs.get("id")
-                            break
+                        if fs.get("status") not in ("AVAILABLE", "FREESALE", "LIMITED"):
+                            continue
+                        # Prefer exact start-time match over any available slot
+                        fs_start = (fs.get("localDateTimeStart") or fs.get("localDate") or "")[:16]
+                        if orig_start and fs_start and fs_start != orig_start:
+                            continue  # different time — do not silently rebook a different slot
+                        new_avail_id = fs.get("id")
+                        break
                     if new_avail_id and new_avail_id != availability_id:
                         print(f"[OCTOBooker] Retrying with fresh availability_id={new_avail_id}")
                         fresh_payload = _build_reservation_payload(new_avail_id)
