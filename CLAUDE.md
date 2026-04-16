@@ -66,21 +66,31 @@ credentials.json, token.json  # Google OAuth (gitignored)
 
 **Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
 
-## Code Fix Protocol (MANDATORY — follow every time)
+## Change Protocol (MANDATORY — follow every time)
 
-These rules exist because bugs in this project tend to appear as the same pattern in multiple files. Missing one instance breaks the system even if another is fixed.
+This project is large and tightly coupled. Siloed changes that look correct in isolation regularly break other parts of the system. Every proposed change must be preceded by full-system context, not just local analysis.
 
-**Before marking any bug fixed:**
+### Before proposing or making any non-trivial change:
+
+**Step 1 — Read `SYSTEM_MAP.md` first.**
+Identify every process, path, and component the change touches or that depends on the area being changed. Write them out explicitly. Do not propose a fix before this is done.
+
+**Step 2 — Impact analysis.**
+For each component identified: does this change affect its behaviour? Could it break an assumption it relies on? Is there any duplication, conflict, or interaction that needs to be accounted for? State the answer for each one.
+
+Only after Steps 1 and 2 are complete should a change be proposed or executed.
+
+### Before marking any bug fixed:
 1. Grep all files for the exact pattern being fixed — not just the file where you found it
 2. Ask explicitly: "does this logic appear anywhere else in the codebase?"
 3. Fix every instance before committing
 
-**After every fix session:**
-1. Update `docs/bug_audit_log.md` with every bug fixed, its severity, file, and commit hash
-2. Update `SYSTEM_MAP.md` — mark fixed bugs as FIXED, add any new gaps found
-3. Do this before reporting the session complete — not when asked
+### After every change (bug fix, new feature, config change, anything):
+1. Update `SYSTEM_MAP.md` immediately — mark fixed bugs as FIXED, update affected process flows, add any new gaps or risks found
+2. Update `docs/bug_audit_log.md` with every bug fixed, its severity, file, and commit hash
+3. Do both before reporting the work complete — not when asked
 
-Failure to follow this protocol is the primary source of regressions and missed bugs in this project.
+Failure to follow this protocol is the primary source of regressions, missed bugs, and siloed changes in this project.
 
 ## Bottom Line
 
