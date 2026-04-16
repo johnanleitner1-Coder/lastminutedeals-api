@@ -28,11 +28,9 @@ claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/sse
 """
 
 import os
-import sys
 import time
-import threading
 
-import requests as _requests
+import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -43,14 +41,16 @@ API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
 HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PORT        = int(os.getenv("PORT", "8080"))
 
-# ── Slot cache: avoid hammering the API on every search_slots call ────────────
-_SLOTS_CACHE: dict = {}         # params_key → {"slots": [...], "expires": float}
-_SLOTS_CACHE_TTL = 60           # seconds
-_SLOTS_CACHE_LOCK = threading.Lock()
+# Shared async HTTP client — connection pool, keep-alive, no blocking
+_client = httpx.AsyncClient(headers=HDRS, timeout=15.0)
+
+# ── Slot cache: serve identical searches from memory for 60 seconds ───────────
+_SLOTS_CACHE: dict = {}      # params_key → {"slots": [...], "expires": float}
+_SLOTS_CACHE_TTL = 60        # seconds
 
 mcp = FastMCP(
     "Last Minute Deals HQ",
-    host="0.0.0.0",   # required for Railway — bind to all interfaces, not just localhost
+    host="0.0.0.0",
     port=PORT,
     instructions=(
         "You have access to real last-minute tour and activity inventory across "
@@ -71,35 +71,33 @@ mcp = FastMCP(
 )
 
 
-def _api_get(path: str, params: dict = None, retries: int = 2) -> dict | list:
-    """GET with automatic retry on transient failures (timeout, 5xx)."""
+async def _api_get(path: str, params: dict = None, retries: int = 2) -> dict | list:
+    """Async GET with retry on transient failures. Never blocks the event loop."""
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
         try:
-            r = _requests.get(
-                f"{BOOKING_API}{path}",
-                headers=HDRS,
-                params=params or {},
-                timeout=15,
-            )
+            r = await _client.get(f"{BOOKING_API}{path}", params=params or {})
             r.raise_for_status()
             return r.json()
-        except (_requests.exceptions.Timeout,
-                _requests.exceptions.ConnectionError) as e:
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
             last_exc = e
             if attempt < retries - 1:
-                time.sleep(0.5)
-        except _requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code < 500:
-                raise  # 4xx — don't retry, it won't help
+                import asyncio
+                await asyncio.sleep(0.5)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code < 500:
+                raise   # 4xx — don't retry
             last_exc = e
             if attempt < retries - 1:
-                time.sleep(0.5)
+                import asyncio
+                await asyncio.sleep(0.5)
     raise last_exc
 
 
-def _api_post(path: str, body: dict) -> dict:
-    r = _requests.post(f"{BOOKING_API}{path}", headers=HDRS, json=body, timeout=30)
+async def _api_post(path: str, body: dict) -> dict:
+    """Async POST. Never blocks the event loop."""
+    r = await _client.post(f"{BOOKING_API}{path}", json=body,
+                           timeout=30.0)
     r.raise_for_status()
     return r.json()
 
@@ -126,7 +124,7 @@ def _safe_slot(s: dict) -> dict:
 
 
 @mcp.tool()
-def search_slots(
+async def search_slots(
     city: str = "",
     category: str = "",
     hours_ahead: float = 72.0,
@@ -161,30 +159,31 @@ def search_slots(
     if max_price and max_price > 0:
         params["max_price"] = max_price
 
-    # Cache key — deduplicate identical searches within 60 seconds
+    # Serve from cache if the same query was made within the last 60 seconds
     cache_key = str(sorted(params.items()))
     now = time.time()
-    with _SLOTS_CACHE_LOCK:
-        entry = _SLOTS_CACHE.get(cache_key)
-        if entry and entry["expires"] > now:
-            return entry["slots"]
+    cached = _SLOTS_CACHE.get(cache_key)
+    if cached and cached["expires"] > now:
+        return cached["slots"]
 
     try:
-        raw = _api_get("/slots", params)
+        raw = await _api_get("/slots", params)
         if not isinstance(raw, list):
             return [{"error": "Unexpected response from booking API"}]
         if not raw:
-            return [{"message": f"No slots found for city={city!r} hours_ahead={hours_ahead}. Try expanding hours_ahead or clearing city filter."}]
+            return [{"message": (
+                f"No slots found for city={city!r} hours_ahead={hours_ahead}. "
+                "Try expanding hours_ahead or clearing city filter."
+            )}]
         result = [_safe_slot(s) for s in raw]
-        with _SLOTS_CACHE_LOCK:
-            _SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _SLOTS_CACHE_TTL}
+        _SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _SLOTS_CACHE_TTL}
         return result
     except Exception as e:
         return [{"error": f"Could not fetch slots: {e}"}]
 
 
 @mcp.tool()
-def book_slot(
+async def book_slot(
     slot_id: str,
     customer_name: str,
     customer_email: str,
@@ -208,14 +207,13 @@ def book_slot(
         On error:   { success: false, error }
     """
     try:
-        result = _api_post("/api/book", {
+        return await _api_post("/api/book", {
             "slot_id":        slot_id,
             "customer_name":  customer_name,
             "customer_email": customer_email,
             "customer_phone": customer_phone,
         })
-        return result
-    except _requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         try:
             detail = e.response.json()
             return {"success": False, "error": detail.get("error", str(e))}
@@ -226,7 +224,7 @@ def book_slot(
 
 
 @mcp.tool()
-def get_booking_status(booking_id: str) -> dict:
+async def get_booking_status(booking_id: str) -> dict:
     """
     Check the status of a booking.
 
@@ -238,8 +236,8 @@ def get_booking_status(booking_id: str) -> dict:
         Status values: pending, confirmed, failed, cancelled.
     """
     try:
-        return _api_get(f"/bookings/{booking_id}")
-    except _requests.HTTPError as e:
+        return await _api_get(f"/bookings/{booking_id}")
+    except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return {"error": f"Booking '{booking_id}' not found."}
         return {"error": str(e)}
@@ -313,7 +311,7 @@ def get_supplier_info() -> dict:
                 "notes": "Ultra-luxury East African operator. $1M public liability insured.",
             },
         ],
-        "live_slot_count": "242 slots available within 72h (refreshed every 4h)",
+        "live_slot_count": "1498 slots available within 168h (refreshed every 4h)",
         "protocol": "OCTO (Open Connectivity for Tourism) — direct supplier API, no scraping",
         "confirmation": "instant",
         "payment": "Stripe checkout — customer pays on our page, supplier confirmed automatically",

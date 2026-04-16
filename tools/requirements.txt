@@ -1,6 +1,7 @@
 # ── Core ──────────────────────────────────────────────────────────────────────
 python-dotenv
 requests
+httpx
 
 # ── Google APIs (Sheets, Business Profile, Gmail) ─────────────────────────────
 google-auth
