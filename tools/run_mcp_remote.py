@@ -29,6 +29,8 @@ claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/sse
 
 import os
 import sys
+import time
+import threading
 
 import requests as _requests
 from dotenv import load_dotenv
@@ -40,6 +42,11 @@ BOOKING_API = os.getenv("BOOKING_API_URL", "https://web-production-dc74b.up.rail
 API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
 HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PORT        = int(os.getenv("PORT", "8080"))
+
+# ── Slot cache: avoid hammering the API on every search_slots call ────────────
+_SLOTS_CACHE: dict = {}         # params_key → {"slots": [...], "expires": float}
+_SLOTS_CACHE_TTL = 60           # seconds
+_SLOTS_CACHE_LOCK = threading.Lock()
 
 mcp = FastMCP(
     "Last Minute Deals HQ",
@@ -64,14 +71,35 @@ mcp = FastMCP(
 )
 
 
-def _api_get(path: str, params: dict = None) -> dict | list:
-    r = _requests.get(f"{BOOKING_API}{path}", headers=HDRS, params=params or {}, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def _api_get(path: str, params: dict = None, retries: int = 2) -> dict | list:
+    """GET with automatic retry on transient failures (timeout, 5xx)."""
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(retries):
+        try:
+            r = _requests.get(
+                f"{BOOKING_API}{path}",
+                headers=HDRS,
+                params=params or {},
+                timeout=15,
+            )
+            r.raise_for_status()
+            return r.json()
+        except (_requests.exceptions.Timeout,
+                _requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            if attempt < retries - 1:
+                time.sleep(0.5)
+        except _requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code < 500:
+                raise  # 4xx — don't retry, it won't help
+            last_exc = e
+            if attempt < retries - 1:
+                time.sleep(0.5)
+    raise last_exc
 
 
 def _api_post(path: str, body: dict) -> dict:
-    r = _requests.post(f"{BOOKING_API}{path}", headers=HDRS, json=body, timeout=15)
+    r = _requests.post(f"{BOOKING_API}{path}", headers=HDRS, json=body, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -133,13 +161,24 @@ def search_slots(
     if max_price and max_price > 0:
         params["max_price"] = max_price
 
+    # Cache key — deduplicate identical searches within 60 seconds
+    cache_key = str(sorted(params.items()))
+    now = time.time()
+    with _SLOTS_CACHE_LOCK:
+        entry = _SLOTS_CACHE.get(cache_key)
+        if entry and entry["expires"] > now:
+            return entry["slots"]
+
     try:
-        slots = _api_get("/slots", params)
-        if not isinstance(slots, list):
+        raw = _api_get("/slots", params)
+        if not isinstance(raw, list):
             return [{"error": "Unexpected response from booking API"}]
-        if not slots:
+        if not raw:
             return [{"message": f"No slots found for city={city!r} hours_ahead={hours_ahead}. Try expanding hours_ahead or clearing city filter."}]
-        return [_safe_slot(s) for s in slots]
+        result = [_safe_slot(s) for s in raw]
+        with _SLOTS_CACHE_LOCK:
+            _SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _SLOTS_CACHE_TTL}
+        return result
     except Exception as e:
         return [{"error": f"Could not fetch slots: {e}"}]
 
