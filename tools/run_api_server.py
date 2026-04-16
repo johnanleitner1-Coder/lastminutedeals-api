@@ -678,10 +678,17 @@ def _load_booked() -> set:
     return set()
 
 
+_BOOKED_LOCK = threading.Lock()
+
 def _mark_booked(slot_id: str) -> None:
-    booked = _load_booked()
-    booked.add(slot_id)
-    BOOKED_FILE.write_text(json.dumps(list(booked)), encoding="utf-8")
+    """Add slot_id to the booked set. Thread-safe via lock + atomic rename."""
+    with _BOOKED_LOCK:
+        booked = _load_booked()
+        booked.add(slot_id)
+        tmp = BOOKED_FILE.with_suffix(".tmp")
+        BOOKED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(list(booked)), encoding="utf-8")
+        tmp.replace(BOOKED_FILE)  # atomic rename
 
 # ── API key system ────────────────────────────────────────────────────────────
 API_KEYS_FILE = Path(".tmp/api_keys.json")
@@ -3955,9 +3962,12 @@ def _queue_octo_retry(booking_id: str, supplier_id: str, confirmation: str,
     The retry scheduler (APScheduler, every 15 min) picks this up via retry_cancellations.py
     and retries automatically — no manual intervention needed.
     """
-    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not sb_url:
-        print(f"[CANCEL_QUEUE] Supabase not configured — cannot queue retry for {booking_id}")
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
+        print(f"[CANCEL_QUEUE] Supabase not fully configured (URL or SECRET missing) — "
+              f"cannot queue OCTO retry for {booking_id}. "
+              "Set SUPABASE_URL and SUPABASE_SECRET_KEY in Railway env vars.")
         return
     entry = {
         "booking_id":        booking_id,

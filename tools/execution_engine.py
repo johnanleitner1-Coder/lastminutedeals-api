@@ -438,8 +438,11 @@ class ExecutionEngine:
         else:
             score += 0.1  # no watcher running; pipeline data assumed ~30min old
 
-        # Same-platform booking success component (up to 0.1) — placeholder
-        score += 0.1
+        # Same-platform booking success component — only add if there are actual slots.
+        # Do NOT add unconditionally: a +0.1 floor would cause the monitor to always
+        # attempt booking even when slot_count is 0.
+        if slot_count > 0:
+            score += 0.1
 
         return min(round(score, 2), 1.0)
 

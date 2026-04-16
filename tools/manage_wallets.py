@@ -58,6 +58,12 @@ _SB_WALLETS_PATH  = "config/wallets.json"  # path inside Supabase Storage bookin
 MIN_TOP_UP   = 500    # $5.00 minimum deposit (cents)
 MAX_TOP_UP   = 500000 # $5,000.00 maximum deposit (cents)
 
+# In-process wallet cache to avoid Supabase round-trips on every hot-path call
+import time as _time_mod
+_WALLETS_MEM_CACHE: dict = {}
+_WALLETS_CACHE_AT: float = 0.0
+_WALLETS_CACHE_TTL = 15  # seconds — refreshed automatically after 15s
+
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
@@ -66,7 +72,14 @@ def _sb_headers() -> dict:
     return {"apikey": secret, "Authorization": f"Bearer {secret}"}
 
 def _load_wallets() -> dict:
-    """Load wallets. Primary: Supabase Storage (survives redeploys). Fallback: local cache."""
+    """Load wallets with in-process TTL cache. Avoids Supabase round-trip on every call.
+    Primary: Supabase Storage (survives redeploys). Fallback: local cache.
+    Cache is invalidated by _save_wallets() to ensure immediate consistency after writes.
+    """
+    global _WALLETS_MEM_CACHE, _WALLETS_CACHE_AT
+    if _WALLETS_MEM_CACHE and _time_mod.time() - _WALLETS_CACHE_AT < _WALLETS_CACHE_TTL:
+        return _WALLETS_MEM_CACHE
+
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if sb_url and sb_secret:
@@ -78,6 +91,9 @@ def _load_wallets() -> dict:
             )
             if r.status_code == 200:
                 data = r.json()
+                # Populate in-process cache
+                _WALLETS_MEM_CACHE = data
+                _WALLETS_CACHE_AT  = _time_mod.time()
                 # Write local cache
                 try:
                     WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +112,12 @@ def _load_wallets() -> dict:
     return {}
 
 def _save_wallets(wallets: dict) -> None:
-    """Save wallets to both Supabase Storage (persistent) and local file (cache)."""
+    """Save wallets to both Supabase Storage (persistent) and local file (cache).
+    Invalidates the in-process cache so subsequent reads get fresh data.
+    """
+    global _WALLETS_MEM_CACHE, _WALLETS_CACHE_AT
+    _WALLETS_MEM_CACHE = wallets  # update cache inline (avoids stale read after write)
+    _WALLETS_CACHE_AT  = _time_mod.time()
     # Local write always
     try:
         WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
