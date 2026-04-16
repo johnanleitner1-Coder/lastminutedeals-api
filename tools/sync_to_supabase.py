@@ -75,6 +75,14 @@ def upsert_batch(rows: list, url: str, headers: dict) -> int:
     return len(rows)
 
 
+# Suppliers marked test_mode=true in octo_suppliers.json — never sync to production
+_TEST_SUPPLIER_NAMES = {
+    "Zaui (Test)",
+    "Edinburgh Explorer (Ventrata Test)",
+    "Peek Pro (Test)",
+}
+
+
 def delete_expired(url: str, headers: dict) -> int:
     """Remove slots that started more than 2 hours ago."""
     from datetime import timedelta
@@ -94,6 +102,25 @@ def delete_expired(url: str, headers: dict) -> int:
     return 0
 
 
+def delete_test_supplier_slots(url: str, headers: dict) -> int:
+    """Remove any slots from test-mode suppliers that have no place in live inventory."""
+    del_hdrs = {**headers, "Prefer": "return=representation"}
+    total = 0
+    for name in _TEST_SUPPLIER_NAMES:
+        resp = requests.delete(
+            f"{url}/rest/v1/slots",
+            headers=del_hdrs,
+            params={"business_name": f"eq.{name}"},
+            timeout=15,
+        )
+        if resp.status_code in (200, 204):
+            try:
+                total += len(resp.json())
+            except Exception:
+                pass
+    return total
+
+
 def main():
     url    = os.getenv("SUPABASE_URL", "").rstrip("/")
     secret = os.getenv("SUPABASE_SECRET_KEY", "")
@@ -107,6 +134,13 @@ def main():
         return
 
     slots = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+
+    # Strip test-mode slots before they ever reach Supabase
+    before = len(slots)
+    slots = [s for s in slots if s.get("business_name") not in _TEST_SUPPLIER_NAMES]
+    if len(slots) < before:
+        print(f"  Excluded {before - len(slots)} test-supplier slots from sync")
+
     print(f"Syncing {len(slots)} slots to Supabase...")
 
     headers = get_headers()
@@ -115,6 +149,11 @@ def main():
     deleted = delete_expired(url, headers)
     if deleted:
         print(f"  Removed {deleted} expired slots")
+
+    # Purge any test-supplier slots already in Supabase (safety net for re-enables)
+    purged = delete_test_supplier_slots(url, headers)
+    if purged:
+        print(f"  Purged {purged} test-supplier slots from Supabase")
 
     # Upsert in batches
     total = 0
