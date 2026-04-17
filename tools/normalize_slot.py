@@ -232,3 +232,4 @@ def is_within_window(slot: dict, hours_ahead: float = 72.0) -> bool:
     if hours is None:
         return False
     return 0 <= hours <= hours_ahead
+
