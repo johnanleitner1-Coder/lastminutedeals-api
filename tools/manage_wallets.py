@@ -56,8 +56,10 @@ def _sb_headers() -> dict:
 
 def _load_wallets() -> dict:
     """Load wallets with in-process TTL cache. Avoids Supabase round-trip on every call.
-    Primary: Supabase Storage (survives redeploys). Fallback: local cache.
+    Primary: Supabase Storage (survives redeploys). Fallback: local cache (dev only).
     Cache is invalidated by _save_wallets() to ensure immediate consistency after writes.
+    When Supabase is configured but unreachable, returns in-memory cache or empty dict
+    rather than reading a potentially stale local file.
     """
     global _WALLETS_MEM_CACHE, _WALLETS_CACHE_AT
     if _WALLETS_MEM_CACHE and _time_mod.time() - _WALLETS_CACHE_AT < _WALLETS_CACHE_TTL:
@@ -83,7 +85,14 @@ def _load_wallets() -> dict:
                     pass
                 return data
         except Exception as e:
-            print(f"[WALLETS] Supabase load failed, using local cache: {e}")
+            print(f"[WALLETS] Supabase load failed, using in-memory cache: {e}")
+        # Supabase configured but unreachable — return stale in-memory cache if available,
+        # never fall back to local file which may be empty after Railway redeploy
+        if _WALLETS_MEM_CACHE:
+            return _WALLETS_MEM_CACHE
+        return {}
+
+    # Supabase not configured (local dev) — use local file
     if WALLETS_FILE.exists():
         try:
             return json.loads(WALLETS_FILE.read_text(encoding="utf-8"))
