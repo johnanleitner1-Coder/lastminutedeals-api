@@ -2764,7 +2764,7 @@ _MAX_BOOKING_TIMEOUT_S = 45
 # Default per-transaction spending cap for autonomous wallet bookings.
 # Wallets with an explicit spending_limit_cents override this. Protects against
 # runaway agents or compromised wallet_ids draining large balances in one call.
-_DEFAULT_AUTONOMOUS_LIMIT_CENTS = 40_000  # $400.00
+_DEFAULT_AUTONOMOUS_LIMIT_CENTS = 100_000  # $1,000.00
 
 
 def _classify_failure(exc: Exception) -> str:
