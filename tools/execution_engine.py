@@ -546,6 +546,29 @@ class ExecutionEngine:
                 if attempt_num > 1:
                     fallbacks_used += 1
 
+                # Guard: reject before booking if required payment credentials are absent.
+                # Without this, a missing wallet_id/payment_intent_id causes the payment
+                # block to silently no-op, leaving payment_ok=True and the booking recorded
+                # as paid with no money taken.
+                if req.payment_method == "wallet" and not req.wallet_id:
+                    print(f"[ENGINE] Attempt {attempt_num} aborted: payment_method='wallet' but wallet_id is missing")
+                    log.append(AttemptRecord(
+                        attempt=attempt_num, strategy=strategy_label,
+                        slot_id=sid, service_name=name, platform=plat, price=price,
+                        outcome="payment_failed",
+                        error="payment_method='wallet' but wallet_id is None/empty",
+                    ))
+                    continue
+                if req.payment_method == "stripe_pi" and not req.payment_intent_id:
+                    print(f"[ENGINE] Attempt {attempt_num} aborted: payment_method='stripe_pi' but payment_intent_id is missing")
+                    log.append(AttemptRecord(
+                        attempt=attempt_num, strategy=strategy_label,
+                        slot_id=sid, service_name=name, platform=plat, price=price,
+                        outcome="payment_failed",
+                        error="payment_method='stripe_pi' but payment_intent_id is None/empty",
+                    ))
+                    continue
+
                 try:
                     confirmation = self._attempt_booking(slot, req.customer)
 
