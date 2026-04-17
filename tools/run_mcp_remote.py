@@ -105,10 +105,17 @@ mcp = FastMCP(
         "TourTransfer Bucharest (Romania — city tours, Dracula castle), "
         "Trivanzo Holidays (Egypt — Nile cruises, Red Sea, cultural tours), "
         "Vakare Travel Service (Antalya, Turkey — boat tours, jeep safaris). "
-        "Call get_supplier_info() to see live coverage from current inventory. "
-        "Use search_slots to find available experiences, then book_slot to create "
-        "a Stripe checkout session — the customer completes payment and receives "
-        "instant confirmation. Bookings are real and go directly to the supplier."
+        "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
+        "1. Call search_slots with the user's city/destination and preferred timeframe. "
+        "2. Present options and get the user's selection. "
+        "3. Collect the customer's full name, email, and phone number. "
+        "4. Call book_slot with slot_id and customer details. "
+        "5. IMMEDIATELY share the checkout_url with the customer — do not wait, do not "
+        "summarise, show the URL directly. Session expires in 24 hours. "
+        "6. Call get_booking_status to confirm once payment is complete. "
+        "AUTONOMOUS MODE: if you have a wallet_id, pass it with execution_mode='autonomous' "
+        "to skip the checkout step entirely — booking completes immediately with a "
+        "confirmation number. Call get_supplier_info() to see live destination coverage."
     ),
 )
 
@@ -262,13 +269,23 @@ async def book_slot(
     customer_email: str,
     customer_phone: str,
     quantity: int = 1,
+    wallet_id: str = "",
+    execution_mode: str = "",
 ) -> dict:
     """
-    Book a last-minute slot for a customer.
+    Book a last-minute slot for a customer. Two modes:
 
-    Creates a Stripe Checkout Session and returns a checkout_url. Direct the
-    customer to that URL to complete payment. The booking is confirmed with the
-    supplier after payment succeeds. The customer receives an email confirmation.
+    APPROVAL MODE (default — no wallet_id):
+        Creates a Stripe Checkout Session and returns a checkout_url.
+        You MUST share this URL with the customer immediately — do not summarise it,
+        do not wait, show it directly so they can complete payment.
+        The booking is confirmed with the supplier after payment succeeds.
+        The session expires in 24 hours.
+
+    AUTONOMOUS MODE (wallet_id + execution_mode='autonomous'):
+        The booking completes immediately using a pre-funded agent wallet.
+        Returns a confirmation_number directly — no checkout step, no human action needed.
+        Use this when your application manages payment on behalf of the customer.
 
     Args:
         slot_id:        Slot ID from search_slots results.
@@ -276,19 +293,27 @@ async def book_slot(
         customer_email: Email address for booking confirmation.
         customer_phone: Phone number including country code (e.g. +15550001234).
         quantity:       Number of people (default 1). Price is per-person × quantity.
+        wallet_id:      Pre-funded agent wallet ID (format: wlt_...). Enables autonomous mode.
+        execution_mode: Set to 'autonomous' when providing a wallet_id.
 
     Returns:
-        On success: { success: true, checkout_url, booking_id, expires_at }
-        On error:   { success: false, error }
+        Approval mode:   { success: true, checkout_url, booking_id, expires_at, action_required }
+        Autonomous mode: { success: true, confirmation_number, booking_id, status: 'booked' }
+        On error:        { success: false, error }
     """
     try:
-        return await _api_post("/api/book", {
+        payload: dict = {
             "slot_id":        slot_id,
             "customer_name":  customer_name,
             "customer_email": customer_email,
             "customer_phone": customer_phone,
             "quantity":       max(1, int(quantity)),
-        })
+        }
+        if wallet_id:
+            payload["wallet_id"] = wallet_id
+        if execution_mode:
+            payload["execution_mode"] = execution_mode
+        return await _api_post("/api/book", payload)
     except httpx.HTTPStatusError as e:
         try:
             detail = e.response.json()

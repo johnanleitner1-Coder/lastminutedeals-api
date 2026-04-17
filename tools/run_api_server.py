@@ -5676,10 +5676,15 @@ _MCP_TOOLS = [
     {
         "name": "book_slot",
         "description": (
-            "Book a last-minute slot for a customer. Creates a Stripe Checkout Session and "
-            "returns a checkout_url. Direct the customer to that URL to complete payment. "
-            "The booking is confirmed with the supplier after payment succeeds. "
-            "The customer receives an email confirmation. Bookings are real."
+            "Book a last-minute slot for a customer. Two modes: "
+            "(1) APPROVAL MODE (default): creates a Stripe Checkout Session and returns a "
+            "checkout_url — you MUST share this URL with the customer immediately so they "
+            "can complete payment. Booking is confirmed with the supplier after payment. "
+            "(2) AUTONOMOUS MODE: if you supply a wallet_id (pre-funded agent wallet) and "
+            "execution_mode='autonomous', the booking completes immediately and returns a "
+            "confirmation_number directly — no checkout step, no human action required. "
+            "Use autonomous mode when your application manages payment on behalf of the customer. "
+            "Bookings are real and go directly to the supplier."
         ),
         "annotations": {
             "readOnlyHint": False,
@@ -5695,6 +5700,8 @@ _MCP_TOOLS = [
                 "customer_email": {"type": "string",  "description": "Email address where booking confirmation will be sent."},
                 "customer_phone": {"type": "string",  "description": "Phone number including country code (e.g. +15550001234)."},
                 "quantity":       {"type": "integer", "description": "Number of people to book. Default: 1. Price is per person × quantity."},
+                "wallet_id":      {"type": "string",  "description": "Pre-funded agent wallet ID (format: wlt_...). Provide this to enable autonomous mode."},
+                "execution_mode": {"type": "string",  "description": "Set to 'autonomous' when providing a wallet_id. Omit for standard approval (checkout URL) flow."},
             },
             "required": ["slot_id", "customer_name", "customer_email", "customer_phone"],
         },
@@ -5913,24 +5920,23 @@ def _start_mcp_thread():
     mcp = FastMCP(
         "Last Minute Deals HQ",
         instructions=(
-            "You have access to real last-minute tour and activity inventory across "
-            "Iceland, Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, "
-            "Romania, Egypt, Turkey, and more — sourced live from production booking "
-            "systems via the OCTO open standard. "
-            "14 active suppliers: Arctic Adventures (Iceland glacier hikes, snowmobiling, "
-            "whale watching, aurora), "
-            "Bicycle Roma (Rome e-bike tours, food tours), Pure Morocco Experience "
-            "(Sahara desert tours, Marrakech), Ramen Factory Kyoto (cooking classes), "
-            "O Turista Tours (Lisbon, Porto, Sintra day trips), "
-            "Hillborn Experiences (Tanzania ultra-luxury safaris, Kilimanjaro, Zanzibar), "
-            "REDRIB Experience (Helsinki), Boka Bliss (Kotor, Montenegro), "
-            "TourTransfer Bucharest (Romania), Íshestar Riding Tours (Iceland horse riding), "
-            "Marvel Egypt Tours (Cairo, Luxor, Aswan), EgyExcursions (Egypt), "
-            "Trivanzo Holidays (Egypt, Red Sea, Nile cruises), "
-            "Vakare Travel Service (Antalya, Turkey). "
-            "Call get_supplier_info() to see live destination coverage. "
-            "Use search_slots to find available experiences, then book_slot to create "
-            "a Stripe checkout session. Bookings are real and go directly to the supplier."
+            "You have access to real last-minute tour and activity inventory sourced live "
+            "from production booking systems via the OCTO open standard. "
+            "14 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
+            "Finland, Montenegro, Romania, Egypt, and Turkey. "
+            "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
+            "1. Call search_slots with the user's city/destination and preferred timeframe. "
+            "2. Present the options to the user and get their selection. "
+            "3. Collect the customer's full name, email address, and phone number. "
+            "4. Call book_slot with the slot_id and customer details. "
+            "5. IMMEDIATELY share the checkout_url with the customer — do not wait, do not "
+            "summarise, show the URL directly so they can complete payment. The session "
+            "expires in 24 hours. "
+            "6. Call get_booking_status to confirm once payment is complete. "
+            "AUTONOMOUS MODE: If you have a wallet_id (pre-funded agent wallet), pass it "
+            "with execution_mode='autonomous' to book_slot — the booking completes immediately "
+            "with no checkout step and returns a confirmation number directly. "
+            "Call get_supplier_info() to see live destination coverage before searching."
         ),
     )
 
