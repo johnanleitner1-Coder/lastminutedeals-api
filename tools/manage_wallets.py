@@ -45,7 +45,7 @@ MAX_TOP_UP   = 500000 # $5,000.00 maximum deposit (cents)
 import time as _time_mod
 _WALLETS_MEM_CACHE: dict = {}
 _WALLETS_CACHE_AT: float = 0.0
-_WALLETS_CACHE_TTL = 15  # seconds — refreshed automatically after 15s
+_WALLETS_CACHE_TTL = 300  # seconds — refreshed automatically after 300s
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
