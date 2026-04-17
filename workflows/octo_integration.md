@@ -137,25 +137,13 @@ Once approved, set `PEEK_API_KEY` in `.env` and enable `peek_pro` in `octo_suppl
 
 ---
 
-## Step 5 — FareHarbor (Affiliate First, API Later)
-
-FareHarbor requires $250k trailing 12-month transaction volume for API access.
-
-**Start with affiliate:**
-1. Email `channelsupport@fareharbor.com` with: company name, website, commission preference
-2. Get approved for referral links (FHDN)
-3. Volume accumulates toward the $250k API threshold
-
----
-
 ## Running the Full Pipeline
 
 ### Manual run (all platforms)
 ```bash
-python tools/fetch_octo_slots.py --hours-ahead 72
-python tools/fetch_rezdy_slots.py --hours-ahead 72
-python tools/fetch_mindbody_slots.py --hours-ahead 72
-python tools/aggregate_slots.py --hours-ahead 72
+python tools/fetch_octo_slots.py --hours-ahead 168
+python tools/fetch_rezdy_slots.py --hours-ahead 168
+python tools/aggregate_slots.py --hours-ahead 168
 python tools/compute_pricing.py
 ```
 

@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-17 (v23 — Session 22 human queue resolved: B-33 Mindbody OTP page-navigation bug, B-34 complete_booking API contract normalized to always-dict, B-35 send_sms_alert Railway persistence (Supabase fallback); 2 new suppliers added (All Washington View, TUTU VIEW Ltd — 16 total); 132 total bugs fixed)
+**Last updated:** 2026-04-17 (v24 — Session 23: Platform focus pivot to Bokun/OCTO-only. Removed all non-OCTO platforms (Eventbrite, Ticketmaster, Meetup, Mindbody, Luma, Airbnb, LiquidSpace, SeatGeek, Dice, Booksy, FareHarbor). Deleted 24+ scripts, rewrote complete_booking.py (1990→480 lines, removed all Playwright bookers), cleaned all pipeline/workflow/config files, purged 8,788 non-OCTO slots from Supabase. 5,400 OCTO slots remain. 132 total bugs fixed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---

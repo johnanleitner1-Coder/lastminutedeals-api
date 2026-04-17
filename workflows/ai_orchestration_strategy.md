@@ -86,22 +86,16 @@ Use Claude Code only for:
 ```
 Every 4 hours (Task Scheduler):
   run_pipeline.bat
-    ├── python tools/fetch_mindbody_slots.py
-    ├── python tools/fetch_airbnb_ical_slots.py --mode slots
-    ├── python tools/fetch_eventbrite_slots.py
+    ├── python tools/fetch_octo_slots.py --hours-ahead 168
     ├── python tools/aggregate_slots.py
     ├── python tools/compute_pricing.py
     ├── python tools/generate_affiliate_links.py
     ├── python tools/write_to_sheets.py
+    ├── python tools/sync_to_supabase.py
     ├── python tools/update_landing_page.py
     └── python tools/post_to_telegram.py
         python tools/post_to_twitter.py
         python tools/post_to_reddit.py
-
-Once weekly (Task Scheduler):
-  refresh_seeds.bat
-    ├── python tools/fetch_airbnb_ical_slots.py --mode seed --max-cities 30
-    └── [future: refresh other platform seeds]
 ```
 
 No Python AI SDK calls in any of the above. 100% deterministic. Zero token cost.

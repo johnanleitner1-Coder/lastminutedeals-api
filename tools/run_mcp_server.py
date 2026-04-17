@@ -9,7 +9,7 @@ Tools:
   get_slot             — full details for a specific slot_id
   book_slot            — create a Stripe Checkout Session to complete a booking
   get_booking_status   — check status of a booking by booking_id
-  refresh_slots        — trigger a fresh scrape (runs fetch_mindbody_slots.py)
+  refresh_slots        — trigger a fresh fetch (runs fetch_octo_slots.py)
 
 ── Claude Desktop config ────────────────────────────────────────────────────
 Add to %APPDATA%\\Claude\\claude_desktop_config.json:
@@ -68,9 +68,7 @@ from dotenv import load_dotenv
 BASE_DIR       = Path(__file__).parent.parent            # c:/Users/janaa/Agentic Workflows
 TMP_DIR        = BASE_DIR / ".tmp"
 AGGREGATED     = TMP_DIR / "aggregated_slots.json"
-MINDBODY_SLOTS = TMP_DIR / "mindbody_slots.json"
 OCTO_SLOTS     = TMP_DIR / "octo_slots.json"
-FETCH_SCRIPT   = BASE_DIR / "tools" / "fetch_mindbody_slots.py"
 BOOKINGS_LOG   = TMP_DIR / "mcp_bookings.json"
 
 # Platforms fulfilled via pure HTTP API (no Playwright) — api_key_env stored in booking_url JSON
@@ -131,7 +129,7 @@ def _load_slots() -> list[dict]:
 
     # If aggregated is empty or missing, load individual platform files
     if not all_slots:
-        for path in [MINDBODY_SLOTS, OCTO_SLOTS, TMP_DIR / "rezdy_slots.json"]:
+        for path in [OCTO_SLOTS, TMP_DIR / "rezdy_slots.json"]:
             if path.exists():
                 try:
                     slots = json.loads(path.read_text(encoding="utf-8"))
@@ -215,9 +213,7 @@ def _attempt_fulfillment(slot: dict, booking_id: str, customer: dict) -> dict:
     Returns a result dict with keys: success, confirmation (or error).
 
     For API platforms (OCTO, Rezdy): called when api_key_env is set and the key
-    is present in .env — fulfillment is pure HTTP, no Playwright.
-    For Mindbody: called when MINDBODY_AGENCY_EMAIL is set — fulfillment uses
-    Playwright to complete the booking via the agency account.
+    is present in .env — fulfillment is pure HTTP.
     """
     try:
         # Lazy import — complete_booking has heavy deps (playwright)
@@ -454,31 +450,6 @@ def book_slot(
                         ),
                     }
 
-        # Mindbody — fulfilled via Playwright agency account
-        agency_email = os.getenv("MINDBODY_AGENCY_EMAIL", "").strip()
-        if agency_email and platform == "mindbody":
-            print(f"[book_slot] Agency credentials found — attempting Mindbody fulfillment for {booking_id}")
-            result = _attempt_fulfillment(slot, booking_id, customer)
-            if result["success"]:
-                return {
-                    "success":      True,
-                    "booking_id":   booking_id,
-                    "confirmation": result["confirmation"],
-                    "service":      slot.get("service_name"),
-                    "business":     slot.get("business_name"),
-                    "start_time":   slot.get("start_time"),
-                    "note":         "Booking confirmed on Mindbody via agency account.",
-                }
-            else:
-                return {
-                    "success":    False,
-                    "booking_id": booking_id,
-                    "error": (
-                        f"Mindbody fulfillment failed: {result['error']}. "
-                        "Booking intent logged — check .tmp/mcp_bookings.json."
-                    ),
-                }
-
         return {
             "success":    True,
             "booking_id": booking_id,
@@ -486,8 +457,7 @@ def book_slot(
             "business":   slot.get("business_name"),
             "start_time": slot.get("start_time"),
             "note": (
-                "Booking logged. Set STRIPE_SECRET_KEY in .env for payment checkout, "
-                "or set MINDBODY_AGENCY_EMAIL + MINDBODY_AGENCY_PASSWORD for direct fulfillment."
+                "Booking logged. Set STRIPE_SECRET_KEY in .env for payment checkout."
             ),
         }
 
@@ -641,17 +611,16 @@ def get_booking_status(booking_id: str) -> dict:
             "error": "Booking not found in local log or Stripe."}
 
 
-def refresh_slots(hours_ahead: int = 72, max_studios: int = 20) -> dict:
+def refresh_slots(hours_ahead: int = 72) -> dict:
     """
-    Trigger a fresh fetch of all slot data (OCTO platforms + Mindbody).
+    Trigger a fresh fetch of all slot data (OCTO platforms).
 
-    Runs fetch_octo_slots.py and fetch_mindbody_slots.py as subprocesses,
-    then runs aggregate_slots.py to merge results. Call this when
-    search_slots returns no results or data seems stale.
+    Runs fetch_octo_slots.py as a subprocess, then runs aggregate_slots.py
+    to merge results. Call this when search_slots returns no results or
+    data seems stale.
 
     Args:
         hours_ahead:  Fetch window in hours (default: 72).
-        max_studios:  Max Mindbody studios to scrape (default: 20, 0 = all).
 
     Returns:
         { success, message, slot_count, open_count, sources } or { success: false, error }
@@ -680,29 +649,6 @@ def refresh_slots(hours_ahead: int = 72, max_studios: int = 20) -> dict:
             errors.append("OCTO fetch timed out after 120s")
         except Exception as e:
             errors.append(f"OCTO fetch error: {e}")
-
-    # ── Mindbody fetch ────────────────────────────────────────────────────────
-    if FETCH_SCRIPT.exists():
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable, str(FETCH_SCRIPT),
-                    "--hours-ahead", str(hours_ahead),
-                    "--max-studios", str(max_studios),
-                ],
-                cwd=str(BASE_DIR),
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-            if result.returncode == 0:
-                sources.append("mindbody")
-            else:
-                errors.append(f"Mindbody: {(result.stderr or result.stdout or '')[-300:]}")
-        except subprocess.TimeoutExpired:
-            errors.append("Mindbody fetch timed out after 180s")
-        except Exception as e:
-            errors.append(f"Mindbody fetch error: {e}")
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
     if sources and AGGREGATE_SCRIPT.exists():
@@ -785,7 +731,6 @@ def run_http_server(port: int = 5051):
             "by_platform": by_platform,
             "data_files":  {
                 "aggregated": AGGREGATED.exists(),
-                "mindbody":   MINDBODY_SLOTS.exists(),
                 "octo":       OCTO_SLOTS.exists(),
                 "rezdy":      (TMP_DIR / "rezdy_slots.json").exists(),
             },
@@ -829,7 +774,6 @@ def run_http_server(port: int = 5051):
         data = freq.get_json(force=True, silent=True) or {}
         return jsonify(refresh_slots(
             hours_ahead  = int(data.get("hours_ahead", 72)),
-            max_studios  = int(data.get("max_studios", 20)),
         ))
 
     print(f"\nLastMinuteDeals HTTP server on http://localhost:{port}")

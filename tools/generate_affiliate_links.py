@@ -10,23 +10,17 @@ NOTE: booking_url is INTERNAL ONLY and must never be shown to end users.
       sees either URL — complete_booking.py uses booking_url internally.
 
 Affiliate programs supported:
-    eventbrite      — aff param (Eventbrite Affiliate Program via Impact)
-    ticketmaster    — wt.mc_id param (Ticketmaster Affiliate Program via CJ)
-    seatgeek        — pid param (SeatGeek Affiliate Program via Impact)
     booking.com     — aid param (Booking.com Affiliate Partner Program)
     expedia         — affcid param (Expedia Partner Solutions)
     tripadvisor     — ta_affiliate_id param
-    booksy          — referral param
-    mindbody        — Verify program exists; stubbed here
+
+Note: OCTO/Bokun platforms have no affiliate programs. Revenue from those
+platforms comes from dynamic pricing markup (compute_pricing.py).
 
 Credentials in .env:
-    EVENTBRITE_AFFILIATE_ID     (Impact affiliate ID — join at eventbrite.com/affiliate)
-    TICKETMASTER_AFFILIATE_ID   (CJ affiliate param — join at partners.ticketmaster.com)
-    SEATGEEK_AFFILIATE_ID       (Impact affiliate ID — join via SeatGeek partner portal)
     BOOKING_COM_AFFILIATE_ID
     EXPEDIA_AFFILIATE_ID
     TRIPADVISOR_AFFILIATE_ID
-    BOOKSY_AFFILIATE_CODE
 
 Usage:
     python tools/generate_affiliate_links.py [--data-file .tmp/aggregated_slots.json]
@@ -48,13 +42,9 @@ DATA_FILE = Path(".tmp/aggregated_slots.json")
 
 # ── Affiliate ID lookup from .env ─────────────────────────────────────────────
 AFFILIATE_IDS = {
-    "eventbrite":   os.getenv("EVENTBRITE_AFFILIATE_ID"),
-    "ticketmaster": os.getenv("TICKETMASTER_AFFILIATE_ID"),
-    "seatgeek":     os.getenv("SEATGEEK_AFFILIATE_ID"),
     "booking_com":  os.getenv("BOOKING_COM_AFFILIATE_ID"),
     "expedia":      os.getenv("EXPEDIA_AFFILIATE_ID"),
     "tripadvisor":  os.getenv("TRIPADVISOR_AFFILIATE_ID"),
-    "booksy":       os.getenv("BOOKSY_AFFILIATE_CODE"),
 }
 
 
@@ -74,37 +64,11 @@ def build_affiliate_url(platform: str, booking_url: str) -> str | None:
 
     platform = platform.lower()
 
-    if platform == "eventbrite":
-        aff_id = AFFILIATE_IDS.get("eventbrite")
-        if not aff_id:
-            return None
-        # Eventbrite affiliate via Impact: append ?aff=<ID>
-        return _add_param(booking_url, "aff", aff_id)
-
-    elif platform == "ticketmaster":
-        aff_id = AFFILIATE_IDS.get("ticketmaster")
-        if not aff_id:
-            return None
-        # Ticketmaster affiliate via CJ: append wt.mc_id param
-        return _add_param(booking_url, "wt.mc_id", aff_id)
-
-    elif platform == "seatgeek":
-        aff_id = AFFILIATE_IDS.get("seatgeek")
-        if not aff_id:
-            return None
-        # SeatGeek affiliate via Impact: append pid param
-        return _add_param(booking_url, "pid", aff_id)
-
-    elif platform == "booking_com":
+    if platform == "booking_com":
         aid = AFFILIATE_IDS.get("booking_com")
         if not aid:
             return None
-        # Booking.com affiliate: append ?aid=<AID>
         return _add_param(booking_url, "aid", aid)
-
-    elif platform in ("airbnb",):
-        # Airbnb discontinued its affiliate program in 2021
-        return None
 
     elif platform == "expedia":
         aff_id = AFFILIATE_IDS.get("expedia")
@@ -118,18 +82,7 @@ def build_affiliate_url(platform: str, booking_url: str) -> str | None:
             return None
         return _add_param(booking_url, "ta_affiliate_id", ta_id)
 
-    elif platform == "booksy":
-        code = AFFILIATE_IDS.get("booksy")
-        if not code:
-            return None
-        return _add_param(booking_url, "referral", code)
-
-    elif platform == "mindbody":
-        # Mindbody referral program — verify URL format when you get your code
-        # Stubbed: return None until confirmed program details
-        return None
-
-    # Platform has no affiliate program
+    # OCTO/Bokun platforms — no affiliate program; revenue is via dynamic pricing markup
     return None
 
 

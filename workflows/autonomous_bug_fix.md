@@ -92,7 +92,7 @@ The integration test (`tools/integration_test.py`) checks 6 surfaces after every
 
 **NON-BLOCKING (logged but don't revert a good fix — pre-existing issues):**
 - MCP server: search_slots, get_slot, get_booking_status, book_slot registration
-- External APIs: Stripe, SendGrid, Twilio, Google Sheets OAuth, Bokun, Rezdy, Eventbrite, Meetup
+- External APIs: Stripe, SendGrid, Twilio, Google Sheets OAuth, Bokun, Rezdy
 - Cloud infrastructure: Railway /health, GitHub Pages, Cloudflare DNS
 - Social: Telegram, Twitter, Reddit
 
@@ -114,7 +114,7 @@ Human queue:       1
 
 Fixed:
   ✓ fetch_octo_slots.py:200 — HTTPError (attempt 1, 38s)
-  ✓ fetch_eventbrite_slots.py:250 — ValueError (attempt 1, 41s)
+  ✓ compute_pricing.py:200 — ValueError (attempt 1, 41s)
   ✓ execution_engine.py:641 — AttributeError (attempt 4, 84s)
 
 Needs Human Review:

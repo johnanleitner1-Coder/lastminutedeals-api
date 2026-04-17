@@ -21,11 +21,9 @@ numbers back. Supply comes from OCTO-compliant platforms (Ventrata, Bokun, Peek,
 ```bash
 cd "c:/Users/janaa/Agentic Workflows"
 pip install -r tools/requirements.txt
-playwright install chromium
 ```
 
-Playwright is only needed by `complete_booking.py` for Mindbody fallback.
-OCTO + Rezdy bookings use pure HTTP — no Playwright required.
+All bookings use pure HTTP (OCTO + Rezdy) — no browser automation required.
 
 ---
 
@@ -56,10 +54,6 @@ Priority order — start from the top:
 ### 4. Peek Pro
 - Email ben.smithart@peek.com — introduce as an OCTO reseller
 - Add to `.env`: `PEEK_API_KEY=<key>` when received
-
-### 5. FareHarbor
-- Apply at fareharbor.com/partners
-- Add to `.env`: `FAREHARBOR_API_KEY=<key>` when approved
 
 After adding any key, always run:
 ```bash
@@ -136,7 +130,6 @@ REZDY_API_KEY=
 BOKUN_API_KEY=
 XOLA_API_KEY=
 PEEK_API_KEY=
-FAREHARBOR_API_KEY=
 
 # ── Google Sheets (see Steps 4–5) ──────────────────────────────────────
 GOOGLE_SHEET_ID=
@@ -151,7 +144,6 @@ BOOKING_API_URL=http://localhost:5050/api/book   # update after deploying
 BOOKING_COM_AFFILIATE_ID=    # partner.booking.com
 EXPEDIA_AFFILIATE_ID=        # expediapartnersolutions.com
 TRIPADVISOR_AFFILIATE_ID=    # tripadvisor.com/affiliates
-BOOKSY_AFFILIATE_CODE=       # booksy.com/partners
 
 # ── Social distribution ─────────────────────────────────────────────────
 TWITTER_BEARER_TOKEN=
@@ -166,13 +158,6 @@ REDDIT_USER_AGENT=LastMinuteDealsBot/1.0
 
 TELEGRAM_BOT_TOKEN=          # From @BotFather on Telegram
 TELEGRAM_CHANNEL_ID=         # @yourchannel or numeric ID
-
-# ── Mindbody agency account (for Mindbody booking fulfillment only) ─────
-MINDBODY_AGENCY_EMAIL=
-MINDBODY_AGENCY_PASSWORD=
-MINDBODY_AGENCY_CARD_NUMBER=
-MINDBODY_AGENCY_CARD_EXP=
-MINDBODY_AGENCY_CARD_CVV=
 
 # ── SMS alerts (optional, Phase 4+) ────────────────────────────────────
 TWILIO_ACCOUNT_SID=
@@ -292,8 +277,6 @@ Apply now — approval takes days to weeks:
 - **Booking.com**: partner.booking.com → Affiliate Partner Program
 - **Expedia**: expediapartnersolutions.com
 - **TripAdvisor**: tripadvisor.com/affiliates
-- **Booksy**: booksy.com/business → Partner program
-
 Add IDs to `.env` as they're approved. System works without them (no affiliate links until IDs are set).
 
 ---
@@ -315,19 +298,7 @@ To run immediately: right-click the task → **Run**
 
 ---
 
-## Step 12 — SeatGeek API (event inventory)
-
-1. Go to [platform.seatgeek.com](https://platform.seatgeek.com)
-2. Create a developer account → get `client_id` and `client_secret`
-3. Add to `.env`:
-   ```
-   SEATGEEK_CLIENT_ID=...
-   SEATGEEK_CLIENT_SECRET=...
-   ```
-
----
-
-## Step 13 — Twilio SMS alerts (optional, Phase 4+)
+## Step 12 — Twilio SMS alerts (optional, Phase 4+)
 
 1. Sign up at [twilio.com](https://twilio.com) (free trial gives ~$15 credit)
 2. Get a phone number in the Console

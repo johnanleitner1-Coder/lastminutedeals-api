@@ -3000,7 +3000,7 @@ def _fulfill_booking_async(
 def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: str, quantity: int = 1):
     """
     Execute the booking on the source platform after payment is confirmed.
-    Imports complete_booking.py (Playwright automation).
+    Imports complete_booking.py (OCTO/Rezdy HTTP fulfillment).
     Checks the circuit breaker before attempting OCTO platforms.
     """
     # ── Resolve per-supplier ID from booking_url ─────────────────────────────
@@ -4222,10 +4222,10 @@ def execute_guaranteed():
       {
         "success": true,
         "status": "booked",
-        "confirmation": "EVT-12345",
+        "confirmation": "OCTO-12345",
         "slot_id": "...",
-        "service_name": "60-min Deep Tissue Massage",
-        "platform": "mindbody",
+        "service_name": "Reykjavik Northern Lights Tour",
+        "platform": "bokun",
         "price_charged": 85.00,
         "attempts": 2,
         "fallbacks_used": 1,
@@ -4355,8 +4355,8 @@ def verify_booking(booking_id: str):
     GET /verify/bk_abc123
     → {
         "booking_id": "bk_abc123",
-        "confirmation": "LUMA-XYZ",
-        "platform": "luma",
+        "confirmation": "OCTO-XYZ",
+        "platform": "bokun",
         "service_name": "...",
         "price_charged": 0.0,
         "status": "booked",

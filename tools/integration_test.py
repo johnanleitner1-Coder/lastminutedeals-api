@@ -12,7 +12,7 @@ Sections:
   A. Core Python pipeline (slot schema, aggregation, pricing, normalize)
   B. MCP server (soft check — skipped if server not running)
   C. Supabase (slots table, bookings, wallets, Storage buckets)
-  D. External APIs and credentials (Stripe, SendGrid, Twilio, Google Sheets, OCTO, Rezdy, scrapers)
+  D. External APIs and credentials (Stripe, SendGrid, Twilio, Google Sheets, OCTO, Rezdy)
   E. Cloud infrastructure (Railway API server, GitHub Pages, Cloudflare DNS)
   F. Social / distribution (Twitter, Reddit, Telegram)
 
@@ -619,48 +619,6 @@ def check_rezdy() -> None:
         record(section, "Rezdy API reachable", False, NON_BLOCKING, str(e)[:60])
 
 
-def check_eventbrite_scrapeable() -> None:
-    section = "D. External APIs"
-    try:
-        r = requests.get(
-            "https://www.eventbrite.com/d/ny--new-york/all-events/",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0"},
-            timeout=15,
-        )
-        has_data = r.status_code == 200 and "__SERVER_DATA__" in r.text
-        if r.status_code != 200:
-            record(section, "Eventbrite scrape page accessible", False, NON_BLOCKING, f"HTTP {r.status_code}")
-        elif not has_data:
-            record(section, "Eventbrite scrape page accessible", False, NON_BLOCKING,
-                   "__SERVER_DATA__ missing — page structure may have changed")
-        else:
-            record(section, "Eventbrite scrape page accessible", True, NON_BLOCKING,
-                   "__SERVER_DATA__ present")
-    except Exception as e:
-        record(section, "Eventbrite scrape page accessible", False, NON_BLOCKING, str(e)[:60])
-
-
-def check_meetup_scrapeable() -> None:
-    section = "D. External APIs"
-    try:
-        r = requests.get(
-            "https://www.meetup.com/find/us--ny--new-york/",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0"},
-            timeout=15,
-        )
-        has_data = r.status_code == 200 and "__NEXT_DATA__" in r.text
-        if r.status_code != 200:
-            record(section, "Meetup scrape page accessible", False, NON_BLOCKING, f"HTTP {r.status_code}")
-        elif not has_data:
-            record(section, "Meetup scrape page accessible", False, NON_BLOCKING,
-                   "__NEXT_DATA__ missing — page structure may have changed")
-        else:
-            record(section, "Meetup scrape page accessible", True, NON_BLOCKING,
-                   "__NEXT_DATA__ present")
-    except Exception as e:
-        record(section, "Meetup scrape page accessible", False, NON_BLOCKING, str(e)[:60])
-
-
 # ── Section E: Cloud Infrastructure ──────────────────────────────────────────
 
 def check_railway_server() -> None:
@@ -818,8 +776,6 @@ def run_all(blocking_only: bool = False) -> dict:
         check_google_sheets_oauth()
         check_bokun_octo()
         check_rezdy()
-        check_eventbrite_scrapeable()
-        check_meetup_scrapeable()
 
         print("\nE. Cloud Infrastructure")
         check_railway_server()

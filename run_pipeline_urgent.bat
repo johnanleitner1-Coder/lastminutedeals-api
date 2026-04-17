@@ -28,9 +28,4 @@ if exist tools\notify_webhooks.py (
     %PYTHON% tools/notify_webhooks.py
 )
 
-REM Run real-time watcher one-shot cycle (picks up any slots missed between full runs)
-if exist tools\watch_slots_realtime.py (
-    %PYTHON% tools/watch_slots_realtime.py --once
-)
-
 echo [%date% %time%] Urgent pipeline complete.
