@@ -127,7 +127,8 @@ class OCTOClient:
         Args:
             product_id:  OCTO product identifier
             option_id:   OCTO option identifier (usually "DEFAULT")
-            units:       list of {id: unit_type_id, quantity: int}
+            units:       list of {unitId: unit_type_id, quantity: int}
+                         (also accepts legacy {id: unit_type_id, quantity: int})
             date_start:  local date string "YYYY-MM-DD"
             date_end:    local date string "YYYY-MM-DD"
 
@@ -135,12 +136,18 @@ class OCTOClient:
             List of availability objects with id, localDateTimeStart,
             localDateTimeEnd, status, vacancies, capacity, unitPricing
         """
+        # OCTO spec requires "unitId" in the units array — normalize from callers
+        # that may pass the legacy "id" key, so the API doesn't return a 400.
+        normalized_units = [
+            {"unitId": u.get("unitId") or u.get("id", ""), "quantity": u.get("quantity", 1)}
+            for u in units
+        ]
         payload = {
             "productId":      product_id,
             "optionId":       option_id,
             "localDateStart": date_start,
             "localDateEnd":   date_end,
-            "units":          units,
+            "units":          normalized_units,
         }
         # Add pricing capability header only on availability requests.
         # This works on both Ventrata and Bokun (Bokun only hangs on /products).
@@ -494,7 +501,7 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
             continue
 
         option_id, unit_id = _primary_unit(product)
-        units = [{"id": unit_id, "quantity": 1}]
+        units = [{"unitId": unit_id, "quantity": 1}]
 
         # Retry availability once on timeout if configured
         availability = None
