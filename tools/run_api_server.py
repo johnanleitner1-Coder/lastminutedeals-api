@@ -5924,13 +5924,30 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
             return [{"error": f"Could not fetch slots: {e}. Try again in a moment."}]
 
     elif name == "book_slot":
-        r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
-        return r.json()
+        try:
+            r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
+            try:
+                return r.json()
+            except ValueError:
+                # Server returned non-JSON (e.g. 502 HTML error page during restart)
+                return {"error": f"Booking service returned unexpected response (HTTP {r.status_code}). Try again."}
+        except requests.exceptions.Timeout:
+            return {"error": "Booking request timed out. The slot may still be available — try again or check status."}
+        except requests.exceptions.ConnectionError:
+            return {"error": "Could not reach booking service. Try again in a moment."}
 
     elif name == "get_booking_status":
         bid = arguments.get("booking_id", "")
-        r = requests.get(f"{base}/bookings/{bid}", headers=hdrs, timeout=10)
-        return r.json()
+        try:
+            r = requests.get(f"{base}/bookings/{bid}", headers=hdrs, timeout=10)
+            try:
+                return r.json()
+            except ValueError:
+                return {"error": f"Status service returned unexpected response (HTTP {r.status_code})."}
+        except requests.exceptions.Timeout:
+            return {"error": "Status check timed out. Try again."}
+        except requests.exceptions.ConnectionError:
+            return {"error": "Could not reach booking service. Try again in a moment."}
 
     elif name == "get_supplier_info":
         return {

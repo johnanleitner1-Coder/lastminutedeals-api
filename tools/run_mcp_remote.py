@@ -184,7 +184,6 @@ async def search_slots(
     category: str = "",
     hours_ahead: float = 72.0,
     max_price: float = 0.0,
-    limit: int = 20,
 ) -> list[dict]:
     """
     Search for last-minute available tours and activities.
@@ -201,7 +200,6 @@ async def search_slots(
                      Leave empty for all categories.
         hours_ahead: Return slots starting within this many hours (default: 72).
         max_price:   Maximum price in USD. Set to 0 to return all prices.
-        limit:       Max results to return (default: 20, max: 100).
 
     Returns:
         List of available slot dicts sorted by hours_until_start (soonest first).
@@ -214,7 +212,7 @@ async def search_slots(
 
     # hours_ahead must be int: Flask's type=int silently returns the default (168h)
     # when given a float string like "72.0", so the time-window filter is dropped.
-    params: dict = {"hours_ahead": int(hours_ahead), "limit": min(int(limit), 100)}
+    params: dict = {"hours_ahead": int(hours_ahead)}
     if city:
         params["city"] = city
     if category:
