@@ -828,8 +828,13 @@ BOOKED_FILE = Path(".tmp/booked_slots.json")
 PORT        = int(os.getenv("BOOKING_SERVER_PORT", "5050"))
 
 # MCP search_slots cache — avoids repeated Supabase pagination on burst agent calls
-_MCP_SLOTS_CACHE: dict = {}   # cache_key → {"slots": [...], "expires": float}
-_MCP_SLOTS_CACHE_TTL = 60     # seconds
+# Fresh TTL: 300s (5 min). Inventory refreshes every 4h so 5 min is safe and eliminates
+# most cold-query cost. Stale TTL: 1800s (30 min). On Supabase failure or Railway cold
+# start, serve the last good result rather than returning an error — eliminates the
+# 30% failure rate on search_slots caused by cache misses hitting full 5-page pagination.
+_MCP_SLOTS_CACHE: dict = {}        # cache_key → {"slots": [...], "expires": float, "stale_until": float}
+_MCP_SLOTS_CACHE_TTL       = 300   # seconds until fresh cache expires
+_MCP_SLOTS_CACHE_STALE_TTL = 1800  # seconds to serve stale cache on Supabase failure
 
 # Supplier directory cache — live from Supabase, rebuilt every 5 minutes
 _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
@@ -5701,6 +5706,7 @@ _MCP_TOOLS = [
                 "category":    {"type": "string", "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
                 "hours_ahead": {"type": "number", "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
                 "max_price":   {"type": "number", "description": "Maximum price in USD. Omit or set to 0 for all prices."},
+                "limit":       {"type": "integer", "description": "Max results to return. Default: 20. Max: 100."},
             },
         },
     },
@@ -5882,27 +5888,42 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     if name == "search_slots":
         # Call Supabase directly — avoids HTTP loopback which can deadlock
         # gunicorn workers when the handler thread blocks waiting for itself.
-        # No agent-facing limit: agents use city/category/hours_ahead to narrow.
-        # A limit cap here would silently hide inventory from agents.
-        # Cache results 60s to absorb burst calls without re-paginating.
+        # Limit: cap Supabase fetch at 500 rows (1 page). The query is ordered
+        # start_time ASC so we always get the most urgent slots. Agents filter
+        # further by city/category so 500 is ample for any real use case.
+        # Previously no limit was set, causing 5-page pagination (50s blocking)
+        # on every 60s cache miss — the root cause of 30% search_slots failures.
         hours_ahead = float(arguments.get("hours_ahead") or 168)
         category    = str(arguments.get("category") or "")
         city        = str(arguments.get("city") or "")
         budget      = float(arguments.get("max_price") or 0)
+        limit       = min(int(arguments.get("limit") or 20), 100)
 
         cache_key = f"{hours_ahead}|{category}|{city}|{budget}"
         now = time.time()
         cached = _MCP_SLOTS_CACHE.get(cache_key)
         if cached and cached["expires"] > now:
-            return cached["slots"]
+            return cached["slots"][:limit]
 
-        slots = _load_slots_from_supabase(
-            hours_ahead=hours_ahead, category=category,
-            city=city, budget=budget,
-        )
-        result = [_sanitize_slot(s) for s in slots]
-        _MCP_SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _MCP_SLOTS_CACHE_TTL}
-        return result
+        try:
+            slots = _load_slots_from_supabase(
+                hours_ahead=hours_ahead, category=category,
+                city=city, budget=budget, limit=500,
+            )
+            result = [_sanitize_slot(s) for s in slots]
+            _MCP_SLOTS_CACHE[cache_key] = {
+                "slots":       result,
+                "expires":     now + _MCP_SLOTS_CACHE_TTL,
+                "stale_until": now + _MCP_SLOTS_CACHE_STALE_TTL,
+            }
+            return result[:limit]
+        except Exception as e:
+            # Supabase unavailable (cold start, transient error) — serve stale
+            # cache rather than returning an error. Converts hard failure into a
+            # slightly stale result; eliminates the search_slots uptime failures.
+            if cached and cached.get("stale_until", 0) > now:
+                return cached["slots"][:limit]
+            return [{"error": f"Could not fetch slots: {e}. Try again in a moment."}]
 
     elif name == "book_slot":
         r = requests.post(f"{base}/api/book", headers=hdrs, json=arguments, timeout=30)
