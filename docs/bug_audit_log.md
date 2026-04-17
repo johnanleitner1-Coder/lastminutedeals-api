@@ -268,6 +268,23 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+---
+
+## Session 20 Fixes — MCP Prompts, Smithery Config Schema, search_slots Uptime, book_slot Failure
+
+**Context**: Smithery quality score was 70; search_slots uptime degraded to 69.9%; 1 book_slot failure recorded in 54 calls. This session: implemented MCP prompts, fixed Smithery config schema warning via CLI publish, overhauled search_slots cache architecture, and hardened book_slot error handling.
+
+| # | Severity | File(s) | Bug | Fix |
+|---|---|---|---|---|
+| B-27 | HIGH | `run_api_server.py`, `run_mcp_remote.py` | MCP prompts not implemented — Smithery reported no prompts, quality score penalised. `prompts/list` returned Method Not Found | Added 3 `@mcp.prompt()` decorators in FastMCP (`find_experiences`, `explore_destinations`, `autonomous_booking`) and matching `prompts/list` + `prompts/get` handlers in Flask `/mcp` endpoint. Smithery now shows 3 prompts |
+| B-28 | MEDIUM | `run_api_server.py` | MCP `initialize` response declared `capabilities: {"tools": {}}` only — no `"prompts"` or `"resources"` capability. Smithery probed `resources/list` and got Method Not Found, flagged as warning | Added `"prompts": {}` and `"resources": {}` to capabilities in `initialize`. Added `resources/list` → `{"resources": []}` and `resources/read` → error -32002 handlers |
+| B-29 | CRITICAL | `run_api_server.py` | `_MCP_SLOTS_CACHE_TTL = 60` caused cache to expire every 60s. Each miss triggered `_load_slots_from_supabase` with no cap → 5 pages × 10s Supabase = 50s blocking per cache miss → request timeout → ~30% failure rate on search_slots (Smithery showed 69.9% uptime) | Fixed: TTL raised to 300s, added 1800s stale fallback, added startup pre-warm background thread (`_warm_mcp_slots_cache`) that populates cache before first agent request |
+| B-30 | MEDIUM | `run_api_server.py`, `run_mcp_remote.py` | `search_slots` had explicit result caps (500 Supabase rows and 20-result response limit) that prevented agents from seeing full inventory | Removed both limits. Performance solved by pre-warm + stale fallback rather than artificial truncation |
+| B-31 | MEDIUM | `run_api_server.py` | `book_slot` and `get_booking_status` branches in `_mcp_call_tool` made localhost HTTP calls with no try/except. Non-JSON responses (HTML 502 error pages during Railway restart) caused `r.json()` to raise `JSONDecodeError`, propagating as `isError: True` to Smithery (counted as uptime failure) | Added try/except on both branches: non-JSON responses return structured error dict; timeout and connection errors return informative error messages instead of propagating exceptions |
+| B-32 | LOW | `run_mcp_remote.py` | FastMCP `search_slots` still had `limit: int = 20` parameter and passed `limit: min(int(limit), 100)` to API — inconsistent with the no-limit decision applied to the Flask endpoint | Removed `limit` parameter from function signature and params dict |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -289,4 +306,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 17 (Smithery uptime + run_mcp_remote correctness) | 3 |
 | Session 18 (booking conversion — zero payments root cause) | 3 |
 | Session 19 (pricing model — commission vs net-rate) | 2 |
-| **Total** | **120** |
+| Session 20 (MCP prompts, Smithery config schema, search_slots uptime, book_slot hardening) | 6 |
+| **Total** | **126** |

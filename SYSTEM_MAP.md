@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-17 (v21 — Session 17: fixed search_slots 75.7% uptime (Railway cold-start keep-alive, R-1), hours_ahead float→int bug (R-2), stale status-value docstrings (R-3); Smithery live: 1225 tool calls, 540 sessions, book_slot + get_booking_status at 100% uptime; 115 total bugs fixed)
+**Last updated:** 2026-04-17 (v22 — Session 20: MCP prompts added (B-27/B-28), search_slots cache overhauled 60s→300s TTL + 1800s stale + startup pre-warm (B-29), all result limits removed (B-30), book_slot/get_booking_status error handling hardened (B-31/B-32); Smithery now shows 4 tools + 3 prompts, no warnings; 126 total bugs fixed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -1204,7 +1204,7 @@ Only the OCTO/Bokun path runs in production.
 | V-2 | `reference_supplier_map` missing 7 prefix entries + `product_id_map` for null-ref products | 5dcb876 |
 | V-3 | Supplier resolution reactive/fragile — `_resolve_product_identity()` 3-level chain added | (current) |
 | M-1 | `get_supplier_info` two diverging hardcoded implementations, both missing Vakare (61% of inventory) | (current) |
-| M-2 | POST /mcp `search_slots` limit=100 default hid 98% of inventory from agents | (current) |
+| M-2 | POST /mcp `search_slots` limit=100 default hid 98% of inventory from agents | FIXED (Session 20 — B-30: removed all limits from both Flask /mcp and FastMCP; performance via pre-warm) |
 | M-3 | `_MCP_TOOLS` description listed disabled platforms (Ventrata/Zaui/Peek Pro) as active | (current) |
 | M-4 | `_safe()` in FastMCP SSE included `price` which is always null after `_sanitize_slot()` | (current) |
 | M-5 | `_safe()` in FastMCP SSE missing `location_state` field | (current) |
