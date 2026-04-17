@@ -161,6 +161,9 @@ def debit_wallet(wallet_id: str, amount_cents: int, description: str = "") -> bo
     Debit wallet by amount_cents. Returns True on success, False if insufficient funds.
     Thread-safe via file write (adequate for single-server deployment).
     """
+    if amount_cents <= 0:
+        raise ValueError("amount_cents must be positive")
+
     wallets = _load_wallets()
     wlt = wallets.get(wallet_id)
     if not wlt:
@@ -193,6 +196,9 @@ def debit_wallet(wallet_id: str, amount_cents: int, description: str = "") -> bo
 
 def credit_wallet(wallet_id: str, amount_cents: int, description: str = "Top-up") -> bool:
     """Credit wallet (used by Stripe webhook after successful payment)."""
+    if amount_cents <= 0:
+        raise ValueError("amount_cents must be positive")
+
     wallets = _load_wallets()
     wlt = wallets.get(wallet_id)
     if not wlt:
