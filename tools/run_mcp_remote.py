@@ -91,7 +91,7 @@ mcp = FastMCP(
         "You have access to real last-minute tour and activity inventory sourced live "
         "from production booking systems via the OCTO open standard. "
         "14 active suppliers: Arctic Adventures (Iceland — glacier hikes, snowmobiling, "
-        "whale watching, aurora, lava tunnels), Arctic Sea Tours (North Iceland whale watching), "
+        "whale watching, aurora, lava tunnels), "
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "
         "Boka Bliss (Kotor, Montenegro — boat tours, sea caves), "
         "EgyExcursions (Cairo, Egypt — pyramids, cultural tours), "
@@ -103,6 +103,7 @@ mcp = FastMCP(
         "REDRIB Experience (Helsinki, Finland — speed boat tours), "
         "Ramen Factory Kyoto (Japan — cooking classes), "
         "TourTransfer Bucharest (Romania — city tours, Dracula castle), "
+        "Trivanzo Holidays (Egypt — Nile cruises, Red Sea, cultural tours), "
         "Vakare Travel Service (Antalya, Turkey — boat tours, jeep safaris). "
         "Call get_supplier_info() to see live coverage from current inventory. "
         "Use search_slots to find available experiences, then book_slot to create "
@@ -182,7 +183,7 @@ async def search_slots(
     Search for last-minute available tours and activities.
 
     Returns real production inventory from Arctic Adventures, Bicycle Roma,
-    Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Arctic Sea Tours,
+    Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Trivanzo Holidays,
     and more — sourced live via the OCTO open booking protocol.
     Slots are sorted by urgency (soonest first).
 
@@ -363,9 +364,10 @@ async def get_supplier_info() -> dict:
                 "confirmation": "instant",
             },
             {
-                "name": "Arctic Sea Tours",
-                "destinations": ["Dalvik", "North Iceland"],
-                "categories": ["whale watching", "sea excursions"],
+                "name": "Trivanzo Holidays",
+                "destinations": ["Cairo", "Luxor", "Aswan", "Red Sea", "Egypt"],
+                "categories": ["Nile cruises", "cultural tours", "Red Sea excursions",
+                               "desert tours", "day trips"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },
