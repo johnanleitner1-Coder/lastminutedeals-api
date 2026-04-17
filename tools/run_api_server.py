@@ -5706,7 +5706,6 @@ _MCP_TOOLS = [
                 "category":    {"type": "string", "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
                 "hours_ahead": {"type": "number", "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
                 "max_price":   {"type": "number", "description": "Maximum price in USD. Omit or set to 0 for all prices."},
-                "limit":       {"type": "integer", "description": "Max results to return. Default: 20. Max: 100."},
             },
         },
     },
@@ -5888,27 +5887,26 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     if name == "search_slots":
         # Call Supabase directly — avoids HTTP loopback which can deadlock
         # gunicorn workers when the handler thread blocks waiting for itself.
-        # Limit: cap Supabase fetch at 500 rows (1 page). The query is ordered
-        # start_time ASC so we always get the most urgent slots. Agents filter
-        # further by city/category so 500 is ample for any real use case.
-        # Previously no limit was set, causing 5-page pagination (50s blocking)
-        # on every 60s cache miss — the root cause of 30% search_slots failures.
+        # No limit on results returned — agents must be able to see all matching
+        # inventory. Performance is handled by the 5-min cache + 30-min stale
+        # fallback + startup pre-warm (see _warm_mcp_slots_cache). The expensive
+        # full-inventory fetch happens in the background at startup, not during
+        # live agent requests.
         hours_ahead = float(arguments.get("hours_ahead") or 168)
         category    = str(arguments.get("category") or "")
         city        = str(arguments.get("city") or "")
         budget      = float(arguments.get("max_price") or 0)
-        limit       = min(int(arguments.get("limit") or 20), 100)
 
         cache_key = f"{hours_ahead}|{category}|{city}|{budget}"
         now = time.time()
         cached = _MCP_SLOTS_CACHE.get(cache_key)
         if cached and cached["expires"] > now:
-            return cached["slots"][:limit]
+            return cached["slots"]
 
         try:
             slots = _load_slots_from_supabase(
                 hours_ahead=hours_ahead, category=category,
-                city=city, budget=budget, limit=500,
+                city=city, budget=budget,
             )
             result = [_sanitize_slot(s) for s in slots]
             _MCP_SLOTS_CACHE[cache_key] = {
@@ -5916,13 +5914,13 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
                 "expires":     now + _MCP_SLOTS_CACHE_TTL,
                 "stale_until": now + _MCP_SLOTS_CACHE_STALE_TTL,
             }
-            return result[:limit]
+            return result
         except Exception as e:
             # Supabase unavailable (cold start, transient error) — serve stale
             # cache rather than returning an error. Converts hard failure into a
             # slightly stale result; eliminates the search_slots uptime failures.
             if cached and cached.get("stale_until", 0) > now:
-                return cached["slots"][:limit]
+                return cached["slots"]
             return [{"error": f"Could not fetch slots: {e}. Try again in a moment."}]
 
     elif name == "book_slot":
@@ -6252,6 +6250,39 @@ def _mcp_messages_proxy():
     return jsonify(resp.json()), resp.status_code
 
 
+def _warm_mcp_slots_cache() -> None:
+    """
+    Pre-warm the MCP search_slots cache at startup in a background thread.
+
+    The full unfiltered Supabase fetch (all slots, no city/category) paginates
+    through ~5 pages × 10s each = ~50s. Running this at startup means the cache
+    is hot before any agent requests arrive, so live requests always hit cache
+    rather than blocking on a slow paginated fetch.
+
+    Filtered queries (city/category) are fast regardless — Supabase applies
+    the filter server-side and typically returns <200 rows in one page.
+    """
+    import threading
+
+    def _do_warm():
+        try:
+            slots = _load_slots_from_supabase(hours_ahead=168)
+            result = [_sanitize_slot(s) for s in slots]
+            cache_key = "168.0|||0.0"  # matches default no-filter call in _mcp_call_tool
+            now = time.time()
+            _MCP_SLOTS_CACHE[cache_key] = {
+                "slots":       result,
+                "expires":     now + _MCP_SLOTS_CACHE_TTL,
+                "stale_until": now + _MCP_SLOTS_CACHE_STALE_TTL,
+            }
+            print(f"[CACHE] MCP slots pre-warmed: {len(result)} slots cached")
+        except Exception as e:
+            print(f"[CACHE] MCP slots pre-warm failed: {e}")
+
+    t = threading.Thread(target=_do_warm, daemon=True, name="mcp-cache-warmup")
+    t.start()
+
+
 if __name__ == "__main__":
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key:
@@ -6270,6 +6301,7 @@ if __name__ == "__main__":
     _register_peek_webhook()
     _reconcile_pending_debits()   # refund any wallet debits stranded by a prior crash
     _start_mcp_thread()
+    _warm_mcp_slots_cache()       # pre-populate search_slots cache before first agent request
 
     print(f"Booking API + MCP server starting on http://localhost:{PORT}")
     print(f"  Health check:    http://localhost:{PORT}/health")
