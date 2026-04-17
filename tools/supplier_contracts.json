@@ -32,14 +32,19 @@
       "contract_status": "confirmed",
       "notes": "Multiple commission groups. Using 15% (default experiences rate) for compute_pricing. Kerið and partner/multiday/trekking tours have different rates — OCTO API does not expose group membership per availability slot, so 15% is used as conservative default."
     },
-    "Arctic Sea Tours": {
+    "Trivanzo Holidays": {
       "pricing_model": "commission",
       "commission_pct": 0.15,
-      "bokun_vendor_id": null,
-      "city": "Dalvik",
-      "country": "IS",
-      "contract_status": "pending_verification",
-      "notes": "Resolved via reference prefix 'AST'. No Bokun vendor_id in active maps. Contract not yet provided — using 15% platform default."
+      "commission_by_type": {
+        "experiences": 0.15,
+        "extras": 0.15,
+        "pick_up": 0.15
+      },
+      "bokun_vendor_id": 109399,
+      "city": "Cairo",
+      "country": "EG",
+      "contract_status": "confirmed",
+      "notes": "Contract accepted 17 Apr 2026. 'AST' reference prefix was previously mis-attributed to a phantom 'Arctic Sea Tours' entry — corrected; AST products resolve to Arctic Adventures (vendor 85)."
     },
     "Bicycle Roma": {
       "pricing_model": "commission",

@@ -63,7 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -74,7 +74,7 @@
       "GG":                         {"name": "Arctic Adventures", "city": "Skaftafell", "country": "IS"},
       "TR":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "IS":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
-      "AST":                        {"name": "Arctic Sea Tours",  "city": "Dalvik",    "country": "IS"},
+      "AST":                        {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "RFK":                        {"name": "Ramen Factory Kyoto", "city": "Kyoto",   "country": "JP"},
       "LISBOA":                     {"name": "O Turista Tours",   "city": "Lisbon",    "country": "PT"},
       "LISBON":                     {"name": "O Turista Tours",   "city": "Lisbon",    "country": "PT"},
@@ -127,7 +127,8 @@
       "70":     {"name": "Íshestar Riding Tours",   "city": "Selfoss",   "country": "IS"},
       "102991": {"name": "Marvel Egypt Tours",      "city": "Cairo",     "country": "EG"},
       "123380": {"name": "EgyExcursions",           "city": "Cairo",     "country": "EG"},
-      "98502":  {"name": "Vakare Travel Service",   "city": "Antalya",   "country": "TR"}
+      "98502":  {"name": "Vakare Travel Service",   "city": "Antalya",   "country": "TR"},
+      "109399": {"name": "Trivanzo Holidays",        "city": "Cairo",     "country": "EG"}
     }
   },
   {
