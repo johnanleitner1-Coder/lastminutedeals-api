@@ -841,7 +841,7 @@ _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
 _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 
 # Static fallback supplier list — used when Supabase is unreachable.
-# Covers all 14 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+# Covers all 16 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
     {"name": "Trivanzo Holidays",        "destinations": ["Cairo", "Egypt", "Luxor", "Red Sea"],              "platform": "Bokun"},
@@ -857,6 +857,8 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Ramen Factory Kyoto",     "destinations": ["Japan", "Kyoto"],                                  "platform": "Bokun"},
     {"name": "TourTransfer Bucharest",  "destinations": ["Bucharest", "Romania"],                            "platform": "Bokun"},
     {"name": "Vakare Travel Service",   "destinations": ["Antalya", "Turkey"],                               "platform": "Bokun"},
+    {"name": "All Washington View",     "destinations": ["Washington, D.C.", "United States"],               "platform": "Bokun"},
+    {"name": "TUTU VIEW Ltd",           "destinations": ["London", "Shanghai", "Shenzhen", "Chongqing"],     "platform": "Bokun"},
 ]
 
 
@@ -1662,7 +1664,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "14 suppliers, OCTO protocol, instant confirmation",
+            "16 suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,
@@ -6088,8 +6090,8 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory sourced live "
             "from production booking systems via the OCTO open standard. "
-            "14 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
-            "Finland, Montenegro, Romania, Egypt, and Turkey. "
+            "16 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
+            "Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China. "
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
             "2. Present the options to the user and get their selection. "

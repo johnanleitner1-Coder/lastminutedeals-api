@@ -63,7 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -111,8 +111,9 @@
       "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"}
     },
     "product_id_map": {
-      "729972":  {"name": "Íshestar Riding Tours", "city": "Selfoss", "country": "IS"},
-      "1014077": {"name": "Vakare Travel Service",  "city": "Antalya", "country": "TR"}
+      "729972":  {"name": "Íshestar Riding Tours", "city": "Selfoss",  "country": "IS"},
+      "1014077": {"name": "Vakare Travel Service",  "city": "Antalya", "country": "TR"},
+      "1191944": {"name": "TUTU VIEW Ltd",          "city": "Shanghai", "country": "CN"}
     },
     "vendor_id_to_supplier_map": {
       "85":     {"name": "Arctic Adventures",       "city": "Reykjavik", "country": "IS"},
@@ -128,7 +129,9 @@
       "102991": {"name": "Marvel Egypt Tours",      "city": "Cairo",     "country": "EG"},
       "123380": {"name": "EgyExcursions",           "city": "Cairo",     "country": "EG"},
       "98502":  {"name": "Vakare Travel Service",   "city": "Antalya",   "country": "TR"},
-      "109399": {"name": "Trivanzo Holidays",        "city": "Cairo",     "country": "EG"}
+      "109399": {"name": "Trivanzo Holidays",        "city": "Cairo",          "country": "EG"},
+      "4278":   {"name": "All Washington View",     "city": "Washington, D.C.", "country": "US"},
+      "136863": {"name": "TUTU VIEW Ltd",           "city": "London",           "country": "GB"}
     }
   },
   {

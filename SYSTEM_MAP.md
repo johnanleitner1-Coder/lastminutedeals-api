@@ -1120,7 +1120,7 @@ Only the OCTO/Bokun path runs in production.
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
 | MCP SSE server | Railway (mcp service) | ✅ | run_mcp_remote.py |
 | Payments | Stripe | ✅ | Checkout + webhooks + auth-capture + saved cards |
-| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 11 vendor IDs |
+| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 16 vendor IDs |
 | Bokun notifications | HTTP notification (URL token auth) | ✅ | Smoke tested 2026-04-16 |
 | Email | SendGrid (primary) + SMTP (fallback) | ✅ | 4 email types wired |
 | Landing page | Cloudflare Pages | ✅ | Rebuilt every pipeline run |

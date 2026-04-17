@@ -26,11 +26,12 @@ exampleConfig:
 name: Last Minute Deals HQ
 description: >
   Real-time last-minute tour and activity inventory sourced live from production
-  booking systems via the OCTO open standard. 14 active suppliers across Iceland,
+  booking systems via the OCTO open standard. 16 active suppliers across Iceland,
   Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt,
-  and Turkey. Search available slots and create Stripe checkout sessions — customers
-  pay on our page, suppliers are confirmed automatically. Inventory refreshed every
-  4 hours. To enable bookings, register a free API key at the booking server.
+  Turkey, United States, United Kingdom, and China. Search available slots and
+  create Stripe checkout sessions — customers pay on our page, suppliers are
+  confirmed automatically. Inventory refreshed every 4 hours. To enable bookings,
+  register a free API key at the booking server.
 
 tools:
   - name: search_slots
@@ -116,3 +117,11 @@ suppliers:
   - name: Vakare Travel Service
     destinations: [Antalya, Turkey]
     experiences: [boat tours, jeep safaris, cultural excursions, beach trips]
+
+  - name: All Washington View
+    destinations: [Washington D.C., United States]
+    experiences: [city tours, sightseeing, monuments, panoramic views]
+
+  - name: TUTU VIEW Ltd
+    destinations: [London, Shanghai, Shenzhen, Chongqing]
+    experiences: [tech tours, cultural experiences, multi-city tours]
