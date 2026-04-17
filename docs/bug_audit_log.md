@@ -257,6 +257,17 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+## Session 19 Fixes — Pricing Model (Commission vs Net-Rate)
+
+**Root cause**: `compute_pricing.py` applied urgency × category markup to all slots. For Bokun commission-model suppliers, this made LMD more expensive than booking direct, which kills conversions. For commission suppliers, `our_price` must equal the retail price — the supplier pays LMD a % after the booking; there is no spread to mark up from.
+
+| # | Severity | File(s) | Bug | Fix |
+|---|---|---|---|---|
+| B-25 | CRITICAL | `compute_pricing.py` | All slots received urgency/category markup regardless of pricing model. Commission-model suppliers (all 14 current Bokun suppliers) should charge retail price exactly — adding markup makes LMD more expensive than booking direct and destroys conversion incentive | Fixed: added `_resolve_pricing_model()` that reads `tools/supplier_contracts.json`; commission slots get `our_price = price`, `markup = 0`, `expected_commission`, `expected_net` (after Stripe fees); net_rate slots use existing markup logic unchanged |
+| B-26 | HIGH | `tools/supplier_contracts.json` (new file) | No per-supplier commission rate data existed — compute_pricing.py had no source of truth for which model applied to which supplier | Created `supplier_contracts.json` with all 13 confirmed Bokun contracts: commission rates 10–30% by supplier, resolution by `business_name` field with platform-level fallback for unmatched slots |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -277,4 +288,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 16 (booking flow hardening) | 4 |
 | Session 17 (Smithery uptime + run_mcp_remote correctness) | 3 |
 | Session 18 (booking conversion — zero payments root cause) | 3 |
-| **Total** | **118** |
+| Session 19 (pricing model — commission vs net-rate) | 2 |
+| **Total** | **120** |
