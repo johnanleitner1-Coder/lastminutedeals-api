@@ -839,7 +839,7 @@ _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 # Covers all 14 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
-    {"name": "Arctic Sea Tours",        "destinations": ["Dalvik", "Iceland"],                               "platform": "Bokun"},
+    {"name": "Trivanzo Holidays",        "destinations": ["Cairo", "Egypt", "Luxor", "Red Sea"],              "platform": "Bokun"},
     {"name": "Bicycle Roma",            "destinations": ["Rome"],                                            "platform": "Bokun"},
     {"name": "Boka Bliss",              "destinations": ["Kotor", "Montenegro"],                             "platform": "Bokun"},
     {"name": "EgyExcursions",           "destinations": ["Cairo", "Egypt"],                                  "platform": "Bokun"},
@@ -5649,10 +5649,10 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from Bokun (Arctic Adventures, Arctic Sea Tours, Bicycle Roma, Boka Bliss, "
+            "from Bokun (Arctic Adventures, Bicycle Roma, Boka Bliss, "
             "EgyExcursions, Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, "
             "O Turista Tours, Pure Morocco Experience, REDRIB Experience, Ramen Factory Kyoto, "
-            "TourTransfer Bucharest, Vakare Travel Service) via the OCTO open booking protocol. "
+            "TourTransfer Bucharest, Trivanzo Holidays, Vakare Travel Service) via the OCTO open booking protocol. "
             "Use city/category/hours_ahead/max_price to filter. "
             "Slots are sorted by urgency (soonest first). "
             "Call get_supplier_info first to see all available destinations."
@@ -5918,7 +5918,7 @@ def _start_mcp_thread():
             "Romania, Egypt, Turkey, and more — sourced live from production booking "
             "systems via the OCTO open standard. "
             "14 active suppliers: Arctic Adventures (Iceland glacier hikes, snowmobiling, "
-            "whale watching, aurora), Arctic Sea Tours (North Iceland whale watching), "
+            "whale watching, aurora), "
             "Bicycle Roma (Rome e-bike tours, food tours), Pure Morocco Experience "
             "(Sahara desert tours, Marrakech), Ramen Factory Kyoto (cooking classes), "
             "O Turista Tours (Lisbon, Porto, Sintra day trips), "
@@ -5926,6 +5926,7 @@ def _start_mcp_thread():
             "REDRIB Experience (Helsinki), Boka Bliss (Kotor, Montenegro), "
             "TourTransfer Bucharest (Romania), Íshestar Riding Tours (Iceland horse riding), "
             "Marvel Egypt Tours (Cairo, Luxor, Aswan), EgyExcursions (Egypt), "
+            "Trivanzo Holidays (Egypt, Red Sea, Nile cruises), "
             "Vakare Travel Service (Antalya, Turkey). "
             "Call get_supplier_info() to see live destination coverage. "
             "Use search_slots to find available experiences, then book_slot to create "
