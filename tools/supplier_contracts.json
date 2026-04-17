@@ -1,0 +1,219 @@
+{
+  "_comment": "Per-supplier pricing model config. Used by compute_pricing.py to determine whether to charge pass-through (commission) or markup (net_rate) prices. Keys must match the business_name field on slots exactly (as resolved by fetch_octo_slots.py from vendor maps).",
+  "_instructions": "commission model: customer pays retail price, LMD earns commission from supplier after booking. net_rate model: LMD buys at net and resells with markup. commission_pct is used for analytics and margin calculations only — it does NOT affect our_price for commission suppliers.",
+  "_stripe_fees": "Stripe charges 2.9% + $0.30 per transaction. Deducted from commission. expected_net = expected_commission - stripe_fee.",
+
+  "platform_defaults": {
+    "octo": {
+      "pricing_model": "commission",
+      "commission_pct": 0.15,
+      "notes": "Fallback for OCTO/Bokun slots not matched by business_name. All current OCTO supply is commission-based."
+    }
+  },
+
+  "suppliers": {
+    "Arctic Adventures": {
+      "pricing_model": "commission",
+      "commission_pct": 0.15,
+      "commission_by_type": {
+        "experiences_default": 0.15,
+        "extras_default": 0.15,
+        "pick_up_default": 0.15,
+        "partner_tours": 0.10,
+        "multiday_tours": 0.10,
+        "trekking_tours_huts": 0.10,
+        "trekking_tours_tents": 0.10,
+        "kerid": 0.25
+      },
+      "bokun_vendor_id": 85,
+      "city": "Reykjavik",
+      "country": "IS",
+      "products": 122,
+      "contract_status": "confirmed",
+      "notes": "Multiple commission groups. Using 15% (default experiences rate) for compute_pricing. Kerið and partner/multiday/trekking tours have different rates — OCTO API does not expose group membership per availability slot, so 15% is used as conservative default."
+    },
+    "Arctic Sea Tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.15,
+      "bokun_vendor_id": null,
+      "city": "Dalvik",
+      "country": "IS",
+      "contract_status": "pending_verification",
+      "notes": "Resolved via reference prefix 'AST'. No Bokun vendor_id in active maps. Contract not yet provided — using 15% platform default."
+    },
+    "Bicycle Roma": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 22298,
+      "city": "Rome",
+      "country": "IT",
+      "products": 33,
+      "contract_status": "confirmed"
+    },
+    "Pure Morocco Experience": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 134418,
+      "city": "Marrakech",
+      "country": "MA",
+      "products": 1,
+      "contract_status": "confirmed",
+      "notes": "Bokun UI showed '30%20%' for experiences — treating as 20% (last value; likely a display glitch during a rate change)."
+    },
+    "O Turista Tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.30,
+      "commission_by_type": {
+        "experiences": 0.30,
+        "extras": 0.30,
+        "pick_up": 0.30
+      },
+      "bokun_vendor_id": 103510,
+      "city": "Lisbon",
+      "country": "PT",
+      "products": 15,
+      "contract_status": "confirmed",
+      "bokun_display_name": "Ó Turista! Tours and Trips"
+    },
+    "TourTransfer Bucharest": {
+      "pricing_model": "commission",
+      "commission_pct": 0.25,
+      "commission_by_type": {
+        "experiences": 0.25,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 137492,
+      "city": "Bucharest",
+      "country": "RO",
+      "products": 3,
+      "contract_status": "confirmed"
+    },
+    "Ramen Factory Kyoto": {
+      "pricing_model": "commission",
+      "commission_pct": 0.15,
+      "commission_by_type": {
+        "experiences": 0.15,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 16261,
+      "city": "Kyoto",
+      "country": "JP",
+      "products": 1,
+      "contract_status": "confirmed",
+      "bokun_display_name": "Factory Alliance Kyoto",
+      "notes": "Bokun Extranet shows 'Factory Alliance Kyoto'. OCTO API resolves as 'Ramen Factory Kyoto' via vendor_id map. Key must match OCTO vendor map name."
+    },
+    "Boka Bliss": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 105917,
+      "city": "Kotor",
+      "country": "ME",
+      "products": 3,
+      "contract_status": "confirmed"
+    },
+    "REDRIB Experience": {
+      "pricing_model": "commission",
+      "commission_pct": 0.15,
+      "commission_by_type": {
+        "experiences": 0.15,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 3020,
+      "city": "Helsinki",
+      "country": "FI",
+      "products": 12,
+      "contract_status": "confirmed",
+      "bokun_display_name": "REDRIB EXPERIENCE Oy Ltd",
+      "notes": "Bokun Extranet shows 'REDRIB EXPERIENCE Oy Ltd'. OCTO API resolves as 'REDRIB Experience' via vendor_id/reference maps. Key must match OCTO vendor map name."
+    },
+    "Hillborn Experiences": {
+      "pricing_model": "commission",
+      "commission_pct": 0.30,
+      "commission_by_type": {
+        "experiences": 0.30,
+        "extras": 0.30,
+        "pick_up": 0.30
+      },
+      "bokun_vendor_id": 33562,
+      "city": "Arusha",
+      "country": "TZ",
+      "products": 13,
+      "contract_status": "confirmed"
+    },
+    "\u00cdshestar Riding Tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.10,
+      "commission_by_type": {
+        "experiences": 0.10,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 70,
+      "city": "Selfoss",
+      "country": "IS",
+      "products": 5,
+      "contract_status": "confirmed"
+    },
+    "Marvel Egypt Tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 102991,
+      "city": "Cairo",
+      "country": "EG",
+      "products": 8,
+      "contract_status": "confirmed"
+    },
+    "EgyExcursions": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 123380,
+      "city": "Cairo",
+      "country": "EG",
+      "products": 8,
+      "contract_status": "confirmed"
+    },
+    "Vakare Travel Service": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 98502,
+      "city": "Antalya",
+      "country": "TR",
+      "products": 115,
+      "contract_status": "confirmed"
+    }
+  }
+}
