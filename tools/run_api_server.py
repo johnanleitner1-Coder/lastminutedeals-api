@@ -3626,6 +3626,22 @@ def mcp_endpoint():
             "tools": [t["name"] for t in _MCP_TOOLS],
             "prompts": [p["name"] for p in _MCP_PROMPTS],
             "docs": "https://lastminutedealshq.com/developers",
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "lmd_api_key": {
+                        "type": "string",
+                        "description": "API key for making bookings. Get yours free at https://web-production-dc74b.up.railway.app/api/keys/register (POST, no body needed).",
+                    },
+                    "booking_api_url": {
+                        "type": "string",
+                        "description": "Booking API base URL. Leave blank to use the default production server.",
+                        "default": "https://web-production-dc74b.up.railway.app",
+                    },
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
         })
 
     body   = request.get_json(force=True, silent=True) or {}
@@ -3655,7 +3671,7 @@ def mcp_endpoint():
     if method == "initialize":
         return ok({
             "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}, "prompts": {}},
+            "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
             "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
         })
     elif method == "tools/list":
@@ -3684,6 +3700,10 @@ def mcp_endpoint():
                 "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
                 "isError": True,
             })
+    elif method == "resources/list":
+        return ok({"resources": []})
+    elif method == "resources/read":
+        return err(-32002, "No resources available")
     elif method == "notifications/initialized":
         return "", 204
     else:
