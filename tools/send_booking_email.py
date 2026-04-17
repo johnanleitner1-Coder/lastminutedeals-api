@@ -1,7 +1,8 @@
 """
 send_booking_email.py — Transactional email system for LastMinuteDeals bookings.
 
-Sends three types of emails over SMTP (with SendGrid HTTP fallback):
+Sends four types of emails over SMTP (with SendGrid HTTP fallback):
+  - checkout_created   : Checkout session created — customer must click link to pay
   - booking_initiated  : Payment hold placed, booking in progress
   - booking_confirmed  : Booking fully confirmed on source platform
   - booking_failed     : Booking could not complete, card not charged
@@ -290,6 +291,152 @@ def _gcal_url(slot: dict) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # Email body builders
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_checkout_created_html(customer_name: str, slot: dict) -> tuple[str, str]:
+    """
+    Email sent immediately when book_slot is called — before the customer has paid.
+    Primary CTA: checkout_url (Stripe hosted checkout page).
+    The customer must click this link and complete payment to confirm their booking.
+    """
+    service      = slot.get("service_name", "Your Experience")
+    city         = slot.get("location_city", "")
+    state        = slot.get("location_state", "")
+    location     = f"{city}, {state}".strip(", ") or "—"
+    date_str     = _format_dt(slot.get("start_time", ""))
+    quantity     = int(slot.get("quantity") or 1)
+    price_pp     = slot.get("our_price") or slot.get("price")
+    total_price  = float(price_pp or 0) * quantity
+    currency     = slot.get("currency", "USD")
+    checkout_url = slot.get("checkout_url", "#")
+    first_name   = customer_name.split()[0] if customer_name else "there"
+
+    if quantity > 1:
+        price_display = f"${total_price:.2f} ({quantity} × {_format_price(price_pp, currency)})"
+    else:
+        price_display = _format_price(price_pp, currency)
+
+    html_body = f"""
+          <!-- Hero -->
+          <tr>
+            <td class="pad-mobile" style="padding:40px 40px 32px;">
+              <p style="margin:0 0 6px; font-family:{FONT_STACK}; font-size:13px; font-weight:700;
+                         color:{BRAND_BLUE}; text-transform:uppercase; letter-spacing:1px;">Action Required</p>
+              <h1 style="margin:0 0 16px; font-family:{FONT_STACK}; font-size:28px; font-weight:800;
+                          color:{BRAND_NAVY}; line-height:1.2; letter-spacing:-0.5px;">
+                Complete your booking
+              </h1>
+              <p style="margin:0; font-family:{FONT_STACK}; font-size:16px; color:{BRAND_GRAY}; line-height:1.6;">
+                Hi {first_name}, your booking for <strong style="color:{BRAND_DARK};">{service}</strong>
+                is reserved — click below to pay and lock it in. No card entered yet.
+              </p>
+            </td>
+          </tr>
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:0 40px 32px; text-align:center;">
+              {_cta_button("Complete Booking &rarr;", checkout_url)}
+              <p style="margin:16px 0 0; font-family:{FONT_STACK}; font-size:13px; color:{BRAND_WARN}; font-weight:600;">
+                &#x23F0; This link expires in 24 hours
+              </p>
+            </td>
+          </tr>
+
+          {_divider()}
+
+          <!-- Booking details -->
+          <tr>
+            <td style="padding:32px 40px 8px;">
+              <p style="margin:0 0 20px; font-family:{FONT_STACK}; font-size:11px; font-weight:700;
+                         color:{BRAND_GRAY}; text-transform:uppercase; letter-spacing:1px;">Booking Summary</p>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                {_detail_row("Experience", service)}
+                {_detail_row("Location",   location)}
+                {_detail_row("Date &amp; Time", date_str)}
+                {_detail_row("Guests",     str(quantity))}
+                {_detail_row("Total",      price_display)}
+              </table>
+            </td>
+          </tr>
+
+          {_divider()}
+
+          <!-- How it works -->
+          <tr>
+            <td style="padding:32px 40px;">
+              <p style="margin:0 0 16px; font-family:{FONT_STACK}; font-size:11px; font-weight:700;
+                         color:{BRAND_GRAY}; text-transform:uppercase; letter-spacing:1px;">How It Works</p>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px; padding-bottom:14px;">
+                    <div style="width:24px; height:24px; background-color:{BRAND_BLUE}; border-radius:50%;
+                                text-align:center; line-height:24px; font-family:{FONT_STACK}; font-size:12px;
+                                font-weight:700; color:{BRAND_NAVY};">1</div>
+                  </td>
+                  <td style="padding-bottom:14px;">
+                    <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
+                      <strong>Click the button above</strong> to open our secure Stripe checkout page.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px; padding-bottom:14px;">
+                    <div style="width:24px; height:24px; background-color:{BRAND_BLUE}; border-radius:50%;
+                                text-align:center; line-height:24px; font-family:{FONT_STACK}; font-size:12px;
+                                font-weight:700; color:{BRAND_NAVY};">2</div>
+                  </td>
+                  <td style="padding-bottom:14px;">
+                    <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
+                      <strong>Enter your payment details</strong> — we use Stripe for secure processing.
+                      Your card is not charged until the booking is confirmed.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="width:24px; height:24px; background-color:{BRAND_BLUE}; border-radius:50%;
+                                text-align:center; line-height:24px; font-family:{FONT_STACK}; font-size:12px;
+                                font-weight:700; color:{BRAND_NAVY};">3</div>
+                  </td>
+                  <td>
+                    <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
+                      <strong>You'll receive a confirmation email</strong> within minutes with your booking reference.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+    """
+
+    plain = textwrap.dedent(f"""\
+        Hi {first_name},
+
+        Your booking is reserved — complete payment to confirm it.
+
+        COMPLETE YOUR BOOKING: {checkout_url}
+
+        ⚠ This link expires in 24 hours.
+
+        Booking Summary
+        ---------------
+        Experience : {service}
+        Location   : {location}
+        Date       : {date_str}
+        Guests     : {quantity}
+        Total      : {price_display}
+
+        How it works:
+        1. Click the link above to open our Stripe checkout page.
+        2. Enter your card details (not charged until confirmed).
+        3. You'll receive a confirmation email once we've confirmed your spot.
+
+        Questions? Reply to this email.
+        — Last Minute Deals
+    """)
+
+    return html_body, plain
 
 def _build_initiated_html(customer_name: str, slot: dict) -> tuple[str, str]:
     """Returns (html_body_rows, plain_text)"""
@@ -969,7 +1116,11 @@ def _build_subject(email_type: str, slot: dict, confirmation_number: str = "") -
         except Exception:
             date_str = ""
 
-    if email_type == "booking_initiated":
+    if email_type == "checkout_created":
+        if date_str:
+            return f"Complete your booking \u2014 {service} on {date_str}"
+        return f"Complete your booking \u2014 {service}"
+    elif email_type == "booking_initiated":
         return f"We're confirming your booking \u2014 {service}"
     elif email_type == "booking_confirmed":
         if date_str:
@@ -1120,7 +1271,7 @@ def send_booking_email(
     Raises:
         ValueError: For unsupported email_type
     """
-    valid_types = {"booking_initiated", "booking_confirmed", "booking_failed", "booking_cancelled"}
+    valid_types = {"checkout_created", "booking_initiated", "booking_confirmed", "booking_failed", "booking_cancelled"}
     if email_type not in valid_types:
         raise ValueError(f"email_type must be one of {valid_types}, got: {email_type!r}")
 
@@ -1128,7 +1279,13 @@ def send_booking_email(
         raise ValueError("customer_email cannot be empty")
 
     # Build content
-    if email_type == "booking_initiated":
+    if email_type == "checkout_created":
+        body_rows, plain = _build_checkout_created_html(customer_name, slot)
+        preheader = (
+            f"Your booking for {slot.get('service_name', 'your experience')} is reserved — "
+            "click to complete payment and lock it in."
+        )
+    elif email_type == "booking_initiated":
         body_rows, plain = _build_initiated_html(customer_name, slot)
         preheader = f"We're securing your spot at {slot.get('service_name', 'your booking')} — your card is reserved, not charged."
     elif email_type == "booking_confirmed":
@@ -1262,7 +1419,7 @@ if __name__ == "__main__":
         "--type",
         metavar="TYPE",
         default="booking_confirmed",
-        choices=["booking_initiated", "booking_confirmed", "booking_failed"],
+        choices=["checkout_created", "booking_initiated", "booking_confirmed", "booking_failed"],
         help="Email type to test (default: booking_confirmed)",
     )
     args = parser.parse_args()

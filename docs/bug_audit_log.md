@@ -243,6 +243,20 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+---
+
+## Session 18 Fixes — Booking Conversion: Zero Payments Root Cause
+
+**Root cause investigation**: Stripe API confirmed zero `checkout.session.completed` events — no customer has ever completed payment. All 21+ booking records stuck at `pending_payment` are explained by: (a) no email sent to customer at checkout creation, so if the AI agent fails to surface the URL the customer never sees it; (b) `our_price` not saved to pending record, so agents polling `get_booking_status` see `price_charged: null` and may retry, creating duplicate sessions.
+
+| # | Severity | File(s) | Bug | Fix |
+|---|---|---|---|---|
+| B-22 | HIGH | `run_api_server.py` | `create_checkout()` did not save `our_price` or `price_charged` to the pending booking record. Agents polling `GET /bookings/<id>` after calling `book_slot` saw `price_charged: null, price_per_person: null` — indistinguishable from a broken/failed booking, triggering retries that created duplicate Stripe sessions for the same slot | Fixed: `our_price` and `price_charged` (our_price × quantity) now saved in `_save_booking_record` at checkout creation. Added `price_per_person` to `GET /bookings/<id>` response |
+| B-23 | HIGH | `run_api_server.py` | `book_slot` response returned only `{ success, checkout_url, booking_id, status, expires_at }` — no price, service name, start time, or quantity. Agents had no context to verify the created booking without a follow-up `get_booking_status` call, which itself returned null prices (B-22). Missing `action_required` instruction meant agents could drop the checkout_url without surfacing it | Fixed: added `service_name`, `start_time`, `location_city`, `quantity`, `price_per_person`, `total_price`, `currency`, `action_required` to the success response |
+| B-24 | CRITICAL | `run_api_server.py`, `send_booking_email.py` | No email sent to customer when `book_slot` is called. If an AI agent fails to surface the `checkout_url` to the human (tool result dropped, context cleared, agent doesn't relay it), the customer never sees the payment link. All 21 booking sessions expired without any customer being notified. This is the primary reason zero bookings have converted | Fixed: added `checkout_created` email type to `send_booking_email.py` — branded HTML email with prominent "Complete Booking →" CTA linking to `checkout_url`, booking summary, 24h expiry warning. Sent immediately after Stripe session creation in `create_checkout()`; non-fatal (email failure never blocks the booking) |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -262,4 +276,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 15 (Smithery reconnection + end-to-end audit) | 6 |
 | Session 16 (booking flow hardening) | 4 |
 | Session 17 (Smithery uptime + run_mcp_remote correctness) | 3 |
-| **Total** | **115** |
+| Session 18 (booking conversion — zero payments root cause) | 3 |
+| **Total** | **118** |

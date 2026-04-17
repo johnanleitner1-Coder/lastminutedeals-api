@@ -2203,11 +2203,35 @@ def create_checkout():
             "booking_url":    slot.get("booking_url", ""),
             "platform":       slot.get("platform", ""),
             "currency":       slot.get("currency", "USD"),
+            # Save price in pending record so get_booking_status returns non-null
+            # values while the booking awaits payment. Without this, agents see
+            # price_charged: null and may retry, creating duplicate sessions.
+            "our_price":      float(our_price),
+            "price_charged":  float(our_price) * quantity,
         })
 
-        result = {"success": True, "checkout_url": session.url,
-                  "booking_id": booking_id, "status": "pending_payment",
-                  "payment_status": "unpaid", "expires_at": _expires_at}
+        result = {
+            "success":         True,
+            "checkout_url":    session.url,
+            "booking_id":      booking_id,
+            "status":          "pending_payment",
+            "payment_status":  "unpaid",
+            "expires_at":      _expires_at,
+            # Price + service context so agents don't need a follow-up
+            # get_booking_status call to verify what was just created.
+            "service_name":    service_name,
+            "start_time":      slot.get("start_time", ""),
+            "location_city":   slot.get("location_city", ""),
+            "quantity":        quantity,
+            "price_per_person": float(our_price),
+            "total_price":     float(our_price) * quantity,
+            "currency":        slot.get("currency", "USD"),
+            # Human-readable instruction for the calling agent.
+            "action_required": (
+                "Direct the customer to checkout_url to complete payment. "
+                "Booking expires in 24 hours. Poll get_booking_status for confirmation."
+            ),
+        }
         # Store idempotency record so duplicate requests return same URL
         if idempotency_key:
             _IDEMPOTENCY_CACHE[idempotency_key] = {"result": result}
@@ -2218,6 +2242,28 @@ def create_checkout():
                 "slot_id":         slot_id,
                 "created_at":      datetime.now(timezone.utc).isoformat(),
             })
+
+        # Send "checkout created" email immediately so the customer gets the payment
+        # link even if the calling agent doesn't surface it. Non-fatal — failure never
+        # blocks the booking or raises to the caller.
+        if not dry_run:
+            try:
+                from send_booking_email import send_booking_email
+                send_booking_email(
+                    "checkout_created",
+                    customer_email,
+                    customer_name,
+                    {
+                        **slot,
+                        "checkout_url": session.url,
+                        "our_price":    float(our_price),
+                        "quantity":     quantity,
+                    },
+                )
+                print(f"[CHECKOUT] Checkout email sent to {customer_email} for {booking_id}")
+            except Exception as mail_err:
+                print(f"[CHECKOUT] Checkout email failed (non-fatal): {mail_err}")
+
         return jsonify(result)
     except Exception as e:
         print(f"Stripe error: {e}")
@@ -4470,6 +4516,7 @@ def get_booking(booking_id: str):
         "customer_name":       record.get("customer_name"),
         "confirmation_number": record.get("confirmation"),
         "quantity":            record.get("quantity", 1),
+        "price_per_person":    record.get("our_price"),
         "price_charged":       record.get("price_charged"),
         "currency":            record.get("currency", "USD"),
         "checkout_url":        record.get("checkout_url"),

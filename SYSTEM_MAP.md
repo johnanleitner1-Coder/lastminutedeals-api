@@ -821,13 +821,15 @@ MCP tool: search_slots(city, category, hours_ahead, max_price)
 
 MCP tool: book_slot(slot_id, customer_name, customer_email, customer_phone, quantity)
   ├─ POST /api/book internally → creates Stripe checkout
-  └─ Returns { checkout_url, booking_id }
-     Customer must still open checkout_url and pay manually
-     ← ❌ NO AUTONOMOUS BOOKING PATH via MCP
-     ← MCP agents cannot use wallets or saved cards to book without human approval
+  ├─ Returns { checkout_url, booking_id, service_name, start_time, price_per_person, total_price, action_required }
+  │   ← B-23 FIXED: response now includes price + service context so agents don't need a follow-up status call
+  ├─ Immediately emails checkout_url to customer_email (checkout_created template)
+  │   ← B-24 FIXED: customer gets payment link even if agent doesn't surface it
+  └─ booking record saves our_price + price_charged at creation (not just at fulfillment)
+     ← B-22 FIXED: get_booking_status now returns price_per_person in pending_payment state
 
 MCP tool: get_booking_status(booking_id)
-  └─ GET /bookings/{booking_id} → returns record
+  └─ GET /bookings/{booking_id} → returns record (now includes price_per_person field)
 
 MCP tool: get_supplier_info()
   ├─ _get_live_supplier_directory() — queries Supabase for distinct (business_name, city, country)
