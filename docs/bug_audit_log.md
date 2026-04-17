@@ -233,6 +233,16 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+## Session 17 Fixes — Smithery Uptime + run_mcp_remote Correctness
+
+| # | Severity | File(s) | Bug | Fix |
+|---|---|---|---|---|
+| R-1 | CRITICAL | `run_mcp_remote.py` | `search_slots` had 75.7% uptime (24.3% failure rate). Railway free tier sleeps containers after 15 min idle; cold starts take 10-30s, exhausting the 3×8s retry window. With no stale cache on first call, the tool returned `[{"error": "..."}]` counted as failure by Smithery | Added `_keep_railway_warm()` async background task: pings `/health` every 10 min to prevent container sleep. Started via `asyncio.create_task()` on the first `search_slots` invocation |
+| R-2 | HIGH | `run_mcp_remote.py` | `hours_ahead=72.0` (Python float default) sent as `"72.0"` string to Railway's `/slots`. Flask's `type=int` conversion silently falls back to the default 168h when given a float string, ignoring the agent's requested time window | Fixed: `int(hours_ahead)` before building the params dict |
+| R-3 | MEDIUM | `run_mcp_remote.py`, `smithery.yaml` | `get_booking_status` docstring and smithery.yaml description listed wrong status values (`pending`, `confirmed`) — real values are `pending_payment`, `fulfilling`, `booked`, `failed`, `cancelled`. Agents using the docstring to interpret status couldn't distinguish unpaid from confirmed | Updated docstrings and smithery.yaml to list all correct status values; added note about `checkout_url` and `payment_status` fields |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -251,4 +261,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 14 (audit follow-up + reliability + agent visibility + Smithery uptime) | 12 |
 | Session 15 (Smithery reconnection + end-to-end audit) | 6 |
 | Session 16 (booking flow hardening) | 4 |
-| **Total** | **112** |
+| Session 17 (Smithery uptime + run_mcp_remote correctness) | 3 |
+| **Total** | **115** |

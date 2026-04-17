@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v20 — Session 16: Supabase 1000-row pagination in get_supplier_info (B-18), booking_url/platform/currency stored in record so Stripe metadata truncation can't break fulfillment (B-19), webhook sets "fulfilling" status before spawning thread (B-20), checkout_url + payment_status added to GET /bookings response (B-21), supplier directory fallback merges static list when live query is partial; end-to-end verified: all 14 suppliers visible, search returns live slots, booking creates checkout, status includes payment_status + checkout_url; 112 total bugs fixed)
+**Last updated:** 2026-04-17 (v21 — Session 17: fixed search_slots 75.7% uptime (Railway cold-start keep-alive, R-1), hours_ahead float→int bug (R-2), stale status-value docstrings (R-3); Smithery live: 1225 tool calls, 540 sessions, book_slot + get_booking_status at 100% uptime; 115 total bugs fixed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
