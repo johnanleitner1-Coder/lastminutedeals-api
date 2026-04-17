@@ -3613,7 +3613,7 @@ def mcp_endpoint():
     """
     MCP JSON-RPC 2.0 endpoint. Works with any agent that supports HTTP tool calls.
     GET  → server info / discoverability
-    POST → MCP JSON-RPC (initialize, tools/list, tools/call)
+    POST → MCP JSON-RPC (initialize, tools/list, tools/call, prompts/list, prompts/get)
 
     Backwards compatible: also accepts legacy { "tool": "...", "arguments": {} } format.
     """
@@ -3624,6 +3624,7 @@ def mcp_endpoint():
             "protocol": "MCP JSON-RPC 2.0",
             "endpoint": "POST /mcp",
             "tools": [t["name"] for t in _MCP_TOOLS],
+            "prompts": [p["name"] for p in _MCP_PROMPTS],
             "docs": "https://lastminutedealshq.com/developers",
         })
 
@@ -3654,11 +3655,21 @@ def mcp_endpoint():
     if method == "initialize":
         return ok({
             "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {}, "prompts": {}},
             "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
         })
     elif method == "tools/list":
         return ok({"tools": _MCP_TOOLS})
+    elif method == "prompts/list":
+        return ok({"prompts": _MCP_PROMPTS})
+    elif method == "prompts/get":
+        prompt_name = params.get("name", "")
+        prompt_args = params.get("arguments", {})
+        try:
+            result = _mcp_render_prompt(prompt_name, prompt_args)
+            return ok(result)
+        except ValueError as e:
+            return err(-32602, str(e))
     elif method == "tools/call":
         tool_name = params.get("name", "")
         arguments  = params.get("arguments", {})
@@ -5742,6 +5753,105 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
+
+_MCP_PROMPTS = [
+    {
+        "name": "find_experiences",
+        "description": "Search for last-minute tours and activities in a specific destination",
+        "arguments": [
+            {
+                "name": "city",
+                "description": "City or country to search (e.g. 'Reykjavik', 'Rome', 'Egypt')",
+                "required": True,
+            },
+            {
+                "name": "hours_ahead",
+                "description": "How soon the slot must start, in hours (default: 72)",
+                "required": False,
+            },
+        ],
+    },
+    {
+        "name": "explore_destinations",
+        "description": "See all available destinations and experience types before searching",
+        "arguments": [],
+    },
+    {
+        "name": "autonomous_booking",
+        "description": "Book a last-minute slot using a pre-funded agent wallet — no checkout required",
+        "arguments": [
+            {
+                "name": "wallet_id",
+                "description": "Pre-funded wallet ID (format: wlt_...)",
+                "required": True,
+            },
+            {
+                "name": "city",
+                "description": "Optional city/destination to filter by",
+                "required": False,
+            },
+            {
+                "name": "category",
+                "description": "Optional category filter (e.g. 'experiences', 'wellness')",
+                "required": False,
+            },
+        ],
+    },
+]
+
+
+def _mcp_render_prompt(name: str, arguments: dict) -> dict:
+    """Render a prompt template with the provided arguments. Returns MCP GetPromptResult."""
+    if name == "find_experiences":
+        city        = arguments.get("city", "your destination")
+        hours_ahead = arguments.get("hours_ahead", "72")
+        text = (
+            f"Find me last-minute experience slots available in {city} "
+            f"within the next {hours_ahead} hours. "
+            "Call search_slots with that city and hours_ahead value. "
+            "Show me the results — service name, start time, price, and duration — "
+            "then ask which one I'd like to book. "
+            "Once I choose, collect my name, email, and phone number, then call book_slot. "
+            "Share the checkout_url immediately after booking — do not summarise it."
+        )
+        return {
+            "description": "Search for last-minute tours and activities in a specific destination",
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+        }
+
+    if name == "explore_destinations":
+        text = (
+            "Call get_supplier_info and show me all available destinations "
+            "and experience types. Group by region (Europe, Middle East/Africa, Asia). "
+            "After showing the overview, ask which destination interests me so we can "
+            "search for specific last-minute slots."
+        )
+        return {
+            "description": "See all available destinations and experience types before searching",
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+        }
+
+    if name == "autonomous_booking":
+        wallet_id     = arguments.get("wallet_id", "")
+        city          = arguments.get("city", "")
+        category      = arguments.get("category", "")
+        city_part     = f" in {city}" if city else ""
+        category_part = f" in category '{category}'" if category else ""
+        text = (
+            f"I have a pre-funded wallet (wallet_id: {wallet_id}). "
+            f"Search for available last-minute slots{city_part}{category_part} "
+            "using search_slots. Show me the top 5 options with price and timing. "
+            "Once I pick one, collect my name, email, and phone number, then call "
+            f"book_slot with wallet_id='{wallet_id}' and execution_mode='autonomous'. "
+            "Return the confirmation_number directly — no checkout step needed."
+        )
+        return {
+            "description": "Book a last-minute slot using a pre-funded agent wallet",
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+        }
+
+    raise ValueError(f"Unknown prompt: {name}")
+
 
 def _mcp_call_tool(name: str, arguments: dict) -> dict:
     """Execute an MCP tool call and return result."""

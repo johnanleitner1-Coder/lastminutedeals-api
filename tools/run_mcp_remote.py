@@ -497,5 +497,61 @@ async def get_supplier_info() -> dict:
     }
 
 
+@mcp.prompt()
+def find_experiences(city: str, hours_ahead: str = "72") -> str:
+    """
+    Search for last-minute tours and activities in a specific destination.
+
+    Args:
+        city:        City or country to search (e.g. "Reykjavik", "Rome", "Egypt").
+        hours_ahead: How soon the slot must start — in hours (default: 72).
+    """
+    return (
+        f"Find me last-minute experience slots available in {city} "
+        f"within the next {hours_ahead} hours. "
+        "Call search_slots with that city and hours_ahead value. "
+        "Show me the results — service name, start time, price, and duration — "
+        "then ask which one I'd like to book. "
+        "Once I choose, collect my name, email, and phone number, then call book_slot. "
+        "Share the checkout_url immediately after booking — do not summarise it."
+    )
+
+
+@mcp.prompt()
+def explore_destinations() -> str:
+    """
+    See all available destinations and experience types before searching.
+    Use this to understand what's available across the supplier network.
+    """
+    return (
+        "Call get_supplier_info and show me all available destinations "
+        "and experience types. Group by region (Europe, Middle East/Africa, Asia). "
+        "After showing the overview, ask which destination interests me so we can "
+        "search for specific last-minute slots."
+    )
+
+
+@mcp.prompt()
+def autonomous_booking(wallet_id: str, city: str = "", category: str = "") -> str:
+    """
+    Book a last-minute slot using a pre-funded agent wallet — no checkout required.
+
+    Args:
+        wallet_id: Pre-funded wallet ID (format: wlt_...).
+        city:      Optional city/destination to filter by.
+        category:  Optional category filter (e.g. 'experiences', 'wellness').
+    """
+    city_part     = f" in {city}" if city else ""
+    category_part = f" in category '{category}'" if category else ""
+    return (
+        f"I have a pre-funded wallet (wallet_id: {wallet_id}). "
+        f"Search for available last-minute slots{city_part}{category_part} "
+        "using search_slots. Show me the top 5 options with price and timing. "
+        "Once I pick one, collect my name, email, and phone number, then call "
+        f"book_slot with wallet_id='{wallet_id}' and execution_mode='autonomous'. "
+        "Return the confirmation_number directly — no checkout step needed."
+    )
+
+
 if __name__ == "__main__":
     mcp.run(transport="sse")
