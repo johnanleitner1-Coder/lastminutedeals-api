@@ -2,12 +2,23 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.johnanleitner1-Coder/lastminute-booking",
   "title": "LastMinuteDeals Booking API",
-  "description": "Last-minute booking slots across 11 suppliers. Search, price, and execute bookings via AI agents.",
+  "description": "Real-time last-minute tour and activity inventory sourced live via the OCTO open standard. 14 suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt, and Turkey. Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers confirmed instantly.",
   "version": "1.0.0",
   "websiteUrl": "https://lastminutedealshq.com",
   "repository": {
     "url": "https://github.com/johnanleitner1-Coder/lastminutedeals-api",
     "source": "github"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "title": "LMD API Key",
+        "description": "Optional API key to enable bookings and status checks. Register free: POST https://web-production-dc74b.up.railway.app/api/keys/register (no body needed). Search and supplier info work without a key."
+      }
+    },
+    "required": []
   },
   "remotes": [
     {
@@ -16,18 +27,10 @@
       "headers": [
         {
           "key": "X-API-Key",
-          "value": "{api_key}",
+          "value": "${config.apiKey}",
           "isRequired": false
         }
-      ],
-      "variables": {
-        "api_key": {
-          "description": "Optional API key for authenticated requests. Register free at POST /api/keys/register",
-          "placeholder": "lmd_...",
-          "isRequired": false,
-          "isSecret": true
-        }
-      }
+      ]
     }
   ]
 }

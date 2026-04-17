@@ -63,7 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -85,6 +85,8 @@
       "MULTI DAY TOURS":            {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "#2 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
+      "#3 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "201393P":                    {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
       "MERU-LUX":                   {"name": "Hillborn Experiences", "city": "Arusha",    "country": "TZ"},
@@ -98,10 +100,34 @@
       "ISHESTAR":                   {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
       "RIDING":                     {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
       "HORSE":                      {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
+      "D0":                         {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
+      "D4":                         {"name": "Íshestar Riding Tours", "city": "Selfoss",   "country": "IS"},
       "MARVEL":                     {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
       "EGYPT":                      {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
       "LUXOR":                      {"name": "Marvel Egypt Tours",    "city": "Luxor",     "country": "EG"},
-      "ASWAN":                      {"name": "Marvel Egypt Tours",    "city": "Aswan",     "country": "EG"}
+      "ASWAN":                      {"name": "Marvel Egypt Tours",    "city": "Aswan",     "country": "EG"},
+      "384441P":                    {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
+      "5519190P":                    {"name": "EgyExcursions",         "city": "Cairo",     "country": "EG"},
+      "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"}
+    },
+    "product_id_map": {
+      "729972":  {"name": "Íshestar Riding Tours", "city": "Selfoss", "country": "IS"},
+      "1014077": {"name": "Vakare Travel Service",  "city": "Antalya", "country": "TR"}
+    },
+    "vendor_id_to_supplier_map": {
+      "85":     {"name": "Arctic Adventures",       "city": "Reykjavik", "country": "IS"},
+      "22298":  {"name": "Bicycle Roma",            "city": "Rome",      "country": "IT"},
+      "134418": {"name": "Pure Morocco Experience", "city": "Marrakech", "country": "MA"},
+      "103510": {"name": "O Turista Tours",         "city": "Lisbon",    "country": "PT"},
+      "137492": {"name": "TourTransfer Bucharest",  "city": "Bucharest", "country": "RO"},
+      "16261":  {"name": "Ramen Factory Kyoto",     "city": "Kyoto",     "country": "JP"},
+      "105917": {"name": "Boka Bliss",              "city": "Kotor",     "country": "ME"},
+      "3020":   {"name": "REDRIB Experience",       "city": "Helsinki",  "country": "FI"},
+      "33562":  {"name": "Hillborn Experiences",    "city": "Arusha",    "country": "TZ"},
+      "70":     {"name": "Íshestar Riding Tours",   "city": "Selfoss",   "country": "IS"},
+      "102991": {"name": "Marvel Egypt Tours",      "city": "Cairo",     "country": "EG"},
+      "123380": {"name": "EgyExcursions",           "city": "Cairo",     "country": "EG"},
+      "98502":  {"name": "Vakare Travel Service",   "city": "Antalya",   "country": "TR"}
     }
   },
   {

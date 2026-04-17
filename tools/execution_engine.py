@@ -349,6 +349,47 @@ class ExecutionEngine:
             print(f"[ENGINE] Stripe hold cancel failed for {payment_intent_id}: {e} — "
                   "manual review required to ensure customer was not charged")
 
+    def _queue_failed_octo_cancel(self, booking_id: str, platform: str,
+                                    confirmation: str, payment_intent_id: str = "",
+                                    price_charged: float = 0.0) -> None:
+        """
+        Write a failed OCTO cancel to Supabase Storage cancellation_queue/ so the
+        background retry scheduler (retry_cancellations.py, every 15 min) can pick it up.
+        Mirrors _queue_octo_retry() in run_api_server.py.
+        """
+        import os as _os, json as _json, requests as _req
+        sb_url    = _os.getenv("SUPABASE_URL", "").rstrip("/")
+        sb_secret = _os.getenv("SUPABASE_SECRET_KEY", "")
+        if not sb_url or not sb_secret:
+            print(f"[ENGINE] Cannot queue OCTO retry for {booking_id}: Supabase not configured")
+            return
+        from datetime import datetime, timezone
+        entry = {
+            "booking_id":        booking_id,
+            "confirmation":      confirmation,
+            "supplier_id":       platform,
+            "payment_intent_id": payment_intent_id,
+            "price_charged":     price_charged,
+            "attempts":          0,
+            "created_at":        datetime.now(timezone.utc).isoformat(),
+            "status":            "pending_octo",
+            "error_detail":      None,
+        }
+        headers = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+        try:
+            r = _req.post(
+                f"{sb_url}/storage/v1/object/bookings/cancellation_queue/{booking_id}.json",
+                headers={**headers, "Content-Type": "application/json", "x-upsert": "true"},
+                data=_json.dumps(entry),
+                timeout=10,
+            )
+            if r.ok:
+                print(f"[ENGINE] OCTO cancel queued for retry: {booking_id} | {platform} | {confirmation}")
+            else:
+                print(f"[ENGINE] OCTO cancel queue write failed {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            print(f"[ENGINE] Could not queue OCTO cancel for {booking_id}: {e}")
+
     def _cancel_octo(self, platform: str, confirmation: str) -> bool:
         """
         Cancel a confirmed OCTO booking when payment fails after booking succeeded.
@@ -380,9 +421,8 @@ class ExecutionEngine:
             r = _req.delete(
                 f"{base_url}/bookings/{confirmation}",
                 headers={
-                    "Authorization":     f"Bearer {api_key}",
-                    "Octo-Capabilities": "octo/pricing",
-                    "Content-Type":      "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type":  "application/json",
                 },
                 timeout=15,
             )
@@ -440,8 +480,8 @@ class ExecutionEngine:
 
         # Same-platform booking success component — only add if there are actual slots.
         # Do NOT add unconditionally: a +0.1 floor would cause the monitor to always
-        # attempt booking even when slot_count is 0.
-        if slot_count > 0:
+        # attempt booking even when there are 0 matching slots.
+        if n > 0:
             score += 0.1
 
         return min(round(score, 2), 1.0)
@@ -521,7 +561,20 @@ class ExecutionEngine:
                         # Payment failed after booking succeeded — cancel the supplier booking
                         # so we don't leave an unpaid confirmed reservation on their system.
                         print(f"[ENGINE] Payment failed — rolling back OCTO booking {confirmation} on {plat}")
-                        self._cancel_octo(plat, str(confirmation or ""))
+                        _conf_str = str(confirmation or "")
+                        _cancel_ok = self._cancel_octo(plat, _conf_str)
+                        if not _cancel_ok and _conf_str:
+                            # Inline cancel failed — queue for automatic background retry.
+                            # Use a deterministic ID so the queue entry doesn't duplicate.
+                            import secrets as _sec
+                            _tmp_bk_id = f"bk_rollback_{_sec.token_hex(8)}"
+                            self._queue_failed_octo_cancel(
+                                booking_id=_tmp_bk_id,
+                                platform=plat,
+                                confirmation=_conf_str,
+                                payment_intent_id=req.payment_intent_id or "",
+                                price_charged=price,
+                            )
                         # Also cancel any Stripe hold that may still be open
                         if req.payment_method == "stripe_pi" and req.payment_intent_id:
                             self._cancel_stripe(req.payment_intent_id)

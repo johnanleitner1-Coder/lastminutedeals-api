@@ -43,8 +43,55 @@ SENT_FILE   = Path(".tmp/sms_sent_log.json")
 # Don't send more than this many SMSes per phone per day
 MAX_SMS_PER_PHONE_PER_DAY = 3
 
+# Supabase Storage paths (inside the "bookings" bucket)
+_SB_SUBS_KEY = "sms_subscribers.json"
+_SB_SENT_KEY = "sms_sent_log.json"
+
+
+def _sb_url() -> str:
+    return os.getenv("SUPABASE_URL", "").rstrip("/")
+
+def _sb_headers() -> dict:
+    s = os.getenv("SUPABASE_SECRET_KEY", "")
+    return {"apikey": s, "Authorization": f"Bearer {s}"}
+
+
+def _sb_get(key: str):
+    """Fetch a JSON object from Supabase Storage. Returns None on failure."""
+    sb = _sb_url()
+    if not sb:
+        return None
+    try:
+        r = requests.get(
+            f"{sb}/storage/v1/object/bookings/{key}",
+            headers=_sb_headers(), timeout=5,
+        )
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
+def _sb_put(key: str, data: str) -> None:
+    """Write a JSON string to Supabase Storage. Non-fatal."""
+    sb = _sb_url()
+    if not sb:
+        return
+    try:
+        requests.post(
+            f"{sb}/storage/v1/object/bookings/{key}",
+            headers={**_sb_headers(), "Content-Type": "application/json",
+                     "x-upsert": "true"},
+            data=data, timeout=8,
+        )
+    except Exception:
+        pass
+
 
 def load_subscribers() -> list[dict]:
+    """Primary: Supabase Storage. Fallback: local .tmp/sms_subscribers.json."""
+    remote = _sb_get(_SB_SUBS_KEY)
+    if isinstance(remote, list):
+        return remote
     if SUBS_FILE.exists():
         try:
             return json.loads(SUBS_FILE.read_text(encoding="utf-8"))
@@ -54,11 +101,17 @@ def load_subscribers() -> list[dict]:
 
 
 def save_subscribers(subs: list[dict]) -> None:
-    SUBS_FILE.write_text(json.dumps(subs, indent=2), encoding="utf-8")
+    data = json.dumps(subs, indent=2)
+    _sb_put(_SB_SUBS_KEY, data)
+    SUBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SUBS_FILE.write_text(data, encoding="utf-8")
 
 
 def load_sent_log() -> dict:
-    """Returns {phone: [iso_timestamp, ...]} for today's sends."""
+    """Returns {phone: [iso_timestamp, ...]}. Primary: Supabase. Fallback: local."""
+    remote = _sb_get(_SB_SENT_KEY)
+    if isinstance(remote, dict):
+        return remote
     if SENT_FILE.exists():
         try:
             return json.loads(SENT_FILE.read_text(encoding="utf-8"))
@@ -68,7 +121,10 @@ def load_sent_log() -> dict:
 
 
 def save_sent_log(log: dict) -> None:
-    SENT_FILE.write_text(json.dumps(log), encoding="utf-8")
+    data = json.dumps(log)
+    _sb_put(_SB_SENT_KEY, data)
+    SENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SENT_FILE.write_text(data, encoding="utf-8")
 
 
 def sent_today(log: dict, phone: str) -> int:

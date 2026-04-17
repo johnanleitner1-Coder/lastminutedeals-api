@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import secrets
 import sys
 import threading
@@ -82,10 +83,21 @@ import requests as _req
 ROOT      = Path(__file__).parent.parent
 TOOLS_DIR = Path(__file__).parent
 SESSIONS_FILE = ROOT / ".tmp" / "intent_sessions.json"
+_SB_OBJECT    = "intent_sessions.json"   # path inside the "bookings" bucket
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 MONITOR_INTERVAL = 60  # seconds between monitor sweeps
+
+
+# ── Supabase helpers (mirrors pattern from run_api_server.py) ─────────────────
+
+def _sb_url() -> str:
+    return os.getenv("SUPABASE_URL", "").rstrip("/")
+
+def _sb_headers() -> dict:
+    s = os.getenv("SUPABASE_SECRET_KEY", "")
+    return {"apikey": s, "Authorization": f"Bearer {s}"}
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -93,6 +105,23 @@ MONITOR_INTERVAL = 60  # seconds between monitor sweeps
 _sessions_lock = threading.Lock()
 
 def _load_sessions() -> dict:
+    """
+    Primary: Supabase Storage (shared across Railway instances).
+    Fallback: local .tmp/intent_sessions.json (same-instance only).
+    """
+    sb = _sb_url()
+    if sb:
+        try:
+            r = _req.get(
+                f"{sb}/storage/v1/object/bookings/{_SB_OBJECT}",
+                headers=_sb_headers(),
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+    # Local fallback
     if SESSIONS_FILE.exists():
         try:
             return json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
@@ -101,8 +130,25 @@ def _load_sessions() -> dict:
     return {}
 
 def _save_sessions(sessions: dict):
+    """
+    Primary: Supabase Storage.
+    Backup: local .tmp/intent_sessions.json.
+    """
+    data = json.dumps(sessions, indent=2)
+    sb = _sb_url()
+    if sb:
+        try:
+            _req.post(
+                f"{sb}/storage/v1/object/bookings/{_SB_OBJECT}",
+                headers={**_sb_headers(), "Content-Type": "application/json",
+                         "x-upsert": "true"},
+                data=data,
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[INTENT] Supabase session save failed (using local fallback): {e}")
     SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
+    SESSIONS_FILE.write_text(data, encoding="utf-8")
 
 
 # ── Store ─────────────────────────────────────────────────────────────────────
@@ -234,8 +280,46 @@ class IntentSessionStore:
 
 # ── Callback dispatcher ───────────────────────────────────────────────────────
 
+# Absolute minutes from fired_at for each retry attempt (4 retries total, 6h TTL).
+# Retry 1: 2 min | Retry 2: 10 min | Retry 3: 30 min | Retry 4: 2 hours
+_CB_BACKOFFS_MINUTES = [2, 10, 30, 120]
+_CB_TTL_HOURS = 6
+_CB_QUEUE_PREFIX = "callback_queue/"
+
+
+def _queue_callback_retry(session: dict, event: str, body: dict) -> None:
+    """Write a failed callback to Supabase Storage for background retry."""
+    import uuid as _uuid
+    now = datetime.now(timezone.utc)
+    queue_id = f"cbq_{_uuid.uuid4().hex[:16]}"
+    entry = {
+        "queue_id":       queue_id,
+        "intent_id":      session.get("intent_id", ""),
+        "callback_url":   session.get("callback_url", ""),
+        "event":          event,
+        "body":           body,
+        "retry_count":    0,
+        "fired_at":       now.isoformat(),
+        "next_retry_at":  (now + timedelta(minutes=_CB_BACKOFFS_MINUTES[0])).isoformat(),
+        "ttl_expires_at": (now + timedelta(hours=_CB_TTL_HOURS)).isoformat(),
+    }
+    sb = _sb_url()
+    if not sb:
+        return
+    try:
+        _req.post(
+            f"{sb}/storage/v1/object/bookings/{_CB_QUEUE_PREFIX}{queue_id}.json",
+            headers={**_sb_headers(), "Content-Type": "application/json", "x-upsert": "true"},
+            data=json.dumps(entry), timeout=8,
+        )
+        print(f"[INTENT] Callback queued for retry: {queue_id} (event={event})")
+    except Exception as _e:
+        print(f"[INTENT] Failed to queue callback retry: {_e}")
+
+
 def _fire_callback(session: dict, event: str, payload: dict):
     """POST status change event to the session's callback_url (if set).
+    On failure, queues for background retry with 4 attempts over 6 hours.
     Runs in a daemon thread to avoid blocking the monitor loop.
     """
     url = session.get("callback_url", "")
@@ -253,10 +337,133 @@ def _fire_callback(session: dict, event: str, payload: dict):
         try:
             _req.post(url, json=body, timeout=10)
         except Exception as e:
-            print(f"[INTENT] Callback to {url} failed: {e}")
+            print(f"[INTENT] Callback to {url} failed: {e} — queuing for retry")
+            _queue_callback_retry(session, event, body)
 
     import threading as _threading
     _threading.Thread(target=_post, daemon=True, name="intent-callback").start()
+
+
+def retry_pending_callbacks() -> None:
+    """
+    Redeliver queued intent callbacks that failed on first attempt.
+    Called by APScheduler every 2 minutes from run_api_server.py.
+
+    Retry schedule (absolute offsets from fired_at):
+      Retry 1: 2 min | Retry 2: 10 min | Retry 3: 30 min | Retry 4: 2 hours
+    Entries older than 6 hours are dropped regardless of retry count.
+    """
+    sb = _sb_url()
+    if not sb:
+        return
+    headers = _sb_headers()
+    now = datetime.now(timezone.utc)
+
+    try:
+        r = _req.post(
+            f"{sb}/storage/v1/object/list/bookings",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"prefix": _CB_QUEUE_PREFIX, "limit": 200, "offset": 0},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return
+        items = r.json() or []
+    except Exception as e:
+        print(f"[CB_RETRY] Failed to list callback queue: {e}")
+        return
+
+    for item in items:
+        name = item.get("name", "")
+        if not name.endswith(".json"):
+            continue
+
+        try:
+            er = _req.get(
+                f"{sb}/storage/v1/object/bookings/{name}",
+                headers=headers, timeout=5,
+            )
+            if er.status_code != 200:
+                continue
+            entry = er.json()
+        except Exception:
+            continue
+
+        queue_id = entry.get("queue_id", name)
+
+        # Drop if TTL expired
+        try:
+            ttl_dt = datetime.fromisoformat(
+                entry.get("ttl_expires_at", "").replace("Z", "+00:00"))
+            if now > ttl_dt:
+                _req.delete(
+                    f"{sb}/storage/v1/object/bookings/{name}",
+                    headers=headers, timeout=5)
+                print(f"[CB_RETRY] {queue_id}: TTL expired — dropped")
+                continue
+        except Exception:
+            pass
+
+        # Skip if not yet due
+        try:
+            next_dt = datetime.fromisoformat(
+                entry.get("next_retry_at", "").replace("Z", "+00:00"))
+            if now < next_dt:
+                continue
+        except Exception:
+            pass
+
+        # Attempt delivery
+        url  = entry.get("callback_url", "")
+        body = entry.get("body", {})
+        retry_count = int(entry.get("retry_count", 0))
+
+        delivered = False
+        try:
+            resp = _req.post(url, json=body, timeout=10)
+            delivered = resp.status_code < 500
+        except Exception as e:
+            print(f"[CB_RETRY] {queue_id}: delivery to {url} failed: {e}")
+
+        if delivered:
+            try:
+                _req.delete(
+                    f"{sb}/storage/v1/object/bookings/{name}",
+                    headers=headers, timeout=5)
+                print(f"[CB_RETRY] {queue_id}: delivered (attempt {retry_count + 1})")
+            except Exception:
+                pass
+        else:
+            new_count = retry_count + 1
+            if new_count >= len(_CB_BACKOFFS_MINUTES):
+                # Max retries exhausted — drop
+                try:
+                    _req.delete(
+                        f"{sb}/storage/v1/object/bookings/{name}",
+                        headers=headers, timeout=5)
+                    print(f"[CB_RETRY] {queue_id}: max retries reached — dropped")
+                except Exception:
+                    pass
+            else:
+                # Schedule next attempt
+                try:
+                    fired_dt = datetime.fromisoformat(
+                        entry.get("fired_at", now.isoformat()).replace("Z", "+00:00"))
+                except Exception:
+                    fired_dt = now
+                entry["retry_count"]   = new_count
+                entry["next_retry_at"] = (
+                    fired_dt + timedelta(minutes=_CB_BACKOFFS_MINUTES[new_count])
+                ).isoformat()
+                try:
+                    _req.post(
+                        f"{sb}/storage/v1/object/bookings/{name}",
+                        headers={**headers, "Content-Type": "application/json",
+                                 "x-upsert": "true"},
+                        data=json.dumps(entry), timeout=8,
+                    )
+                except Exception:
+                    pass
 
 
 # ── Execution engine loader ───────────────────────────────────────────────────
@@ -387,6 +594,56 @@ def execute_intent(session: dict, store: IntentSessionStore) -> bool:
             "savings_vs_market": result.savings_vs_market,
             "attempts":          result.attempts,
         })
+
+        # Persist a booking record to Supabase so the booking is cancellable
+        # via DELETE /bookings/{id} and self-serve cancel flow.
+        try:
+            import uuid as _uuid
+            _bk_id = f"bk_{result.slot_id[:12] if result.slot_id else intent_id[:12]}_{_uuid.uuid4().hex[:8]}"
+            _bk_record = {
+                "booking_id":        _bk_id,
+                "confirmation":      result.confirmation,
+                "platform":          result.platform,
+                "service_name":      result.service_name,
+                "price_charged":     result.price_charged,
+                "currency":          "USD",
+                "payment_method":    payment.get("method", "wallet"),
+                "wallet_id":         payment.get("wallet_id") or "",
+                "payment_intent_id": payment.get("payment_intent_id") or "",
+                "customer_name":     customer.get("name", ""),
+                "customer_email":    customer.get("email", ""),
+                "customer_phone":    customer.get("phone", ""),
+                "slot_id":           result.slot_id or "",
+                "intent_id":         intent_id,
+                "status":            "booked",
+                "executed_at":       datetime.now(timezone.utc).isoformat(),
+            }
+            _bk_data = json.dumps(_bk_record)
+            _sb = _sb_url()
+            if _sb:
+                _req.post(
+                    f"{_sb}/storage/v1/object/bookings/{_bk_id}.json",
+                    headers={**_sb_headers(), "Content-Type": "application/json",
+                             "x-upsert": "true"},
+                    data=_bk_data, timeout=8,
+                )
+            _local_bk = ROOT / ".tmp" / "bookings"
+            _local_bk.mkdir(parents=True, exist_ok=True)
+            (_local_bk / f"{_bk_id}.json").write_text(_bk_data, encoding="utf-8")
+            # Write confirmation lookup index so bokun_webhook can find this
+            # record in O(1) rather than scanning the full bucket.
+            if _sb and result.confirmation:
+                try:
+                    _req.post(
+                        f"{_sb}/storage/v1/object/bookings/by_confirmation/{result.confirmation}.json",
+                        headers={**_sb_headers(), "Content-Type": "application/json",
+                                 "x-upsert": "true"},
+                        data=json.dumps({"booking_id": _bk_id}), timeout=5,
+                    )
+                except Exception:
+                    pass
+        except Exception as _bk_err:
+            print(f"[INTENT] ⚠ Booking record write failed (non-fatal): {_bk_err}")
 
         # Send confirmation email
         try:

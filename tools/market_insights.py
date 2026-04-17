@@ -341,7 +341,27 @@ def build_market_overview(days_back: int = 30) -> dict:
         },
     }
 
-    SNAPSHOT_FILE.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    data = json.dumps(snapshot, indent=2)
+    SNAPSHOT_FILE.write_text(data, encoding="utf-8")
+
+    # Persist to Supabase Storage so snapshot survives Railway redeploys and is
+    # visible across all instances. Non-fatal — local file is the fallback.
+    try:
+        import os as _os, requests as _req
+        sb_url    = _os.getenv("SUPABASE_URL", "").rstrip("/")
+        sb_secret = _os.getenv("SUPABASE_SECRET_KEY", "")
+        if sb_url and sb_secret:
+            _headers = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}",
+                        "Content-Type": "application/json", "x-upsert": "true"}
+            _req.post(
+                f"{sb_url}/storage/v1/object/bookings/market_snapshot.json",
+                headers=_headers,
+                data=data,
+                timeout=8,
+            )
+    except Exception:
+        pass
+
     return snapshot
 
 
@@ -349,13 +369,38 @@ def get_market_snapshot(category: str = "", city: str = "") -> dict:
     """
     Return market insights, filtered to a specific category/city if requested.
     Uses cached snapshot if fresh (< 6 hours old).
+    Primary source: Supabase Storage. Fallback: local file. Rebuilds when stale.
     """
+    import os as _os, requests as _req
+
     snapshot = None
-    if SNAPSHOT_FILE.exists():
+    _six_hours = 21600
+
+    # Try Supabase first (shared across instances, survives redeploys)
+    sb_url    = _os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = _os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb_url and sb_secret:
+        try:
+            r = _req.get(
+                f"{sb_url}/storage/v1/object/bookings/market_snapshot.json",
+                headers={"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                snapshot = r.json()
+                gen_at = datetime.fromisoformat(
+                    snapshot.get("generated_at", "1970-01-01").replace("Z", "+00:00"))
+                if (datetime.now(timezone.utc) - gen_at).total_seconds() > _six_hours:
+                    snapshot = None  # stale
+        except Exception:
+            pass
+
+    # Local fallback
+    if snapshot is None and SNAPSHOT_FILE.exists():
         try:
             snapshot = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
             gen_at = datetime.fromisoformat(snapshot.get("generated_at", "1970-01-01").replace("Z", "+00:00"))
-            if (datetime.now(timezone.utc) - gen_at).total_seconds() > 21600:
+            if (datetime.now(timezone.utc) - gen_at).total_seconds() > _six_hours:
                 snapshot = None  # stale, rebuild
         except Exception:
             snapshot = None

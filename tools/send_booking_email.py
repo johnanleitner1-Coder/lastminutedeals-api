@@ -804,8 +804,9 @@ def _build_failed_html(customer_name: str, slot: dict, error_reason: str) -> tup
 
 
 def _build_cancelled_html(customer_name: str, slot: dict, confirmation_number: str,
-                          refund_status: str = "") -> tuple[str, str]:
-    """Email sent when a supplier cancels a confirmed booking."""
+                          refund_status: str = "",
+                          cancelled_by_customer: bool = False) -> tuple[str, str]:
+    """Email sent when a booking is cancelled (operator, agent, or customer self-serve)."""
     service    = slot.get("service_name", "Your Experience")
     city       = slot.get("location_city", "")
     state      = slot.get("location_state", "")
@@ -818,6 +819,24 @@ def _build_cancelled_html(customer_name: str, slot: dict, confirmation_number: s
 
     refund_note = refund_status or "A full refund has been issued to your original payment method."
 
+    # Hero body copy differs depending on who initiated the cancellation.
+    # cancelled_by_customer=True: customer clicked the cancel link themselves.
+    # False (default): operator/supplier cancelled, or agent-initiated DELETE /bookings.
+    if cancelled_by_customer:
+        hero_body = (
+            f"Hi {first_name}, we've processed your cancellation for "
+            f"<strong style=\"color:{BRAND_DARK};\">{service}</strong>. "
+            f"We've taken care of the refund for you."
+        )
+        plain_hero = f"We've processed your cancellation for {service}."
+    else:
+        hero_body = (
+            f"Hi {first_name}, we're sorry — the operator has cancelled your booking for "
+            f"<strong style=\"color:{BRAND_DARK};\">{service}</strong>. "
+            f"We know this is disappointing, and we've taken care of the refund for you."
+        )
+        plain_hero = f"We're sorry to let you know that the operator has cancelled your booking:"
+
     html_body = f"""
           <!-- Hero -->
           <tr>
@@ -829,9 +848,7 @@ def _build_cancelled_html(customer_name: str, slot: dict, confirmation_number: s
                 Your booking has been cancelled
               </h1>
               <p style="margin:0; font-family:{FONT_STACK}; font-size:16px; color:{BRAND_GRAY}; line-height:1.6;">
-                Hi {first_name}, we're sorry — the operator has cancelled your booking for
-                <strong style="color:{BRAND_DARK};">{service}</strong>.
-                We know this is disappointing, and we've taken care of the refund for you.
+                {hero_body}
               </p>
             </td>
           </tr>
@@ -910,7 +927,7 @@ def _build_cancelled_html(customer_name: str, slot: dict, confirmation_number: s
 
         Hi {first_name},
 
-        We're sorry to let you know that the operator has cancelled your booking:
+        {plain_hero}
 
           Experience : {service}
           Date       : {date_str or "—"}
@@ -1081,6 +1098,7 @@ def send_booking_email(
     error_reason: str = "",
     refund_status: str = "",
     cancel_url: str = "",
+    cancelled_by_customer: bool = False,
 ) -> bool:
     """
     Send a transactional booking email.
@@ -1117,7 +1135,8 @@ def send_booking_email(
         body_rows, plain = _build_confirmed_html(customer_name, slot, confirmation_number, cancel_url)
         preheader = f"Your booking is confirmed! Show this email when you arrive at {slot.get('service_name', 'your experience')}."
     elif email_type == "booking_cancelled":
-        body_rows, plain = _build_cancelled_html(customer_name, slot, confirmation_number, refund_status)
+        body_rows, plain = _build_cancelled_html(customer_name, slot, confirmation_number, refund_status,
+                                                cancelled_by_customer=cancelled_by_customer)
         preheader = f"Your booking for {slot.get('service_name', 'your experience')} has been cancelled. Full refund issued."
     else:  # booking_failed
         body_rows, plain = _build_failed_html(customer_name, slot, error_reason)

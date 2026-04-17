@@ -89,6 +89,10 @@ _BOOKINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
 # For cross-instance dedup, the Supabase Storage record acts as the persistent lock.
 _IDEMPOTENCY_CACHE: dict = {}   # {key: {"booking_id": str, "result": dict}}
 
+# ── Slot discovery telemetry (updated by APScheduler job) ─────────────────────
+_last_discovery_at: str = ""
+_last_discovery_slot_count: int = 0
+
 # ── Autonomous booking in-flight lock ─────────────────────────────────────────
 # Prevents double-debit if an agent retries while the first call is still executing.
 # Key: sha256(slot_id + customer_email + wallet_id) — naturally unique per booking attempt.
@@ -186,6 +190,9 @@ def _save_booking_record(booking_id: str, record: dict) -> None:
     Persist a booking record.
     Primary: Supabase Storage — survives redeploys, visible to all Railway instances.
     Backup: local .tmp/bookings.json — same-instance fallback if Storage unavailable.
+
+    Also writes a by_confirmation/ lookup index for O(1) retrieval by confirmation
+    code or supplier_reference — used by bokun_webhook instead of a full bucket scan.
     """
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if sb_url:
@@ -201,6 +208,21 @@ def _save_booking_record(booking_id: str, record: dict) -> None:
                 print(f"[BOOKINGS] Supabase Storage write returned {r.status_code}: {r.text[:200]}")
         except Exception as e:
             print(f"[BOOKINGS] Supabase Storage write failed: {e}")
+
+        # Write O(1) confirmation lookup index — only when a real confirmation exists.
+        # Covers both OCTO UUID (confirmation) and Bokun's own reference (supplier_reference).
+        _idx_hdrs = {**_sb_storage_headers(), "Content-Type": "application/json", "x-upsert": "true"}
+        _idx_payload = json.dumps({"booking_id": booking_id})
+        for _conf_key in ("confirmation", "supplier_reference"):
+            _conf_val = record.get(_conf_key, "").strip()
+            if _conf_val:
+                try:
+                    requests.post(
+                        f"{sb_url}/storage/v1/object/bookings/by_confirmation/{_conf_val}.json",
+                        headers=_idx_hdrs, data=_idx_payload, timeout=5,
+                    )
+                except Exception:
+                    pass
     # Always write local backup too
     try:
         local = {}
@@ -247,21 +269,44 @@ def _list_booking_records(prefix: str = "") -> list[dict]:
     return []
 
 
-def _make_receipt(result_dict: dict, customer_email: str = "") -> dict:
+def _make_receipt(
+    result_dict: dict,
+    customer_email: str = "",
+    customer: dict | None = None,
+    payment: dict | None = None,
+    slot: dict | None = None,
+) -> dict:
     """
     Build a signed execution receipt from a result dict.
     Stored in bookings.json and returned in every successful execution response.
+
+    Extra kwargs fill fields needed by cancellation paths (wallet refund, email, etc.).
     """
     booking_id = result_dict.get("booking_id") or f"bk_{secrets.token_hex(8)}"
+    c   = customer or {}
+    pmt = payment  or {}
+    sl  = slot     or {}
     record = {
-        "booking_id":     booking_id,
-        "confirmation":   result_dict.get("confirmation", ""),
-        "platform":       result_dict.get("platform", ""),
-        "service_name":   result_dict.get("service_name", ""),
-        "price_charged":  result_dict.get("price_charged"),
-        "status":         result_dict.get("status", ""),
-        "executed_at":    datetime.now(timezone.utc).isoformat(),
-        "customer_email": customer_email,
+        "booking_id":         booking_id,
+        "confirmation":       result_dict.get("confirmation", ""),
+        "supplier_reference": result_dict.get("supplier_reference", ""),
+        "platform":           result_dict.get("platform", ""),
+        "supplier_id":        result_dict.get("supplier_id", result_dict.get("platform", "")),
+        "service_name":       result_dict.get("service_name", ""),
+        "business_name":      sl.get("business_name", ""),
+        "location_city":      sl.get("location_city", ""),
+        "start_time":         sl.get("start_time", ""),
+        "slot_id":            result_dict.get("slot_id", ""),
+        "price_charged":      result_dict.get("price_charged"),
+        "currency":           sl.get("currency", "USD"),
+        "status":             result_dict.get("status", ""),
+        "executed_at":        datetime.now(timezone.utc).isoformat(),
+        "payment_method":     pmt.get("method", ""),
+        "wallet_id":          pmt.get("wallet_id", ""),
+        "payment_intent_id":  pmt.get("payment_intent_id", ""),
+        "customer_email":     customer_email or c.get("email", ""),
+        "customer_name":      c.get("name", ""),
+        "customer_phone":     c.get("phone", ""),
     }
     record["signature"] = f"sha256={_sign_record(record)}"
     _save_booking_record(booking_id, record)
@@ -589,6 +634,37 @@ def _ensure_cancellation_queue_table() -> None:
     pass
 
 
+def _check_supabase_on_startup() -> bool:
+    """
+    Verify Supabase Storage is reachable and credentials are correct.
+    Writes a health-check sentinel object and logs the result. Non-fatal —
+    server continues even if Supabase is down (falls back to .tmp/).
+    """
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if not sb_url:
+        print("[STARTUP] ⚠ SUPABASE_URL not set — all state uses local .tmp/ fallback "
+              "(wiped on every Railway redeploy)")
+        return False
+    try:
+        r = requests.post(
+            f"{sb_url}/storage/v1/object/bookings/_health_check.json",
+            headers={**_sb_storage_headers(), "Content-Type": "application/json",
+                     "x-upsert": "true"},
+            data=json.dumps({"started_at": datetime.now(timezone.utc).isoformat(),
+                             "pid": os.getpid()}),
+            timeout=8,
+        )
+        if r.status_code in (200, 201):
+            print("[STARTUP] ✓ Supabase Storage connected and writable")
+            return True
+        print(f"[STARTUP] ⚠ Supabase Storage write returned {r.status_code} — "
+              "check SUPABASE_SECRET_KEY and bucket permissions")
+        return False
+    except Exception as e:
+        print(f"[STARTUP] ⚠ Supabase Storage unreachable: {e}")
+        return False
+
+
 def _start_retry_scheduler() -> None:
     """
     Start a background thread that runs retry_cancellations.py every 15 minutes.
@@ -637,6 +713,86 @@ def _start_retry_scheduler() -> None:
         except Exception as e:
             print(f"[RECONCILE_SCHEDULER] Error: {e}")
 
+    def _run_slot_discovery() -> None:
+        """
+        Full slot pipeline: fetch → aggregate → price → sync to Supabase.
+        Runs every 4 hours so Railway's inventory stays current without manual intervention.
+
+        Steps:
+          1. fetch_octo_slots.py   — pulls live availability from all OCTO suppliers
+          2. aggregate_slots.py    — merges platform files, dedupes, filters ≤72h
+          3. compute_pricing.py    — sets our_price / our_markup per slot
+          4. sync_to_supabase.py   — upserts priced slots into Supabase DB (what /slots reads)
+
+        Steps 3 and 4 are critical: without them agents see stale or unpriced inventory.
+        Scripts that use argparse have sys.argv temporarily patched for clean invocation.
+        """
+        import importlib.util as _ilu
+        import sys as _sys
+
+        tools_dir = Path(__file__).parent
+        _saved_argv = _sys.argv[:]
+        try:
+            def _run_script(name: str, label: str) -> bool:
+                path = tools_dir / f"{name}.py"
+                if not path.exists():
+                    print(f"[SLOT_DISCOVERY] {label} not found — skipping")
+                    return False
+                _sys.argv = [str(path)]
+                spec   = _ilu.spec_from_file_location(name, path)
+                module = _ilu.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                if hasattr(module, "main"):
+                    module.main()
+                print(f"[SLOT_DISCOVERY] {label} complete")
+                return True
+
+            # Step 1: fetch OCTO availability (writes .tmp/octo_slots.json)
+            _run_script("fetch_octo_slots", "OCTO fetch")
+
+            # Step 2: aggregate all platform files into aggregated_slots.json
+            aggregated = _run_script("aggregate_slots", "Aggregation")
+
+            if aggregated:
+                # Step 3: compute dynamic pricing (sets our_price / our_markup)
+                _run_script("compute_pricing", "Pricing")
+
+                # Step 4: upsert priced slots into Supabase DB — this is what /slots reads
+                _run_script("sync_to_supabase", "Supabase sync")
+
+            # Track telemetry for /health
+            global _last_discovery_at, _last_discovery_slot_count
+            _last_discovery_at = datetime.now(timezone.utc).isoformat()
+            try:
+                _agg_file = tools_dir.parent / ".tmp" / "aggregated_slots.json"
+                if _agg_file.exists():
+                    _slots = json.loads(_agg_file.read_text(encoding="utf-8"))
+                    _last_discovery_slot_count = len(_slots) if isinstance(_slots, list) else 0
+            except Exception:
+                pass
+            print(f"[SLOT_DISCOVERY] Pipeline complete — {_last_discovery_slot_count} slots in Supabase")
+
+        except SystemExit:
+            pass  # argparse calls sys.exit(0) on --help; ignore
+        except Exception as e:
+            print(f"[SLOT_DISCOVERY_SCHEDULER] Error: {e}")
+        finally:
+            _sys.argv = _saved_argv
+
+    # Verify Supabase connectivity before starting workers
+    _check_supabase_on_startup()
+
+    def _run_callback_retry() -> None:
+        try:
+            intent_path = Path(__file__).parent / "intent_sessions.py"
+            import importlib.util as _ilu2
+            spec   = _ilu2.spec_from_file_location("intent_sessions_cb", intent_path)
+            module = _ilu2.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.retry_pending_callbacks()
+        except Exception as e:
+            print(f"[CB_RETRY_SCHEDULER] Error: {e}")
+
     import datetime as _dt
     scheduler = BackgroundScheduler()
     # Retry failed cancellations every 15 min (run immediately on startup)
@@ -645,8 +801,16 @@ def _start_retry_scheduler() -> None:
     # Reconcile active bookings against platform every 30 min (first run after 5 min)
     scheduler.add_job(_run_reconcile, "interval", minutes=30, id="reconcile_bookings",
                       next_run_time=_dt.datetime.now() + _dt.timedelta(minutes=5))
+    # Slot discovery: fetch OCTO + aggregate every 4 hours (first run after 10 min warmup)
+    scheduler.add_job(_run_slot_discovery, "interval", hours=4, id="slot_discovery",
+                      next_run_time=_dt.datetime.now() + _dt.timedelta(minutes=10))
+    # Intent callback retry: redeliver failed agent callbacks every 2 min
+    # (4 retries, 6h TTL, backoff: 2→10→30→120 min from original fire time)
+    scheduler.add_job(_run_callback_retry, "interval", minutes=2, id="callback_retry",
+                      next_run_time=_dt.datetime.now() + _dt.timedelta(minutes=2))
     scheduler.start()
-    print("Schedulers started — retry: every 15 min | reconcile: every 30 min")
+    print("Schedulers started — retry: every 15 min | reconcile: every 30 min | "
+          "slot_discovery: every 4 h | callback_retry: every 2 min")
 
 
 @app.before_request
@@ -666,6 +830,95 @@ PORT        = int(os.getenv("BOOKING_SERVER_PORT", "5050"))
 # MCP search_slots cache — avoids repeated Supabase pagination on burst agent calls
 _MCP_SLOTS_CACHE: dict = {}   # cache_key → {"slots": [...], "expires": float}
 _MCP_SLOTS_CACHE_TTL = 60     # seconds
+
+# Supplier directory cache — live from Supabase, rebuilt every 5 minutes
+_SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
+_SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
+
+# Static fallback supplier list — used when Supabase is unreachable.
+# Covers all 13 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+_SUPPLIER_DIR_STATIC = [
+    {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
+    {"name": "Arctic Sea Tours",        "destinations": ["Dalvik", "Iceland"],                               "platform": "Bokun"},
+    {"name": "Bicycle Roma",            "destinations": ["Rome"],                                            "platform": "Bokun"},
+    {"name": "Boka Bliss",              "destinations": ["Kotor", "Montenegro"],                             "platform": "Bokun"},
+    {"name": "EgyExcursions",           "destinations": ["Cairo", "Egypt"],                                  "platform": "Bokun"},
+    {"name": "Hillborn Experiences",    "destinations": ["Arusha", "Serengeti", "Tanzania", "Zanzibar"],     "platform": "Bokun"},
+    {"name": "Íshestar Riding Tours",   "destinations": ["Iceland", "Selfoss"],                              "platform": "Bokun"},
+    {"name": "Marvel Egypt Tours",      "destinations": ["Aswan", "Cairo", "Egypt", "Luxor"],                "platform": "Bokun"},
+    {"name": "O Turista Tours",         "destinations": ["Lisbon", "Porto", "Portugal", "Sintra"],           "platform": "Bokun"},
+    {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Morocco"],                            "platform": "Bokun"},
+    {"name": "REDRIB Experience",       "destinations": ["Finland", "Helsinki"],                             "platform": "Bokun"},
+    {"name": "Ramen Factory Kyoto",     "destinations": ["Japan", "Kyoto"],                                  "platform": "Bokun"},
+    {"name": "TourTransfer Bucharest",  "destinations": ["Bucharest", "Romania"],                            "platform": "Bokun"},
+    {"name": "Vakare Travel Service",   "destinations": ["Antalya", "Turkey"],                               "platform": "Bokun"},
+]
+
+
+def _get_live_supplier_directory() -> list[dict]:
+    """
+    Return a list of {name, destinations, platform} dicts for every supplier currently
+    represented in the live Supabase slot inventory.
+
+    Fetches only (business_name, location_city, location_country) per row — ~270KB for
+    the full 4,500-slot table — and deduplicates client-side. Cached 5 minutes to avoid
+    hammering Supabase on every agent call. Falls back to _SUPPLIER_DIR_STATIC if
+    Supabase is unreachable.
+    """
+    now = time.time()
+    cached = _SUPPLIER_DIR_CACHE.get("data")
+    if cached and _SUPPLIER_DIR_CACHE.get("expires", 0) > now:
+        return cached
+
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+
+    if sb_url and sb_secret:
+        try:
+            hdrs = {
+                "apikey": sb_secret,
+                "Authorization": f"Bearer {sb_secret}",
+                "Prefer": "count=none",
+            }
+            resp = requests.get(
+                f"{sb_url}/rest/v1/slots",
+                headers=hdrs,
+                params=[
+                    ("select", "business_name,location_city,location_country"),
+                    ("order",  "business_name.asc"),
+                    ("limit",  10000),
+                ],
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                supplier_map: dict[str, dict] = {}
+                for row in resp.json():
+                    name    = row.get("business_name") or ""
+                    city    = row.get("location_city") or ""
+                    country = row.get("location_country") or ""
+                    if not name:
+                        continue
+                    if name not in supplier_map:
+                        supplier_map[name] = {"name": name, "destinations": set(), "platform": "Bokun"}
+                    if city:
+                        supplier_map[name]["destinations"].add(city)
+                    if country:
+                        supplier_map[name]["destinations"].add(country)
+
+                result = [
+                    {"name": v["name"], "destinations": sorted(v["destinations"]), "platform": v["platform"]}
+                    for v in sorted(supplier_map.values(), key=lambda x: x["name"])
+                ]
+                _SUPPLIER_DIR_CACHE["data"]    = result
+                _SUPPLIER_DIR_CACHE["expires"] = now + _SUPPLIER_DIR_CACHE_TTL
+                return result
+        except Exception:
+            pass  # Fall through to static
+
+    # Static fallback
+    _SUPPLIER_DIR_CACHE["data"]    = _SUPPLIER_DIR_STATIC
+    _SUPPLIER_DIR_CACHE["expires"] = now + _SUPPLIER_DIR_CACHE_TTL
+    return _SUPPLIER_DIR_STATIC
 
 
 def _load_booked() -> set:
@@ -1094,7 +1347,34 @@ def health():
     except Exception:
         pass
 
-    response: dict = {"status": "ok", "slots": slot_count}
+    # ── Supabase Storage connectivity ─────────────────────────────────────────
+    supabase_storage_ok = False
+    if sb_url and sb_secret:
+        try:
+            hc = requests.get(
+                f"{sb_url}/storage/v1/object/bookings/_health_check.json",
+                headers=_sb_storage_headers(), timeout=4,
+            )
+            supabase_storage_ok = hc.status_code == 200
+        except Exception:
+            pass
+
+    # ── Slot discovery freshness ───────────────────────────────────────────────
+    discovery_slot_count = _last_discovery_slot_count
+    if not discovery_slot_count and DATA_FILE.exists():
+        try:
+            discovery_slot_count = len(json.loads(DATA_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+
+    response: dict = {
+        "status": "ok",
+        "slots": slot_count,
+        "supabase_storage": "ok" if supabase_storage_ok else "unreachable",
+        "last_slot_discovery": _last_discovery_at or None,
+        "inventory_slot_count": discovery_slot_count,
+        "scheduler_running": Path(".tmp/_scheduler.pid").exists(),
+    }
     if search_success_rate is not None:
         response["search_slots_success_rate_1h"] = search_success_rate
     if book_success_rate is not None:
@@ -1346,7 +1626,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "11 suppliers, OCTO protocol, instant confirmation",
+            "14 suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,
@@ -1873,7 +2153,13 @@ def create_checkout():
             "session_id":     session.id,
             "slot_id":        slot_id,
             "service_name":   service_name,
+            "business_name":  slot.get("business_name", ""),
+            "location_city":  slot.get("location_city", ""),
+            "start_time":     slot.get("start_time", ""),
+            "customer_name":  customer_name,
             "customer_email": customer_email,
+            "customer_phone": customer_phone,
+            "quantity":       quantity,
             "status":         "pending_payment",
             "payment_status": "unpaid",
             "checkout_url":   session.url,
@@ -1939,6 +2225,7 @@ def book_direct():
     customer_phone = (data.get("customer_phone") or "").strip()
     wallet_id      = (data.get("wallet_id") or "").strip()
     execution_mode = (data.get("execution_mode") or "").strip().lower()
+    quantity       = max(1, min(int(data.get("quantity") or 1), 20))  # clamp 1–20
 
     # Both fields required — wallet proves capability, execution_mode proves intent
     if execution_mode != "autonomous":
@@ -1998,7 +2285,7 @@ def book_direct():
         return jsonify({"status": "failed", "error": "Slot has no price set.",
                         "failure_reason": "no_price"}), 400
 
-    amount_cents = int(float(our_price) * 100)
+    amount_cents = int(float(our_price) * quantity * 100)  # total for all persons
 
     # Check balance before attempting — fail fast, never partial
     balance = wlt_mod.get_balance(wallet_id)
@@ -2114,7 +2401,7 @@ def book_direct():
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url)
+            fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url, quantity)
             # _fulfill_booking returns a 3-tuple: (confirmation, booking_meta, supplier_reference)
             confirmation, booking_meta, supplier_reference = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
     except Exception as exc:
@@ -2135,6 +2422,12 @@ def book_direct():
                                               "refunded_at": datetime.now(timezone.utc).isoformat()})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
+        try:
+            from send_booking_email import send_booking_email
+            send_booking_email("booking_failed", customer_email, customer_name,
+                               slot, error_reason=str(fulfill_error))
+        except Exception as mail_err:
+            print(f"[DIRECT] Failure email error (non-fatal): {mail_err}")
         return jsonify({
             "status":         "failed",
             "failure_reason": failure_reason,
@@ -2159,12 +2452,18 @@ def book_direct():
         "platform":              platform,
         "supplier_id":           supplier_id,
         "service_name":          service_name,
-        "price_charged":         our_price,
+        "business_name":         slot.get("business_name", ""),
+        "location_city":         slot.get("location_city", ""),
+        "start_time":            slot.get("start_time", ""),
+        "price_charged":         amount_cents / 100,  # total for all persons
+        "quantity":              quantity,
         "status":                "booked",
         "payment_method":        "wallet",
         "wallet_id":             wallet_id,
         "executed_at":           datetime.now(timezone.utc).isoformat(),
+        "customer_name":         customer_name,
         "customer_email":        customer_email,
+        "customer_phone":        customer_phone,
         "slot_id":               slot_id,
         "execution_duration_ms": booking_meta.get("execution_duration_ms"),
         "reservation_ms":        booking_meta.get("reservation_ms"),
@@ -2191,6 +2490,22 @@ def book_direct():
 
     print(f"[DIRECT] Autonomous booking complete: {booking_record_id} "
           f"confirmation={confirmation} wallet={wallet_id} charged=${our_price:.2f}")
+
+    try:
+        from send_booking_email import send_booking_email
+        _direct_host = os.getenv("BOOKING_SERVER_HOST", "")
+        _direct_cancel_url = (
+            f"{_direct_host}/cancel/{booking_record_id}"
+            f"?t={_make_cancel_token(booking_record_id)}"
+        ) if _direct_host else ""
+        send_booking_email(
+            "booking_confirmed", customer_email, customer_name,
+            {**slot, "our_price": amount_cents / 100},
+            confirmation_number=str(confirmation or ""),
+            cancel_url=_direct_cancel_url,
+        )
+    except Exception as mail_err:
+        print(f"[DIRECT] Confirmation email error (non-fatal): {mail_err}")
 
     return jsonify({
         "status":                   "confirmed",
@@ -2385,7 +2700,17 @@ def _fulfill_booking_async(
     import concurrent.futures
     stripe = _stripe()
     slot_for_email = get_slot_by_id(slot_id) or {"service_name": service_name or "your booking"}
+    # Override our_price with the actual total charged (amount_total already includes
+    # quantity × per-person price from Stripe). Without this, emails show per-person
+    # price even when the customer booked multiple seats.
+    slot_for_email = {**slot_for_email, "our_price": amount_total / 100}
     _exec_start = time.monotonic()
+
+    # Pre-initialize so the failure handler can detect whether the OCTO booking
+    # succeeded before a payment capture failure (and queue the orphan for cancellation).
+    confirmation       = None
+    supplier_reference = None
+    booking_meta: dict = {}
 
     if dry_run:
         print(f"[FULFILL] DRY RUN — skipping supplier call: session={session_id} slot={slot_id}")
@@ -2441,11 +2766,16 @@ def _fulfill_booking_async(
             "supplier_id":           supplier_id,
             "booking_url":           booking_url,
             "service_name":          service_name,
+            "business_name":         slot_for_email.get("business_name", ""),
+            "location_city":         slot_for_email.get("location_city", ""),
+            "start_time":            slot_for_email.get("start_time", ""),
             "price_charged":         amount_total / 100,
             "status":                "booked",
             "dry_run":               dry_run,
             "executed_at":           datetime.now(timezone.utc).isoformat(),
+            "customer_name":         customer["name"],
             "customer_email":        customer["email"],
+            "customer_phone":        customer["phone"],
             "payment_intent_id":     payment_intent,
             "slot_id":               slot_id,
             "execution_duration_ms": round((time.monotonic() - _exec_start) * 1000),
@@ -2482,10 +2812,11 @@ def _fulfill_booking_async(
 
         # Skip customer emails in dry_run — no real customer, no noise in their inbox
         if not dry_run:
+            _host = os.getenv("BOOKING_SERVER_HOST", "")
             cancel_url = (
-                f"{os.getenv('BOOKING_SERVER_HOST', '')}/cancel/{booking_record_id}"
+                f"{_host}/cancel/{booking_record_id}"
                 f"?t={_make_cancel_token(booking_record_id)}"
-            )
+            ) if _host else ""
             try:
                 send_booking_email("booking_confirmed", customer["email"], customer["name"],
                                    slot_for_email, confirmation_number=str(confirmation or ""),
@@ -2499,6 +2830,20 @@ def _fulfill_booking_async(
     except Exception as e:
         failure_reason = _classify_failure(e)
         print(f"[FULFILL] Booking failed ({failure_reason}): {e}")
+
+        # If the OCTO booking was confirmed at the supplier BEFORE a payment capture
+        # failure, the supplier has a live booking with no corresponding payment.
+        # Queue it for automatic OCTO cancellation so the slot is released.
+        if confirmation is not None and payment_intent and not dry_run:
+            try:
+                burl_j_fail = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+                supplier_id_fail = burl_j_fail.get("supplier_id", platform)
+                orphan_id = f"capture_fail_{session_id[:20]}"
+                _queue_octo_retry(orphan_id, supplier_id_fail, str(confirmation),
+                                  payment_intent, amount_total / 100)
+                print(f"[FULFILL] Orphaned OCTO booking queued for cancellation: {confirmation}")
+            except Exception as queue_err:
+                print(f"[FULFILL] Could not queue orphaned OCTO cancel: {queue_err} — manual action needed")
 
         if payment_intent:
             try:
@@ -2514,13 +2859,12 @@ def _fulfill_booking_async(
             "error":         str(e)[:500],
             "failed_at":     datetime.now(timezone.utc).isoformat(),
         })
-        # Also update the pending booking record so agents polling get_booking_status
-        # see the failure instead of "pending_payment" indefinitely.
+        # Merge into the pending booking record — do NOT overwrite, as the pending
+        # record contains service_name, customer fields, checkout_url, etc. that
+        # are needed for get_booking_status to return useful context after failure.
         if pending_booking_id:
-            _save_booking_record(pending_booking_id, {
-                "booking_id":     pending_booking_id,
-                "session_id":     session_id,
-                "slot_id":        slot_id,
+            _existing_pending = _load_booking_record(pending_booking_id) or {}
+            _save_booking_record(pending_booking_id, {**_existing_pending,
                 "status":         "failed",
                 "failure_reason": failure_reason,
                 "error":          str(e)[:500],
@@ -2607,8 +2951,10 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                     pass
             return confirmation, booking_meta, supplier_reference
     except FileNotFoundError:
-        print(f"[FULFILLMENT] complete_booking.py not found — manual fulfillment needed")
-        return "manual-fulfillment-required", {}, ""
+        # Raising here ensures the caller cancels the payment hold and marks the booking
+        # as failed. Returning a fake confirmation would mark the booking as "booked"
+        # with no actual supplier reservation made.
+        raise Exception("complete_booking.py not found — cannot execute booking")
     except Exception as e:
         # Record failure with circuit breaker
         if is_octo:
@@ -3043,11 +3389,18 @@ def book_with_saved_card(customer_id: str):
             "supplier_id":       _supplier_id,
             "booking_url":       booking_url_raw,
             "service_name":      slot.get("service_name", ""),
+            "business_name":     slot.get("business_name", ""),
+            "location_city":     slot.get("location_city", ""),
+            "start_time":        slot.get("start_time", ""),
+            "currency":          slot.get("currency", "USD"),
             "price_charged":     float(our_price),
+            "payment_method":    "stripe_saved_card",
+            "payment_intent_id": pi.id,
             "status":            "booked",
             "executed_at":       datetime.now(timezone.utc).isoformat(),
+            "customer_name":     customer_name,
             "customer_email":    customer_email,
-            "payment_intent_id": pi.id,
+            "customer_phone":    customer_phone,
             "slot_id":           slot_id,
         })
 
@@ -3827,7 +4180,17 @@ def execute_guaranteed():
 
     result_dict = result.to_dict()
     if result.success:
-        receipt = _make_receipt(result_dict, c_email)
+        # Fetch slot details so the receipt record is complete enough to support
+        # cancellation (wallet refund, email, city/time display).
+        _slot_for_receipt = get_slot_by_id(result.slot_id) or {}
+        receipt = _make_receipt(
+            result_dict,
+            customer_email=c_email,
+            customer={"name": c_name, "email": c_email, "phone": c_phone},
+            payment={"method": payment_method, "wallet_id": wallet_id,
+                     "payment_intent_id": payment_intent_id},
+            slot=_slot_for_receipt,
+        )
         result_dict.update(receipt)
 
     status_code = 200 if result.success else (404 if result.status == "no_slots" else 500)
@@ -4047,12 +4410,15 @@ def get_booking(booking_id: str):
         "status":              record.get("status", "unknown"),
         "service_name":        record.get("service_name"),
         "business_name":       record.get("business_name"),
+        "location_city":       record.get("location_city"),
         "start_time":          record.get("start_time"),
         "customer_name":       record.get("customer_name"),
-        "confirmation_number": record.get("confirmation_number") or record.get("confirmation"),
+        "confirmation_number": record.get("confirmation"),
+        "quantity":            record.get("quantity", 1),
         "price_charged":       record.get("price_charged"),
         "currency":            record.get("currency", "USD"),
         "created_at":          record.get("created_at"),
+        "failure_reason":      record.get("failure_reason"),
     })
 
 
@@ -4127,6 +4493,24 @@ def cancel_booking(booking_id: str):
     # Only mark as "cancelled" if the customer has been refunded (or there was nothing to refund).
     # If Stripe failed, flag as "cancellation_refund_failed" so it gets reviewed/retried.
     stripe_ok = stripe_result.get("success", True)
+
+    # ── Step 4: Wallet credit-back (wallet bookings only — gated on stripe_ok) ──
+    # Only credit back if the Stripe leg succeeded (or there was no Stripe charge).
+    # Prevents double-credit if Job 3 in reconcile_bookings later retries and
+    # also calls credit_wallet on the same record.
+    if stripe_ok and record.get("payment_method") == "wallet" and record.get("wallet_id"):
+        try:
+            wlt_mod = _load_module("manage_wallets")
+            if wlt_mod:
+                price_charged = float(record.get("price_charged") or 0)
+                wlt_mod.credit_wallet(
+                    record["wallet_id"],
+                    int(price_charged * 100),
+                    f"Refund: booking cancelled ({booking_id})",
+                )
+                print(f"[CANCEL] Wallet credit-back issued: {booking_id} → {record['wallet_id']}")
+        except Exception as _wlt_err:
+            print(f"[CANCEL] ⚠ Wallet refund failed (non-fatal — manual action needed): {_wlt_err}")
     cancelled_at = datetime.now(timezone.utc).isoformat()
     record["cancellation_details"] = {"stripe": stripe_result, "octo": octo_result}
     if stripe_ok:
@@ -4136,6 +4520,34 @@ def cancel_booking(booking_id: str):
         record["status"]              = "cancellation_refund_failed"
         record["cancellation_flag_at"] = cancelled_at
     _save_booking_record(booking_id, record)
+
+    # Notify customer — send regardless of OCTO outcome; Stripe is what matters to them.
+    try:
+        from send_booking_email import send_booking_email
+        if record.get("customer_email"):
+            refund_action = stripe_result.get("action", "")
+            refund_desc = (
+                "A full refund has been issued to your original payment method."
+                if refund_action in ("refunded", "hold_cancelled", "already_refunded", "already_cancelled")
+                else (
+                    "Your cancellation has been recorded. If a charge was made, "
+                    "our team will process your refund within 3–5 business days."
+                )
+            )
+            _cancel_slot = {
+                "service_name":  record.get("service_name", "Your Experience"),
+                "start_time":    record.get("start_time", ""),
+                "location_city": record.get("location_city", ""),
+                "our_price":     record.get("price_charged"),
+                "currency":      record.get("currency", "USD"),
+            }
+            send_booking_email(
+                "booking_cancelled", record["customer_email"],
+                record.get("customer_name", ""), _cancel_slot,
+                confirmation_number=booking_id, refund_status=refund_desc,
+            )
+    except Exception as _mail_err:
+        print(f"[CANCEL] Cancellation email failed (non-fatal): {_mail_err}")
 
     return jsonify({
         "success":        stripe_ok,
@@ -4154,14 +4566,33 @@ def cancel_booking(booking_id: str):
 
 def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | tuple[None, None]:
     """
-    Scan Supabase Storage bookings bucket for a record whose confirmation field
-    matches confirmation_code. Returns (booking_id, record) or (None, None).
-    Paginates in pages of 500 to avoid the hard Storage list cap.
+    Look up a booking by confirmation code or supplier_reference.
+    Returns (booking_id, record) or (None, None).
+
+    Fast path: by_confirmation/ index (O(1)) — populated for all bookings written after
+    the index was introduced. Falls back to a full linear scan for older records.
     """
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     if not sb_url:
         return None, None
     headers = _sb_storage_headers()
+
+    # ── Fast path: confirmation index ────────────────────────────────────────
+    try:
+        idx_r = requests.get(
+            f"{sb_url}/storage/v1/object/bookings/by_confirmation/{confirmation_code}.json",
+            headers=headers, timeout=5,
+        )
+        if idx_r.status_code == 200:
+            idx_booking_id = idx_r.json().get("booking_id", "")
+            if idx_booking_id:
+                record = _load_booking_record(idx_booking_id)
+                if record:
+                    return idx_booking_id, record
+    except Exception:
+        pass
+
+    # ── Slow path: linear scan (for records predating the index) ─────────────
 
     names: list[str] = []
     offset = 0
@@ -4183,6 +4614,8 @@ def _find_booking_by_confirmation(confirmation_code: str) -> tuple[str, dict] | 
                 n = item.get("name", "")
                 if (n.endswith(".json")
                         and not n.startswith("cancellation_queue/")
+                        and not n.startswith("by_confirmation/")
+                        and not n.startswith("callback_queue/")
                         and not n.startswith("circuit_breaker/")
                         and not n.startswith("config/")
                         and not n.startswith("idem_")
@@ -4288,6 +4721,21 @@ def bokun_webhook():
                 "error":      stripe_result.get("error"),
             }), 200
 
+    # Wallet credit-back (wallet bookings only)
+    if record.get("payment_method") == "wallet" and record.get("wallet_id"):
+        try:
+            wlt_mod = _load_module("manage_wallets")
+            if wlt_mod:
+                price_charged = float(record.get("price_charged") or 0)
+                wlt_mod.credit_wallet(
+                    record["wallet_id"],
+                    int(price_charged * 100),
+                    f"Refund: supplier cancelled booking ({booking_id})",
+                )
+                print(f"[BOKUN_WEBHOOK] Wallet credit-back issued: {booking_id} → {record['wallet_id']}")
+        except Exception as _wlt_err:
+            print(f"[BOKUN_WEBHOOK] ⚠ Wallet refund failed (non-fatal): {_wlt_err}")
+
     cancelled_at = datetime.now(timezone.utc).isoformat()
     record["status"]       = "cancelled"
     record["cancelled_at"] = cancelled_at
@@ -4377,6 +4825,10 @@ def self_serve_cancel(booking_id: str):
     status       = record.get("status", "")
     already_done = status == "cancelled"
 
+    # Must be initialized before the POST block so the already_done rendering below
+    # can reference it even when the booking was already cancelled on arrival (C-2).
+    refund_issued = False
+
     if request.method == "POST" and not already_done:
         # Execute cancellation inline (same logic as DELETE /bookings/{id})
         stripe_client  = _stripe()
@@ -4391,19 +4843,44 @@ def self_serve_cancel(booking_id: str):
         supplier_id  = record.get("supplier_id", record.get("platform", ""))
         confirmation = record.get("confirmation", "")
         octo_platforms = {"ventrata_edinexplore", "zaui_test", "peek_pro", "bokun_reseller"}
+        # C-3: match the same is_octo check used by DELETE /bookings/{id}
+        is_octo_self = supplier_id in octo_platforms or record.get("platform", "") == "octo"
         octo_result  = {"success": True, "detail": "No OCTO booking"}
-        if supplier_id in octo_platforms and confirmation:
+        if is_octo_self and confirmation:
             octo_result = _cancel_octo_booking(supplier_id, confirmation)
             if not octo_result["success"] and not octo_result.get("permanent"):
                 # Queue for automatic background retry
                 price_charged = float(record.get("price_charged", 0))
                 _queue_octo_retry(booking_id, supplier_id, confirmation, payment_intent, price_charged)
 
+        # C-4: only mark "cancelled" if Stripe succeeded — same logic as DELETE path.
+        # If Stripe failed, mark "cancellation_refund_failed" so it can be reviewed/retried.
+        stripe_ok_self = stripe_result.get("success", True)
+
+        # Wallet credit-back (wallet bookings only — gated on stripe_ok_self).
+        # Prevents double-credit if Job 3 in reconcile_bookings later retries this record.
+        if stripe_ok_self and record.get("payment_method") == "wallet" and record.get("wallet_id"):
+            try:
+                wlt_mod = _load_module("manage_wallets")
+                if wlt_mod:
+                    price_charged = float(record.get("price_charged") or 0)
+                    wlt_mod.credit_wallet(
+                        record["wallet_id"],
+                        int(price_charged * 100),
+                        f"Refund: booking cancelled ({booking_id})",
+                    )
+                    print(f"[SELF_CANCEL] Wallet credit-back issued: {booking_id} → {record['wallet_id']}")
+            except Exception as _wlt_err:
+                print(f"[SELF_CANCEL] ⚠ Wallet refund failed (non-fatal): {_wlt_err}")
         cancelled_at = datetime.now(timezone.utc).isoformat()
-        record["status"]       = "cancelled"
-        record["cancelled_at"] = cancelled_at
         record["cancelled_by"] = "customer_self_serve"
         record["cancellation_details"] = {"stripe": stripe_result, "octo": octo_result}
+        if stripe_ok_self:
+            record["status"]       = "cancelled"
+            record["cancelled_at"] = cancelled_at
+        else:
+            record["status"]              = "cancellation_refund_failed"
+            record["cancellation_flag_at"] = cancelled_at
         _save_booking_record(booking_id, record)
 
         # Notify customer — refund_status reflects actual outcome
@@ -4430,6 +4907,7 @@ def self_serve_cancel(booking_id: str):
                     slot=slot,
                     confirmation_number=booking_id,
                     refund_status=refund_desc,
+                    cancelled_by_customer=True,
                 )
         except Exception as _mail_err:
             print(f"[SELF_CANCEL] Cancellation email failed (non-fatal): {_mail_err}")
@@ -4471,6 +4949,186 @@ def self_serve_cancel(booking_id: str):
     <p style="margin-top:20px;"><a href="{landing_url}" style="color:#64748b;font-size:14px;">
       Keep my booking</a></p>
     </body></html>"""
+
+
+# ── Dry-run / test endpoint ───────────────────────────────────────────────────
+
+@app.route("/api/test/book-dry-run", methods=["POST"])
+def book_dry_run():
+    """
+    Dry-run end-to-end booking test — validates the full pipeline without real
+    charges, real supplier calls, or real email sends.
+
+    Use this before deploying, after a credentials rotation, or any time you
+    want confidence that the happy path would work.
+
+    Checks (in order):
+      1. Slot lookup — can we resolve a slot_id from the aggregated inventory?
+      2. Pricing — does the slot have a valid our_price?
+      3. Wallet balance — is the balance sufficient (if wallet_id provided)?
+      4. Booking URL parse — can we extract supplier_id from booking_url?
+      5. OCTO supplier config — is the supplier enabled and API key present?
+      6. OCTO connectivity — can we reach the supplier's /products endpoint?
+      7. Stripe connectivity — is STRIPE_SECRET_KEY valid?
+      8. Email config — is SMTP or SendGrid configured?
+
+    No bookings are made. No charges are applied. No emails are sent.
+
+    Body (all optional — defaults are chosen automatically):
+      {
+        "slot_id":   "abc123",    # defaults to first available slot
+        "wallet_id": "wlt_..."    # if omitted, wallet balance check is skipped
+      }
+
+    Requires a valid X-API-Key header (same as /api/book/direct).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not _validate_api_key(api_key):
+        return jsonify({"success": False, "error": "Unauthorized. Valid X-API-Key required."}), 401
+
+    data      = request.get_json(force=True, silent=True) or {}
+    slot_id   = (data.get("slot_id") or "").strip()
+    wallet_id = (data.get("wallet_id") or "").strip()
+
+    results: dict = {}
+    all_ok = True
+
+    # ── 1. Slot lookup ─────────────────────────────────────────────────────────
+    slot = get_slot_by_id(slot_id) if slot_id else None
+    if slot is None:
+        # Fall back to first available slot in aggregated inventory
+        try:
+            slots = _load_slots_from_supabase(hours_ahead=168, limit=1)
+            slot  = slots[0] if slots else None
+        except Exception:
+            slot = None
+    if slot:
+        results["slot_lookup"] = {"ok": True, "slot_id": slot.get("slot_id"),
+                                  "service_name": slot.get("service_name", "?")}
+    else:
+        results["slot_lookup"] = {"ok": False, "error": "No slots available in inventory"}
+        all_ok = False
+
+    # ── 2. Pricing ─────────────────────────────────────────────────────────────
+    our_price = float(slot.get("our_price") or slot.get("price") or 0) if slot else 0
+    if our_price > 0:
+        results["pricing"] = {"ok": True, "our_price": our_price}
+    else:
+        results["pricing"] = {"ok": False, "error": "Slot has no our_price set"}
+        all_ok = False
+
+    # ── 3. Wallet balance ──────────────────────────────────────────────────────
+    if wallet_id:
+        try:
+            wlt_mod = _load_module("manage_wallets")
+            balance = wlt_mod.get_balance(wallet_id) if wlt_mod else None
+            if balance is not None and balance >= int(our_price * 100):
+                results["wallet_balance"] = {"ok": True, "balance_cents": balance,
+                                             "required_cents": int(our_price * 100)}
+            else:
+                results["wallet_balance"] = {"ok": False,
+                                             "error": f"Balance {balance} < required {int(our_price * 100)}"}
+                all_ok = False
+        except Exception as e:
+            results["wallet_balance"] = {"ok": False, "error": str(e)}
+            all_ok = False
+    else:
+        results["wallet_balance"] = {"ok": True, "note": "No wallet_id provided — check skipped"}
+
+    # ── 4. Booking URL parse ───────────────────────────────────────────────────
+    supplier_id = None
+    if slot:
+        booking_url = slot.get("booking_url", "")
+        try:
+            burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+            supplier_id = burl_j.get("supplier_id", slot.get("platform", ""))
+        except Exception:
+            supplier_id = slot.get("platform", "")
+        if supplier_id:
+            results["booking_url_parse"] = {"ok": True, "supplier_id": supplier_id}
+        else:
+            results["booking_url_parse"] = {"ok": False, "error": "Could not determine supplier_id"}
+            all_ok = False
+
+    # ── 5. OCTO supplier config ────────────────────────────────────────────────
+    octo_api_key = ""
+    octo_base_url = ""
+    if supplier_id:
+        try:
+            seeds_path = Path(__file__).parent / "seeds" / "octo_suppliers.json"
+            suppliers  = json.loads(seeds_path.read_text(encoding="utf-8"))
+            supplier   = next((s for s in suppliers if s.get("supplier_id") == supplier_id and s.get("enabled")), None)
+            if supplier:
+                octo_api_key  = os.getenv(supplier.get("api_key_env", ""), "").strip()
+                octo_base_url = supplier.get("base_url", "")
+                if octo_api_key:
+                    results["octo_config"] = {"ok": True, "supplier_id": supplier_id,
+                                              "api_key_env": supplier.get("api_key_env")}
+                else:
+                    results["octo_config"] = {"ok": False,
+                                              "error": f"API key not set ({supplier.get('api_key_env')})"}
+                    all_ok = False
+            else:
+                results["octo_config"] = {"ok": False,
+                                          "error": f"Supplier '{supplier_id}' not found or not enabled"}
+                all_ok = False
+        except Exception as e:
+            results["octo_config"] = {"ok": False, "error": str(e)}
+            all_ok = False
+
+    # ── 6. OCTO connectivity ───────────────────────────────────────────────────
+    if octo_api_key and octo_base_url:
+        try:
+            r = requests.get(
+                f"{octo_base_url.rstrip('/')}/suppliers",
+                headers={"Authorization": f"Bearer {octo_api_key}"},
+                timeout=8,
+            )
+            if r.status_code in (200, 404):  # 404 is fine; endpoint may not exist on all vendors
+                results["octo_connectivity"] = {"ok": True, "http_status": r.status_code}
+            else:
+                results["octo_connectivity"] = {"ok": False,
+                                                "error": f"HTTP {r.status_code}: {r.text[:100]}"}
+                all_ok = False
+        except Exception as e:
+            results["octo_connectivity"] = {"ok": False, "error": str(e)}
+            all_ok = False
+    else:
+        results["octo_connectivity"] = {"ok": True, "note": "Skipped — no OCTO credentials resolved"}
+
+    # ── 7. Stripe connectivity ─────────────────────────────────────────────────
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if stripe_key:
+        try:
+            import stripe as _stripe_mod
+            _stripe_mod.api_key = stripe_key
+            _stripe_mod.Balance.retrieve()
+            results["stripe"] = {"ok": True}
+        except Exception as e:
+            results["stripe"] = {"ok": False, "error": str(e)[:120]}
+            all_ok = False
+    else:
+        results["stripe"] = {"ok": False, "error": "STRIPE_SECRET_KEY not set"}
+        all_ok = False
+
+    # ── 8. Email config ────────────────────────────────────────────────────────
+    smtp_ok  = bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASSWORD"))
+    sg_ok    = bool(os.getenv("SENDGRID_API_KEY"))
+    if smtp_ok or sg_ok:
+        results["email_config"] = {"ok": True,
+                                   "smtp": smtp_ok, "sendgrid": sg_ok}
+    else:
+        results["email_config"] = {"ok": False,
+                                   "error": "Neither SMTP nor SendGrid is configured"}
+        all_ok = False
+
+    return jsonify({
+        "dry_run":      True,
+        "all_checks_ok": all_ok,
+        "checks":       results,
+        "summary":      "All systems go — ready to accept real bookings." if all_ok
+                        else "One or more checks failed. Review 'checks' for details.",
+    }), 200 if all_ok else 500
 
 
 # ── Agent wallet routes ───────────────────────────────────────────────────────
@@ -4880,12 +5538,13 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from Bokun (Arctic Adventures, Bicycle Roma, Pure Morocco Experience, O Turista Tours, "
-            "Factory Alliance Kyoto, Boka Bliss Montenegro, TourTransfer Bucharest, "
-            "Hillborn Experiences Tanzania, REDRIB Experience Finland, "
-            "Íshestar Riding Tours Iceland, Marvel Egypt Tours), "
-            "Ventrata, Zaui, and Peek Pro via the OCTO open booking protocol. "
-            "Slots are sorted by urgency (soonest first)."
+            "from Bokun (Arctic Adventures, Arctic Sea Tours, Bicycle Roma, Boka Bliss, "
+            "EgyExcursions, Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, "
+            "O Turista Tours, Pure Morocco Experience, REDRIB Experience, Ramen Factory Kyoto, "
+            "TourTransfer Bucharest, Vakare Travel Service) via the OCTO open booking protocol. "
+            "Use city/category/hours_ahead/max_price to filter. "
+            "Slots are sorted by urgency (soonest first). "
+            "Call get_supplier_info first to see all available destinations."
         ),
         "annotations": {
             "readOnlyHint": True,
@@ -4896,11 +5555,10 @@ _MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "city":        {"type": "string",  "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
-                "category":    {"type": "string",  "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
-                "hours_ahead": {"type": "number",  "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
-                "max_price":   {"type": "number",  "description": "Maximum price in USD. Omit or set to 0 for all prices."},
-                "limit":       {"type": "integer", "description": "Max results to return. Default: 100. Increase for broader searches (e.g. 500)."},
+                "city":        {"type": "string", "description": "City or country filter, partial match (e.g. 'Rome', 'Iceland'). Leave empty for all locations."},
+                "category":    {"type": "string", "description": "Category filter (e.g. 'experiences'). Leave empty for all."},
+                "hours_ahead": {"type": "number", "description": "Return slots starting within this many hours. Default: 168 (1 week)."},
+                "max_price":   {"type": "number", "description": "Maximum price in USD. Omit or set to 0 for all prices."},
             },
         },
     },
@@ -4976,15 +5634,15 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     if name == "search_slots":
         # Call Supabase directly — avoids HTTP loopback which can deadlock
         # gunicorn workers when the handler thread blocks waiting for itself.
-        # Default limit 100 (one Supabase page, ~1s). Cache results 60s to
-        # absorb burst agent calls without re-paginating on every request.
+        # No agent-facing limit: agents use city/category/hours_ahead to narrow.
+        # A limit cap here would silently hide inventory from agents.
+        # Cache results 60s to absorb burst calls without re-paginating.
         hours_ahead = float(arguments.get("hours_ahead") or 168)
         category    = str(arguments.get("category") or "")
         city        = str(arguments.get("city") or "")
         budget      = float(arguments.get("max_price") or 0)
-        limit       = int(arguments.get("limit") or 100)
 
-        cache_key = f"{hours_ahead}|{category}|{city}|{budget}|{limit}"
+        cache_key = f"{hours_ahead}|{category}|{city}|{budget}"
         now = time.time()
         cached = _MCP_SLOTS_CACHE.get(cache_key)
         if cached and cached["expires"] > now:
@@ -4992,7 +5650,7 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
 
         slots = _load_slots_from_supabase(
             hours_ahead=hours_ahead, category=category,
-            city=city, budget=budget, limit=limit,
+            city=city, budget=budget,
         )
         result = [_sanitize_slot(s) for s in slots]
         _MCP_SLOTS_CACHE[cache_key] = {"slots": result, "expires": now + _MCP_SLOTS_CACHE_TTL}
@@ -5009,17 +5667,7 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
 
     elif name == "get_supplier_info":
         return {
-            "suppliers": [
-                {"name": "Arctic Adventures", "destinations": ["Reykjavik", "Iceland"], "platform": "Bokun"},
-                {"name": "Bicycle Roma", "destinations": ["Rome"], "platform": "Bokun"},
-                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara"], "platform": "Bokun"},
-                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra", "Fatima", "Nazare"], "platform": "Bokun"},
-                {"name": "Factory Alliance Kyoto", "destinations": ["Kyoto", "Japan"], "platform": "Bokun"},
-                {"name": "Boka Bliss", "destinations": ["Kotor", "Montenegro"], "platform": "Bokun"},
-                {"name": "TourTransfer Bucharest", "destinations": ["Bucharest", "Romania"], "platform": "Bokun"},
-                {"name": "Ventrata network", "destinations": ["Edinburgh", "global"], "platform": "Ventrata"},
-                {"name": "Zaui network", "destinations": ["Canada"], "platform": "Zaui"},
-            ],
+            "suppliers": _get_live_supplier_directory(),
             "protocol": "OCTO",
             "confirmation": "instant",
             "docs": "https://lastminutedealshq.com/developers",
@@ -5156,27 +5804,32 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory across "
             "Iceland, Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, "
-            "Romania, and more — sourced live from production booking systems via the "
-            "OCTO open standard. "
-            "Suppliers include Arctic Adventures (Iceland glacier hikes, snowmobiling, "
-            "whale watching, aurora, lava tunnels), Bicycle Roma (Rome e-bike tours, "
-            "food tours, day trips), Pure Morocco Experience (Sahara desert tours, "
-            "Marrakech cultural experiences), Ramen Factory Kyoto (cooking classes, "
-            "workshops), O Turista Tours (Lisbon, Porto, Sintra, Fatima day trips), "
-            "Arctic Sea Tours (North Iceland whale watching), "
-            "Hillborn Experiences (Tanzania ultra-luxury safaris, Mount Kilimanjaro "
-            "climbs, Zanzibar retreats — East Africa). "
+            "Romania, Egypt, Turkey, and more — sourced live from production booking "
+            "systems via the OCTO open standard. "
+            "14 active suppliers: Arctic Adventures (Iceland glacier hikes, snowmobiling, "
+            "whale watching, aurora), Arctic Sea Tours (North Iceland whale watching), "
+            "Bicycle Roma (Rome e-bike tours, food tours), Pure Morocco Experience "
+            "(Sahara desert tours, Marrakech), Ramen Factory Kyoto (cooking classes), "
+            "O Turista Tours (Lisbon, Porto, Sintra day trips), "
+            "Hillborn Experiences (Tanzania ultra-luxury safaris, Kilimanjaro, Zanzibar), "
+            "REDRIB Experience (Helsinki), Boka Bliss (Kotor, Montenegro), "
+            "TourTransfer Bucharest (Romania), Íshestar Riding Tours (Iceland horse riding), "
+            "Marvel Egypt Tours (Cairo, Luxor, Aswan), EgyExcursions (Egypt), "
+            "Vakare Travel Service (Antalya, Turkey). "
+            "Call get_supplier_info() to see live destination coverage. "
             "Use search_slots to find available experiences, then book_slot to create "
             "a Stripe checkout session. Bookings are real and go directly to the supplier."
         ),
     )
 
     def _safe(s):
+        # price is stripped by _sanitize_slot() before this is called — omit it.
+        # location_state carries useful city-disambiguation info — include it.
         return {k: s.get(k) for k in (
             "slot_id", "category", "service_name", "business_name",
-            "location_city", "location_country", "start_time", "end_time",
-            "duration_minutes", "hours_until_start", "spots_open",
-            "price", "our_price", "currency", "confidence",
+            "location_city", "location_state", "location_country",
+            "start_time", "end_time", "duration_minutes",
+            "hours_until_start", "spots_open", "our_price", "currency", "confidence",
         )}
 
     @mcp.tool()
@@ -5210,6 +5863,7 @@ def _start_mcp_thread():
         customer_phone: str,
         execution_mode: str = "approval",
         wallet_id: str = "",
+        quantity: int = 1,
     ) -> dict:
         """
         Book a slot for a customer.
@@ -5234,6 +5888,7 @@ def _start_mcp_thread():
           customer_phone — with country code, e.g. +15550001234
           execution_mode — "approval" (default) or "autonomous"
           wallet_id      — required when execution_mode="autonomous" (format: wlt_...)
+          quantity       — number of people (default 1; price is per-person × quantity)
         """
         try:
             if execution_mode == "autonomous":
@@ -5246,6 +5901,7 @@ def _start_mcp_thread():
                     "customer_phone": customer_phone,
                     "wallet_id":      wallet_id,
                     "execution_mode": "autonomous",
+                    "quantity":       max(1, int(quantity)),
                 }, timeout=60)  # longer timeout — fulfillment is synchronous
             else:
                 r = _mcp_req.post(f"{BOOKING_API}/api/book", headers=_HDRS, json={
@@ -5253,6 +5909,7 @@ def _start_mcp_thread():
                     "customer_name":  customer_name,
                     "customer_email": customer_email,
                     "customer_phone": customer_phone,
+                    "quantity":       max(1, int(quantity)),
                 }, timeout=15)
             r.raise_for_status()
             return r.json()
@@ -5278,25 +5935,10 @@ def _start_mcp_thread():
 
     @mcp.tool()
     def get_supplier_info() -> dict:
-        """Returns supplier network info. Call before search_slots to understand available destinations."""
+        """Returns live supplier network info — destinations derived from current Supabase inventory.
+        Call before search_slots to understand what regions and activity types are available."""
         return {
-            "suppliers": [
-                {"name": "Arctic Adventures", "destinations": ["Reykjavik", "Husafell", "Skaftafell", "Iceland"],
-                 "categories": ["glacier hikes", "ice caves", "snowmobiling", "aurora", "diving", "whale watching"]},
-                {"name": "Arctic Sea Tours", "destinations": ["Dalvik", "North Iceland"],
-                 "categories": ["whale watching", "sea excursions"]},
-                {"name": "Bicycle Roma", "destinations": ["Rome", "Appia Antica", "Castelli Romani"],
-                 "categories": ["e-bike tours", "food tours", "day trips", "city tours"]},
-                {"name": "Pure Morocco Experience", "destinations": ["Marrakech", "Merzouga", "Sahara"],
-                 "categories": ["desert tours", "multi-day tours", "cultural experiences"]},
-                {"name": "Ramen Factory Kyoto", "destinations": ["Kyoto", "Japan"],
-                 "categories": ["cooking classes", "ramen workshops"]},
-                {"name": "O Turista Tours", "destinations": ["Lisbon", "Porto", "Sintra", "Fatima"],
-                 "categories": ["private tours", "day trips", "transfers"]},
-                {"name": "Hillborn Experiences", "destinations": ["Arusha", "Serengeti", "Zanzibar", "Kilimanjaro"],
-                 "categories": ["private safaris", "Kilimanjaro climbs", "Zanzibar retreats", "ultra-luxury tours"],
-                 "notes": "Ultra-luxury East African operator. $1M public liability insured."},
-            ],
+            "suppliers": _get_live_supplier_directory(),
             "protocol": "OCTO via Bokun — direct supplier API, production inventory only",
             "payment": "Stripe checkout, instant supplier confirmation",
         }

@@ -253,6 +253,45 @@ def _infer_category(product: dict, supplier_category: str) -> str:
     return supplier_category or "experiences"
 
 
+def _resolve_product_identity(product: dict, supplier: dict) -> dict | None:
+    """
+    Resolve the real-world supplier name/city/country for a product.
+    Returns a {name, city, country} dict, or None if all three levels fail.
+
+    Resolution order (most specific → least specific):
+    1. reference_supplier_map  — prefix match on product.reference (city-level precision)
+    2. product_id_map          — exact product ID match (for null/empty reference strings)
+    3. vendor_id_to_supplier_map — vendor-level catch-all (for any unknown/future ref patterns)
+                                   requires product._vendor_id to be tagged by fetch_supplier()
+    """
+    ref_map = supplier.get("reference_supplier_map", {})
+    ref     = product.get("reference", "") or ""
+
+    # Level 1: reference prefix match
+    if ref_map and ref:
+        for prefix in sorted(ref_map.keys(), key=len, reverse=True):
+            if ref.startswith(prefix) or ref.upper().startswith(prefix.upper()):
+                return ref_map[prefix]
+
+    # Level 2: product ID exact match (null/empty ref strings)
+    pid_map    = supplier.get("product_id_map", {})
+    product_id = str(product.get("id", ""))
+    if pid_map and product_id:
+        result = pid_map.get(product_id)
+        if result:
+            return result
+
+    # Level 3: vendor ID catch-all (tagged on product by fetch_supplier during collection)
+    vendor_id = product.get("_vendor_id")
+    if vendor_id is not None:
+        vid_map = supplier.get("vendor_id_to_supplier_map", {})
+        result  = vid_map.get(str(vendor_id))
+        if result:
+            return result
+
+    return None
+
+
 def octo_availability_to_slot(
     avail: dict,
     product: dict,
@@ -296,16 +335,9 @@ def octo_availability_to_slot(
     product_id    = product.get("id", "")
     product_name  = product.get("internalName") or product.get("title") or product_id
 
-    # Resolve supplier name and city from reference prefix map (Bokun reseller use case)
-    ref_map = supplier.get("reference_supplier_map", {})
-    ref     = product.get("reference", "") or ""
-    resolved = None
-    if ref_map and ref:
-        # Try longest matching prefix first (e.g. "AA0907" before "AA")
-        for prefix in sorted(ref_map.keys(), key=len, reverse=True):
-            if ref.startswith(prefix) or ref.upper().startswith(prefix.upper()):
-                resolved = ref_map[prefix]
-                break
+    # Use pre-resolved identity tagged by fetch_supplier() — falls back to inline resolution
+    # for suppliers without vendor_ids (Ventrata, etc.) where pre-tagging doesn't occur.
+    resolved      = product.get("_resolved_identity") or _resolve_product_identity(product, supplier)
     supplier_name = (resolved or {}).get("name") or supplier.get("name", "OCTO Supplier")
     city          = (resolved or {}).get("city")  or supplier.get("city", "")
     state         = supplier.get("state", "")
@@ -326,6 +358,9 @@ def octo_availability_to_slot(
         # vendor_name = resolved business name (e.g. "arctic_adventures") for
         # per-supplier circuit breakers. Falls back to supplier_id if unresolved.
         "vendor_name":    supplier_name.lower().replace(" ", "_").replace("-", "_")[:40],
+        # start_time included so OCTOBooker 409 re-resolution can match the exact
+        # originally-requested time slot (not silently rebook a different departure).
+        "start_time":     start_iso,
     })
 
     raw = {
@@ -413,6 +448,8 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
             vprods = _fetch_products_for_vendor(vid)
             new = [p for p in vprods if p.get("id") not in seen_ids]
             seen_ids.update(p.get("id") for p in new)
+            for p in new:
+                p["_vendor_id"] = vid  # tag for vendor_id_to_supplier_map fallback
             products.extend(new)
             print(f"  [{name}] vendor {vid}: {len(vprods)} products ({len(new)} new)")
             time.sleep(REQUEST_DELAY_S)
@@ -420,6 +457,24 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
     else:
         products = _fetch_products_for_vendor()
         print(f"  [{name}] {len(products)} products")
+
+    # Pre-resolve each product's supplier identity once before the availability loop.
+    # This avoids re-running resolution for every availability slot, and allows us to
+    # log exactly one warning per unresolvable product rather than once per slot.
+    unresolvable = []
+    for product in products:
+        identity = _resolve_product_identity(product, supplier)
+        product["_resolved_identity"] = identity
+        if identity is None:
+            unresolvable.append(
+                f"pid={product.get('id')} ref={repr(product.get('reference',''))} "
+                f"vendor={product.get('_vendor_id')}"
+            )
+    if unresolvable:
+        for info in unresolvable:
+            print(f"  [{name}] WARNING: unresolved product — {info}")
+        print(f"  [{name}] WARNING: {len(unresolvable)} product(s) could not be resolved to a "
+              f"supplier. Add entries to vendor_id_to_supplier_map in octo_suppliers.json.")
 
     slots = []
 

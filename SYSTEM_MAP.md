@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-16 (v7 — test supplier slots purged; zombie booking resolved; sync_to_supabase.py permanent filter added)
+**Last updated:** 2026-04-16 (v19 — Session 15: Smithery reconnected (smithery.yaml missing command fixed), booking auth via configSchema, 14-supplier list corrected, get_supplier_info cached, slot cache bounded; 108 total bugs fixed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -32,9 +32,10 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  DATA PIPELINE (local laptop, runs every 4h via Task Scheduler)     │
+│  DATA PIPELINE (local laptop OR Railway APScheduler every 4h)        │
 │  fetch_octo_slots.py → aggregate_slots.py → compute_pricing.py      │
 │  → sync_to_supabase.py → update_landing_page.py                     │
+│  ✅ (A-9) Railway now runs fetch_octo + aggregate autonomously every 4h │
 └────────────────────────────┬────────────────────────────────────────┘
                              │ upserts to Supabase
                              ▼
@@ -46,6 +47,10 @@
 │  • "circuit_breaker/{id}.json"— per-supplier circuit state         │
 │  • "config/wallets.json"      — ALL wallet balances in ONE file     │
 │  • "inbound_emails/"          — SendGrid parsed inbound emails      │
+│  • "intent_sessions.json"     — active agent intent sessions        │
+│  • "market_snapshot.json"     — pre-computed market intelligence    │
+│  • "sms_subscribers.json"     — SMS opt-in subscriber list          │
+│  • "sms_sent_log.json"        — per-phone daily send tracking       │
 │  • "request_logs" (Postgres)  — API call logs (BLOCKED from Railway)│
 └──────────┬──────────────────────────────────────────────────────────┘
            │ REST API
@@ -56,7 +61,7 @@
 │                                                                     │
 │  Booking entry points:                                              │
 │  POST /api/book              — human Stripe checkout (quantity OK)  │
-│  POST /api/book/direct       — autonomous wallet (❌ qty broken)    │
+│  POST /api/book/direct       — autonomous wallet (quantity OK)      │
 │  POST /api/customers/{id}/book — autonomous saved Stripe card       │
 │  POST /execute/guaranteed    — autonomous multi-path engine         │
 │  POST /execute/best          — goal-optimized autonomous booking    │
@@ -77,6 +82,7 @@
 │  Background jobs (APScheduler, in-process):                        │
 │  retry_cancellations()       — every 15 min                        │
 │  reconcile_bookings()        — every 30 min                        │
+│  slot_discovery()            — every 4 h (fetch_octo + aggregate)  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,9 +110,12 @@ START
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
   │    │    ├─ Filter: status in {AVAILABLE, FREESALE, LIMITED}
   │    │    ├─ Filter: starts within hours_ahead (default 168h)
-  │    │    ├─ Resolve supplier from product.reference prefix via reference_supplier_map
-  │    │    │    ├─ PREFIX MATCH → supplier name, city, country
-  │    │    │    └─ NO MATCH → "Bokun Reseller", no city ⚠️ (314 products affected)
+  │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
+  │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
+  │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 13 vendors mapped)
+  │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
+  │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)
   │    │         booking_url = JSON blob: {_type:"octo", base_url, api_key_env,
   │    │                                   product_id, option_id, availability_id,
@@ -247,8 +256,8 @@ POLLING: GET /bookings/{booking_id}
 
 **Entry point:** POST /api/book/direct
 **Requires:** X-API-Key header + wallet_id + execution_mode: "autonomous"
-**Status:** ❌ BROKEN — unpacking bug (see Bug #1)
-**Quantity support:** ❌ NOT SUPPORTED (quantity always 1 — see Bug #2)
+**Status:** ✅ OPERATIONAL
+**Quantity support:** ✅ SUPPORTED (quantity clamped 1–20)
 
 ```
 POST /api/book/direct
@@ -277,23 +286,25 @@ POST /api/book/direct
   │    └─ DEBIT FAILED → delete recovery record → 500
   ├─ Update crash-recovery record (wallet_debited=true)
   │
-  ├─ _fulfill_booking(slot_id, customer, platform, booking_url)  ← ❌ BUG: no quantity arg
+  ├─ _fulfill_booking(slot_id, customer, platform, booking_url, quantity)
   │    Returns 3-tuple: (confirmation, booking_meta, supplier_reference)
-  │    ← ❌ BUG: code only unpacks 2 values at line 1984 → ValueError crash on every call
   │
   ├─ FAILURE:
   │    ├─ credit_wallet(wallet_id, amount_cents, "Refund: failed booking")
   │    │    └─ CREDIT FAILS → log "manual refund needed" (no automatic recovery)
   │    ├─ Mark recovery record resolved: "refunded"
+  │    ├─ Send "booking_failed" email (non-fatal if fails)
   │    └─ Return { status: "failed", wallet_refunded: true }
   │
-  └─ SUCCESS (never reached — crashes at tuple unpack):
+  └─ SUCCESS:
        ├─ _mark_booked(slot_id)
        ├─ Save booking record:
-       │    { confirmation, payment_method: "wallet", wallet_id,
-       │      status: "booked", ... }
-       │    ← ❌ BUG: supplier_reference NOT stored (Bug #4)
+       │    { confirmation, supplier_reference, payment_method: "wallet", wallet_id,
+       │      service_name, business_name, location_city, start_time,
+       │      price_charged (= our_price × quantity), quantity, status: "booked", ... }
        ├─ Mark recovery record resolved: "completed"
+       ├─ Send "booking_confirmed" email with confirmation # and cancel link (non-fatal)
+       │    cancel_url only built if BOOKING_SERVER_HOST env var is set
        └─ Return { status: "confirmed", confirmation_number, wallet_balance_remaining }
 
 
@@ -427,27 +438,28 @@ POST /execute/guaranteed
        │    │
        │    ├─ BOOKING SUCCESS → handle payment:
        │    │    ├─ payment_method == "wallet":
-       │    │    │    _charge_wallet() AFTER booking ← ❌ BUG: debit after booking (Bug #8)
-       │    │    │    (book_direct debits BEFORE — opposite pattern, double-spend risk)
-       │    │    │    → wallet charge fails → _cancel_octo() → ❌ no retry queue (Bug #9)
+       │    │    │    _charge_wallet() AFTER booking ⚠️ debit-after pattern (A-11 skipped)
+       │    │    │    → wallet charge fails → _cancel_octo()
+       │    │    │         → fails → _queue_failed_octo_cancel() to retry queue ✅ (A-3)
+       │    │    │         _cancel_octo header fixed ✅ (A-4)
        │    │    │
        │    │    ├─ payment_method == "stripe_pi":
        │    │    │    _capture_stripe(payment_intent_id)
        │    │    │    → capture fails → _cancel_octo() + _cancel_stripe()
+       │    │    │         → cancel fails → _queue_failed_octo_cancel() ✅ (A-3)
        │    │    │
        │    │    └─ payment_method == "stripe_checkout":
        │    │         No payment action here — Stripe webhook handles capture
        │    │
        │    ├─ PAYMENT OK → mark slot booked (in-memory + .tmp/booked_slots.json)
-       │    │    ← ❌ BUG: NOT saved to Supabase Storage (Bug #7)
-       │    │    ← ❌ BUG: .tmp/ files don't persist across Railway redeploys
-       │    │    ← ❌ BUG: GET /bookings/{id} returns 404 for these bookings
-       │    │    ← ❌ BUG: supplier_reference NOT stored (Bokun webhook can't match)
-       │    │    ← ❌ BUG: no crash recovery mechanism
-       │    │    ← ❌ BUG: no cancel link in confirmation email (no booking_id in Supabase)
+       │    │    → _make_receipt() → Supabase Storage (20-field record) ✅ (A-2)
+       │    │         stores: customer_name/phone, wallet_id, payment_intent_id, slot_id,
+       │    │                 supplier_id, supplier_reference, start_time, location_city,
+       │    │                 business_name, currency, payment_method
        │    │
        │    ├─ BOOKING FAILURE → log, try next strategy
-       │    └─ PAYMENT FAILURE after booking → OCTO cancel (best-effort, no retry queue)
+       │    └─ PAYMENT FAILURE after booking → _cancel_octo() (fixed header ✅ A-4)
+       │         → fails → _queue_failed_octo_cancel() (retry queue) ✅ (A-3)
        │
        ├─ All 7 attempts exhausted:
        │    └─ payment_method == "stripe_pi" → cancel the hold
@@ -495,8 +507,8 @@ POST /intent/create
   ├─ goal: "find_and_book" | "monitor_only" | "price_alert"
   ├─ autonomy: "full" (auto-execute) | "notify" (alert only) | "monitor" (never execute)
   │
-  └─ Create intent session → saved to .tmp/intent_sessions.json
-       ← ❌ BUG: NOT saved to Supabase — lost on every Railway redeploy (Bug #10)
+  └─ Create intent session → saved to Supabase Storage "bookings/intent_sessions.json"
+       ✅ FIXED (A-5): Primary Supabase; .tmp/ local fallback. Survives redeploys.
 
 
 GET /intent/{id}      — status poll (API key required, ownership verified)
@@ -506,7 +518,7 @@ POST /intent/{id}/cancel  — marks cancelled (no booking cleanup if mid-executi
 
 IntentMonitor thread (daemon, starts with server, sweeps every 60 seconds):
   │
-  ├─ Load all sessions from .tmp/intent_sessions.json
+  ├─ Load all sessions from Supabase Storage (fallback: .tmp/intent_sessions.json)
   ├─ For each active (non-expired, non-completed, non-cancelled) session:
   │    │
   │    ├─ EXPIRED? → mark "expired", fire callback
@@ -522,14 +534,14 @@ IntentMonitor thread (daemon, starts with server, sweeps every 60 seconds):
   │    ├─ goal == "find_and_book" + autonomy == "full":
   │    │    execute_intent(session):
   │    │    ├─ Calls ExecutionEngine (same as execute/guaranteed)
-  │    │    ├─ SUCCESS → fire booking_completed callback, send email, mark "completed"
-  │    │    │    ← ❌ BUG: same Supabase gap as execute/guaranteed (Bug #7)
+  │    │    ├─ SUCCESS → write booking record to Supabase + .tmp/bookings/ [FIXED B-4]
+  │    │    │         → fire booking_completed callback, send email, mark "completed"
   │    │    └─ FAILURE → stays "monitoring", fire attempt_failed callback, retry next sweep
   │    │
   │    └─ goal == "monitor_only" / autonomy == "notify":
   │         Check for matching slots → fire callback if found, do NOT book
   │
-  └─ Write updated sessions back to .tmp/intent_sessions.json
+  └─ Write updated sessions to Supabase Storage + .tmp/intent_sessions.json
 ```
 
 ---
@@ -553,21 +565,28 @@ POST /cancel/{booking_id}?t={token}  [form submit]
   ├─ Verify HMAC token → 403
   ├─ Load booking record
   │
+  ├─ refund_issued = False  ← initialized before POST block (C-2 fix)
+  │
   ├─ _refund_stripe(payment_intent_id):
   │    ├─ PI status "requires_capture" → cancel hold (customer never charged)
   │    ├─ PI status "succeeded" → full refund created
   │    ├─ PI already cancelled/refunded → treated as success
-  │    └─ Retry 3× with backoff → fails after 3 → log, continue anyway
+  │    └─ Retry 3× with backoff → fails after 3 → log, continue
   │
   ├─ OCTO cancellation (if OCTO platform):
+  │    is_octo = supplier_id in octo_platforms OR platform == "octo"  (C-3 fix)
   │    _cancel_octo_booking(supplier_id, confirmation)
   │    ├─ SUCCESS → booking released on supplier
-  │    └─ FAILURE → ❌ BUG (Bug #5): NOT queued for retry
-  │                  (unlike DELETE /bookings/{id} which queues)
-  │                  Supplier retains active reservation even though customer is refunded
+  │    └─ FAILURE (transient) → _queue_octo_retry() → background retry every 15 min ✅
+  │    └─ FAILURE (permanent 4xx) → log, no retry
   │
-  ├─ Update record: status="cancelled", cancelled_by="customer_self_serve"
-  ├─ Send cancellation email
+  ├─ C-4 fix: Stripe-outcome-dependent record write:
+  │    stripe_ok → status="cancelled", cancelled_at=now
+  │    Stripe failed → status="cancellation_refund_failed", cancellation_flag_at=now
+  │    (matches DELETE /bookings/{id} logic — enables future monitoring/retry)
+  │
+  ├─ record["cancelled_by"] = "customer_self_serve"
+  ├─ Send cancellation email (cancelled_by_customer=True → "You cancelled" copy) (C-8 fix)
   └─ Show "Booking cancelled" page with refund notice
 ```
 
@@ -724,7 +743,7 @@ retry_cancellations.py (every 15 min):
 
 **Which cancellation paths populate the retry queue:**
 - ✅ DELETE /bookings/{id} — queues on OCTO failure
-- ❌ GET/POST /cancel/{booking_id} (self-serve) — does NOT queue on OCTO failure (Bug #5)
+- ✅ GET/POST /cancel/{booking_id} (self-serve) — queues on OCTO failure (corrected in system map; code always did this)
 - ❌ Bokun webhook supplier cancel — does NOT queue on OCTO failure at all
 - ❌ Execute/Guaranteed — no Supabase record, no retry possible
 
@@ -792,11 +811,13 @@ Bokun: POST /api/bokun/webhook?token=...
 **Status:** ✅ search_slots, get_supplier_info working | ✅ book_slot returns checkout_url | ⚠️ Human Stripe payment still required for bookings
 
 ```
-MCP tool: search_slots(city, category, hours_ahead, max_price, limit)
-  ├─ Cache hit (60s TTL, keyed on all params) → return cached
-  ├─ GET /slots from Supabase (via Railway API)
+MCP tool: search_slots(city, category, hours_ahead, max_price)
+  ├─ Cache hit (60s TTL, keyed on city|category|hours_ahead|max_price) → return cached
+  ├─ _load_slots_from_supabase() — full pagination, no agent-facing limit
   ├─ _sanitize_slot(): strips internal fields, recomputes hours_until_start dynamically
   └─ Store in cache, return list
+  ← NOTE: POST /mcp path calls Supabase directly (avoids gunicorn deadlock)
+  ← FastMCP SSE path calls GET /slots via HTTP; both now return full inventory
 
 MCP tool: book_slot(slot_id, customer_name, customer_email, customer_phone, quantity)
   ├─ POST /api/book internally → creates Stripe checkout
@@ -809,7 +830,11 @@ MCP tool: get_booking_status(booking_id)
   └─ GET /bookings/{booking_id} → returns record
 
 MCP tool: get_supplier_info()
-  └─ Returns static supplier directory
+  ├─ _get_live_supplier_directory() — queries Supabase for distinct (business_name, city, country)
+  ├─ Groups client-side, 5-minute cache
+  └─ Falls back to _SUPPLIER_DIR_STATIC (14 known Bokun suppliers) if Supabase unreachable
+  ← Previously: TWO diverging hardcoded lists (POST /mcp: 9 suppliers; FastMCP SSE: 7 suppliers)
+  ← Both implementations were missing Vakare Travel Service (61% of OCTO inventory) — FIXED
 ```
 
 **Smithery connection path:** Smithery → `server.json` → `POST /mcp` on Flask → `_mcp_call_tool()`
@@ -860,9 +885,8 @@ Wallet booking payment timing:
   execution_engine:     DEBIT AFTER booking success (Bug #8 — double-spend risk)
 
 Wallet booking cancellation:
-  ← ❌ BUG (Bug #6): NO credit-back on ANY cancellation path
-     (customer cancel via self-serve, admin cancel via DELETE, supplier cancel via webhook)
-     Only manual wallet credit via internal tools
+  ✅ FIXED (A-1): credit_wallet() called in all 3 paths: DELETE /bookings, self_serve_cancel,
+     bokun_webhook. Called after Stripe refund step. Non-fatal — logs on failure.
 ```
 
 ---
@@ -880,7 +904,7 @@ Writes: deletes from queue on success/permanent-failure, increments count on tra
 Max attempts: 48 (12 hours at 15-min intervals)
 ```
 
-### Job 2: reconcile_bookings (every 30 minutes)
+### Job 2: reconcile_bookings (every 30 minutes) [3 sub-jobs]
 
 **Tool: reconcile_bookings.py**
 
@@ -896,16 +920,26 @@ reconcile_bookings():
   │    ├─ OCTO returns booking: status OK → no action (booking is confirmed with supplier)
   │    │
   │    ├─ OCTO returns "not_found" (404):
-  │    │    → Update Supabase record: status = "reconciliation_required"
-  │    │    ← ❌ Does NOT issue automatic refund
-  │    │    ← ❌ Does NOT trigger customer notification
-  │    │    ← ❌ Does NOT queue OCTO cancellation
-  │    │    → Manual review required
+  │    │    → Update record: status = "reconciliation_required", reconciliation_flag_at = now
+  │    │    → Job 2 (below) acts on it after ≥35 min (two-cycle guard)
   │    │
   │    └─ Transient error (5xx, timeout):
   │         → Skip this booking, retry next cycle
   │
-  └─ NOTE: execute/guaranteed bookings are NOT in Supabase → never reconciled
+  └─ NOTE: execute/guaranteed bookings ARE in Supabase (fixed A-2) → reconciled
+
+Job 2 (A-6): act on reconciliation_required (every 30 min):
+  ├─ Two-cycle guard: skip if reconciliation_flag_at < 35 min ago
+  ├─ Issue Stripe refund (_refund_stripe_once)
+  ├─ Wallet credit-back (if payment_method="wallet")
+  ├─ status → "cancelled" (Stripe OK) or "cancellation_refund_failed" (Stripe fail)
+  └─ Send cancellation email to customer ✅ FIXED (A-6)
+
+Job 3 (A-15): retry cancellation_refund_failed (every 30 min):
+  ├─ No payment_intent_id? → wallet credit-back + mark cancelled
+  ├─ Retry Stripe refund
+  │    ├─ SUCCESS → wallet credit-back + mark cancelled + email customer ✅ FIXED (A-15)
+  │    └─ FAILURE → increment refund_retry_count, retry next cycle
 ```
 
 ### Circuit Breaker (per supplier, cross-cutting)
@@ -1148,6 +1182,14 @@ Only the OCTO/Bokun path runs in production.
 | 44 | `create_topup_session()` called `_load_wallets()` twice (TOCTOU) | 1d562ef |
 | 51 | `booked_slots.json` write was non-atomic → crash mid-write could corrupt file | 1d562ef |
 | EE-4 | Hardcoded `+0.1` confidence floor → intent monitor booked with zero matching slots | 2077e3f |
+| B-1 | `slot_count` undefined in `_compute_confidence()` → NameError crashed every confidence call | Session 14 |
+| B-2 | Wallet credit-back in DELETE/self-serve cancel paths ran before `stripe_ok` check → double-credit risk if reconciler retried | Session 14 |
+| B-3 | Wallet credit-back in `_act_on_reconciliation_required()` unconditional → double-credit if Stripe failed then Job 3 retried | Session 14 |
+| B-4 | `execute_intent()` wrote no booking record to Supabase → intent-booked slots not cancellable | Session 14 |
+| B-5 | `book_with_saved_card` booking record missing 7 fields: customer_name, customer_phone, business_name, location_city, start_time, currency, payment_method | Session 14 |
+| B-6 | `_find_booking_by_confirmation()` O(n) linear scan → replaced with O(1) `by_confirmation/` index written at every booking creation point | Session 14 |
+| B-7 | No startup signal when Supabase Storage misconfigured → `_check_supabase_on_startup()` added; `/health` now exposes storage status + discovery telemetry | Session 14 |
+| B-8 | `_fire_callback()` fire-and-forget → callback retry queue in `callback_queue/` with 4 retries, 6h TTL, 2→10→30→120 min backoff | Session 14 |
 | D-1 | `self_serve_cancel` HTML page always said "full refund issued" even on Stripe failure | 35d350e |
 | D-2 | `_cancel_octo_booking` sent `Octo-Capabilities: octo/pricing` on DELETE (Bokun hangs) | 35d350e |
 | D-3 | `retry_cancellations._cancel_octo` same header on DELETE | 35d350e |
@@ -1156,6 +1198,30 @@ Only the OCTO/Bokun path runs in production.
 | D-6 | `_get_reliability_metrics` + `_find_booking_by_confirmation` missing prefix filters | 35d350e |
 | D-7 | `reconcile_bookings._list_bookings` missing 7 of 8 internal prefix filters | 35d350e |
 | D-8 | `_fulfill_booking` used `"burl_j" in dir()` fragile unbound-variable pattern | 35d350e |
+| V-1 | EgyExcursions + Vakare Travel Service missing from `vendor_ids` → ~3,000 slots never fetched | 5dcb876 |
+| V-2 | `reference_supplier_map` missing 7 prefix entries + `product_id_map` for null-ref products | 5dcb876 |
+| V-3 | Supplier resolution reactive/fragile — `_resolve_product_identity()` 3-level chain added | (current) |
+| M-1 | `get_supplier_info` two diverging hardcoded implementations, both missing Vakare (61% of inventory) | (current) |
+| M-2 | POST /mcp `search_slots` limit=100 default hid 98% of inventory from agents | (current) |
+| M-3 | `_MCP_TOOLS` description listed disabled platforms (Ventrata/Zaui/Peek Pro) as active | (current) |
+| M-4 | `_safe()` in FastMCP SSE included `price` which is always null after `_sanitize_slot()` | (current) |
+| M-5 | `_safe()` in FastMCP SSE missing `location_state` field | (current) |
+| M-6 | Capabilities metadata hardcoded "11 suppliers" (now 14) | (current) |
+| B-1 | Bug 27 re-introduced: `start_time` not in `booking_url` blob → 409 re-resolution always matched any time | (current) |
+| B-2 | All three booking record paths missing customer_name, phone, business_name, city, start_time → get_booking_status returned nulls | (current) |
+| B-3 | `_fulfill_booking_async` failure path fully overwrote pending record → lost service_name, customer_email, checkout_url | (current) |
+| B-4 | Payment capture failure left OCTO booking confirmed at supplier with no payment or cancellation queued | (current) |
+| B-5 | `complete_booking.py` not found returned fake confirmation → booking marked "booked" with no real reservation | (current) |
+| B-6 | FastMCP `book_slot` and `book_direct` missing quantity → multi-person bookings silently became 1-person | (current) |
+| B-7 | `GET /bookings/<id>` used non-existent `confirmation_number` key; missing location_city, quantity, failure_reason | (current) |
+| PE-1 | `book_direct` sent zero customer emails — no `booking_confirmed` on success, no `booking_failed` on failure | (current) |
+| PE-2 | `booking_initiated` and `booking_confirmed` emails showed per-person `our_price` instead of total charged (`our_price × quantity`) | (current) |
+| PE-3 | `cancel_url` was `/cancel/...` (relative path) when `BOOKING_SERVER_HOST` unset — email template rendered broken href instead of fallback text | (current) |
+| C-1 | `DELETE /bookings/{id}` (agent/API cancel) sent zero customer emails — customer got their money back with no notification whatsoever | (current) |
+| C-2 | `NameError` crash in `self_serve_cancel` when booking already cancelled — `refund_issued` undefined → HTTP 500 on second cancel-link click | (current) |
+| C-3 | `self_serve_cancel` OCTO detection missing `or platform == "octo"` branch — inconsistent with DELETE /bookings path | (current) |
+| C-4 | `self_serve_cancel` always wrote `status="cancelled"` even when Stripe refund failed — `cancellation_refund_failed` state never set by self-serve path, bypassing any future retry/monitoring | (current) |
+| C-8 | `booking_cancelled` email always said "the operator has cancelled your booking" regardless of initiator — customer self-serve cancel incorrectly attributed to operator | (current) |
 
 ### OPEN — Architectural gaps (not yet addressed)
 
@@ -1167,7 +1233,7 @@ Only the OCTO/Bokun path runs in production.
 | A-4 | `execute/guaranteed` + wallet: OCTO cancel not queued on payment failure | `execution_engine.py` | Supplier has confirmed booking with no payment |
 | A-5 | Intent sessions in `.tmp/intent_sessions.json` only | `intent_sessions.py` | All active intents lost on every Railway redeploy |
 | A-6 | `reconcile_bookings.py` flags `reconciliation_required` but no auto-refund or customer notification | `reconcile_bookings.py` | Silent accumulation, no customer action |
-| A-7 | 314 Bokun products unmapped to supplier/city | `octo_suppliers.json` | Slots show as "Bokun Reseller" with no city |
+| A-7 | ~~2 Bokun products unmapped (null/empty ref strings)~~ | `octo_suppliers.json` | FIXED — `product_id_map` fallback added to `fetch_octo_slots.py`; 0 unresolved slots |
 | A-8 | Google Sheets OAuth expired | `compute_pricing.py` | Urgency pricing disabled, no pricing learning |
 | A-9 | Slot discovery runs on local laptop only | `run_pipeline.bat` | Pipeline stops when laptop sleeps |
 | A-10 | No real end-to-end booking test completed | All paths | Unknown if OCTOBooker actually works in production |
@@ -1175,6 +1241,7 @@ Only the OCTO/Bokun path runs in production.
 | A-12 | Wallet storage uses single shared JSON file — concurrent write race | `manage_wallets.py` | Balance overwrites possible under high concurrency |
 | A-13 | Market insights data in `.tmp/insights/` only | `market_insights.py` | `/insights/market` empty after redeploy |
 | A-14 | SMS subscribers in `.tmp/sms_subscribers.json` only | `send_sms_alert.py` | Subscriptions lost on redeploy; SMS alerts never fire |
+| A-15 | `cancellation_refund_failed` records have no automatic retry or customer notification — `reconcile_bookings.py` only processes `status == "booked"` records; failed Stripe refunds on cancellation sit permanently with no escalation | `run_api_server.py`, `reconcile_bookings.py` | Customer could be left unrefunded indefinitely with no notification |
 
 ---
 

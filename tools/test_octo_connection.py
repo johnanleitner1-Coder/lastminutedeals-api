@@ -61,10 +61,11 @@ def test_octo_supplier(supplier: dict) -> dict:
         }
 
     headers = {
-        "Authorization":    f"Bearer {api_key}",
-        "Content-Type":     "application/json",
-        "Accept":           "application/json",
-        "Octo-Capabilities": "octo/pricing",   # required by Ventrata and most OCTO suppliers
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        # NOTE: Octo-Capabilities header intentionally omitted from /products calls.
+        # Bokun hangs on /products when this header is present. Add it only on /availability.
     }
 
     # ── Step 1: GET /products ─────────────────────────────────────────────────

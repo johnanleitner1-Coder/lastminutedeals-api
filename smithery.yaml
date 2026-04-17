@@ -1,7 +1,114 @@
 startCommand:
   type: http
+  command: python
+  args: ["tools/run_mcp_remote.py"]
+  env:
+    LMD_WEBSITE_API_KEY: "${config.lmd_api_key}"
+    BOOKING_API_URL: "${config.booking_api_url}"
   configSchema:
     type: object
-    properties: {}
+    properties:
+      lmd_api_key:
+        type: string
+        description: "API key for making bookings. Get yours free at https://web-production-dc74b.up.railway.app/api/keys/register (POST, no body needed)."
+      booking_api_url:
+        type: string
+        description: "Booking API base URL. Leave blank to use the default production server."
+        default: "https://web-production-dc74b.up.railway.app"
+    required: []
     additionalProperties: false
-  exampleConfig: {}
+  exampleConfig:
+    lmd_api_key: "lmd_..."
+    booking_api_url: "https://web-production-dc74b.up.railway.app"
+
+name: Last Minute Deals HQ
+description: >
+  Real-time last-minute tour and activity inventory sourced live from production
+  booking systems via the OCTO open standard. 14 active suppliers across Iceland,
+  Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt,
+  and Turkey. Search available slots and create Stripe checkout sessions — customers
+  pay on our page, suppliers are confirmed automatically. Inventory refreshed every
+  4 hours. To enable bookings, register a free API key at the booking server.
+
+tools:
+  - name: search_slots
+    description: >
+      Search for last-minute available tours and activities. Returns live inventory
+      sorted by urgency (soonest first). Filter by city (partial match), category,
+      hours_ahead window, and max_price. Categories: experiences, wellness, beauty,
+      hospitality, home_services, professional_services.
+
+  - name: book_slot
+    description: >
+      Book a last-minute slot for a customer. Two modes:
+      "approval" (default) — returns a Stripe checkout_url for the customer to pay;
+      "autonomous" — charges a pre-funded wallet immediately and returns a
+      confirmation number directly (requires wallet_id). Supports quantity (per-person pricing).
+
+  - name: get_booking_status
+    description: >
+      Check the status of a booking by booking_id. Returns status, confirmation number,
+      service details, and customer info. Status values: pending, confirmed, failed, cancelled.
+
+  - name: get_supplier_info
+    description: >
+      Returns the full supplier network — destinations, experience types, booking platform,
+      and confirmation speed. Use this before search_slots to understand what inventory
+      is available and which cities/countries to filter on.
+
+suppliers:
+  - name: Arctic Adventures
+    destinations: [Reykjavik, Husafell, Skaftafell, Iceland]
+    experiences: [glacier hikes, ice caves, snowmobiling, aurora tours, lava tunnels, whale watching, diving, golden circle]
+
+  - name: Arctic Sea Tours
+    destinations: [Dalvik, North Iceland]
+    experiences: [whale watching, sea excursions]
+
+  - name: Bicycle Roma
+    destinations: [Rome, Appia Antica, Castelli Romani, Orvieto]
+    experiences: [e-bike tours, food tours, guided city tours, day trips, bike rentals]
+
+  - name: Boka Bliss
+    destinations: [Kotor, Montenegro]
+    experiences: [boat tours, sea caves, coastal experiences]
+
+  - name: EgyExcursions
+    destinations: [Cairo, Egypt]
+    experiences: [pyramids, cultural tours, day trips]
+
+  - name: Hillborn Experiences
+    destinations: [Arusha, Serengeti, Zanzibar, Kilimanjaro, Tanzania]
+    experiences: [private safaris, Kilimanjaro climbs, Zanzibar retreats, ultra-luxury wildlife tours]
+
+  - name: Ishestar Riding Tours
+    destinations: [Selfoss, Iceland]
+    experiences: [horse riding, glacier rides, Viking tours]
+
+  - name: Marvel Egypt Tours
+    destinations: [Cairo, Luxor, Aswan, Egypt]
+    experiences: [pyramids, Nile cruises, temple tours, cultural experiences]
+
+  - name: O Turista Tours
+    destinations: [Lisbon, Porto, Sintra, Fatima, Nazare, Sesimbra]
+    experiences: [private tours, day trips, city tours, transfers, wine experiences]
+
+  - name: Pure Morocco Experience
+    destinations: [Marrakech, Merzouga, Sahara Desert]
+    experiences: [desert tours, multi-day tours, cultural experiences]
+
+  - name: REDRIB Experience
+    destinations: [Helsinki, Finland]
+    experiences: [speed boat tours, archipelago experiences, team events]
+
+  - name: Ramen Factory Kyoto
+    destinations: [Kyoto, Japan]
+    experiences: [cooking classes, ramen workshops, cultural experiences]
+
+  - name: TourTransfer Bucharest
+    destinations: [Bucharest, Romania]
+    experiences: [city tours, transfers, day trips, Dracula castle, Peles castle]
+
+  - name: Vakare Travel Service
+    destinations: [Antalya, Turkey]
+    experiences: [boat tours, jeep safaris, cultural excursions, beach trips]
