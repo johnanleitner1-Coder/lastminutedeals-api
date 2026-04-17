@@ -2243,10 +2243,18 @@ def create_checkout():
                 "created_at":      datetime.now(timezone.utc).isoformat(),
             })
 
-        # Send "checkout created" email immediately so the customer gets the payment
-        # link even if the calling agent doesn't surface it. Non-fatal — failure never
-        # blocks the booking or raises to the caller.
-        if not dry_run:
+        # Send "checkout created" email so the customer gets the payment link even if
+        # the calling agent doesn't surface it. Non-fatal — failure never blocks booking.
+        #
+        # Guard: skip obviously fake/test addresses to conserve SendGrid free-tier quota
+        # (100 emails/day). Real domains have at least one dot after '@'.  Addresses like
+        # "test@example.com", "agent@test", "fake@com" are skipped.  Legitimate customer
+        # emails (jane@gmail.com, travel@company.io) always have a dotted domain.
+        _email_domain = customer_email.split("@")[-1] if "@" in customer_email else ""
+        _looks_real   = "." in _email_domain and not _email_domain.lower() in (
+            "example.com", "test.com", "fake.com", "placeholder.com",
+        )
+        if not dry_run and _looks_real:
             try:
                 from send_booking_email import send_booking_email
                 send_booking_email(
