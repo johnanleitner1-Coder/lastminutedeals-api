@@ -596,25 +596,34 @@ class MindbodyBooker(BasePlatformBooker):
         print("[MindbodyBooker] Login verified")
 
     def _get_otp_from_yopmail(self, page: "Page", email: str) -> str | None:
-        """Read the 6-digit OTP Mindbody sends to yopmail."""
+        """Read the 6-digit OTP Mindbody sends to yopmail.
+
+        Opens a separate tab so the main page stays on the Mindbody login form.
+        Without this, navigating the main page to yopmail destroys the OTP input
+        elements that _fill_otp needs to populate.
+        """
         username = email.split("@")[0]
-        page.goto(
-            f"https://yopmail.com/en/wm?login={username}",
-            wait_until="networkidle", timeout=30_000,
-        )
-        time.sleep(3)
-        mail_frame = next(
-            (f for f in page.frames if "/mail?" in f.url and username.lower() in f.url.lower()),
-            None,
-        )
-        if not mail_frame:
-            return None
+        otp_page = page.context.new_page()
         try:
-            ft = mail_frame.inner_text("body")
-            m = re.search(r"\b(\d{6})\b", ft)
-            return m.group(1) if m else None
-        except Exception:
-            return None
+            otp_page.goto(
+                f"https://yopmail.com/en/wm?login={username}",
+                wait_until="networkidle", timeout=30_000,
+            )
+            time.sleep(3)
+            mail_frame = next(
+                (f for f in otp_page.frames if "/mail?" in f.url and username.lower() in f.url.lower()),
+                None,
+            )
+            if not mail_frame:
+                return None
+            try:
+                ft = mail_frame.inner_text("body")
+                m = re.search(r"\b(\d{6})\b", ft)
+                return m.group(1) if m else None
+            except Exception:
+                return None
+        finally:
+            otp_page.close()
 
     def _fill_otp(self, page: "Page", otp: str) -> None:
         """Fill 6 individual OTP digit inputs (Mindbody passwordless flow)."""
@@ -1870,7 +1879,7 @@ def complete_booking(
     headless: bool = True,
     timeout_ms: int = 30_000,
     quantity: int = 1,
-) -> str:
+) -> dict:
     """
     Execute the booking on the source platform.
 
@@ -1883,7 +1892,10 @@ def complete_booking(
         timeout_ms:  Per-action timeout in milliseconds (default 30 s)
 
     Returns:
-        Confirmation string (order/reference number, URL, or descriptive token)
+        dict with keys:
+            confirmation       — order/reference number, URL, or descriptive token
+            supplier_reference — supplier's own booking ref (OCTO only, empty string otherwise)
+            booking_meta       — per-step timing and retry counts (OCTO only, empty dict otherwise)
 
     Raises:
         BookingUnavailableError  — slot is sold out or no longer exists
@@ -1912,7 +1924,13 @@ def complete_booking(
         timeout_ms=timeout_ms,
         quantity=quantity,
     )
-    return booker.run()
+    result = booker.run()
+
+    # Normalize: OCTOBooker.run() returns a dict, all others return a string.
+    # Always return a consistent dict so callers don't need isinstance checks.
+    if isinstance(result, dict):
+        return result
+    return {"confirmation": result, "supplier_reference": "", "booking_meta": {}}
 
 
 # ── CLI interface ─────────────────────────────────────────────────────────────
@@ -1948,7 +1966,7 @@ Examples:
     }
 
     try:
-        confirmation = complete_booking(
+        result = complete_booking(
             slot_id=args.slot_id,
             customer=customer,
             platform=args.platform,
@@ -1956,7 +1974,9 @@ Examples:
             headless=not args.visible,
             timeout_ms=args.timeout,
         )
-        print(f"\nSUCCESS: {confirmation}")
+        print(f"\nSUCCESS: {result.get('confirmation', '')}")
+        if result.get("supplier_reference"):
+            print(f"Supplier ref: {result['supplier_reference']}")
         return 0
     except BookingUnavailableError as e:
         print(f"\nFAILED (unavailable): {e}")

@@ -306,16 +306,12 @@ class ExecutionEngine:
             booking_url=slot.get("booking_url", ""),
         )
 
-        # OCTOBooker.run() returns a dict with "confirmation", "supplier_reference",
-        # "booking_meta" keys. Other bookers return a plain string confirmation.
-        if isinstance(result, dict):
-            confirmation = result.get("confirmation", "")
-            # Store supplier_reference and booking_meta on the slot for downstream use
-            slot["_supplier_reference"] = result.get("supplier_reference", "")
-            slot["_booking_meta"]       = result.get("booking_meta", {})
-            return str(confirmation)
-
-        return result
+        # complete_booking() always returns a dict with confirmation,
+        # supplier_reference, and booking_meta keys.
+        confirmation = result.get("confirmation", "")
+        slot["_supplier_reference"] = result.get("supplier_reference", "")
+        slot["_booking_meta"]       = result.get("booking_meta", {})
+        return str(confirmation)
 
     # ── Payment execution ─────────────────────────────────────────────────────
 

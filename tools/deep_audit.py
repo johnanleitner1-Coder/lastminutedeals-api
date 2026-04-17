@@ -113,9 +113,11 @@ def _claude_print(prompt: str, timeout: int = 300) -> tuple:
     except FileNotFoundError as e:
         return False, str(e)
     try:
+        # Pipe prompt via stdin to avoid Windows [WinError 206] command-line length limit
         result = subprocess.run(
-            [exe, "--print", prompt],
+            [exe, "--print", "-", "--model", "claude-opus-4-6"],
             cwd=str(BASE_DIR),
+            input=prompt,
             capture_output=True,
             text=True,
             encoding="utf-8",

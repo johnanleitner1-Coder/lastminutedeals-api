@@ -56,6 +56,48 @@ def _sb_headers() -> dict:
     return {"apikey": s, "Authorization": f"Bearer {s}"}
 
 
+def load_slots() -> list[dict]:
+    """Load aggregated slots. Primary: Supabase DB. Fallback: local .tmp file."""
+    sb = _sb_url()
+    secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if sb and secret:
+        try:
+            hdrs = {"apikey": secret, "Authorization": f"Bearer {secret}", "Prefer": "count=none"}
+            now_iso = datetime.now(timezone.utc).isoformat()
+            all_slots = []
+            page_size = 1000
+            offset = 0
+            while True:
+                r = requests.get(
+                    f"{sb}/rest/v1/slots",
+                    headers=hdrs,
+                    params=[("select", "*"), ("start_time", f"gt.{now_iso}"),
+                            ("our_price", "gt.0"), ("order", "start_time.asc"),
+                            ("limit", page_size), ("offset", offset)],
+                    timeout=10,
+                )
+                if r.status_code != 200:
+                    break
+                page = r.json()
+                if not page:
+                    break
+                all_slots.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            if all_slots:
+                return all_slots
+        except Exception as e:
+            print(f"[SMS] Supabase slot fetch failed: {e}")
+
+    if DATA_FILE.exists():
+        try:
+            return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
 def _sb_get(key: str):
     """Fetch a JSON object from Supabase Storage. Returns None on failure."""
     sb = _sb_url()
@@ -222,11 +264,10 @@ def run_alerts(dry_run: bool = False, max_per_run: int = 50) -> None:
         print("SMS: No subscribers yet. Add subscribers via landing page opt-in form.")
         return
 
-    if not DATA_FILE.exists():
-        print(f"No slot data at {DATA_FILE}. Run pipeline first.")
+    slots = load_slots()
+    if not slots:
+        print("No slot data available (Supabase empty and no local file). Run pipeline first.")
         return
-
-    slots = json.loads(DATA_FILE.read_text(encoding="utf-8"))
     # Filter to slots starting within 24h (high urgency only for SMS)
     urgent = [
         s for s in slots

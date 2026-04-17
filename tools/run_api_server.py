@@ -3047,16 +3047,11 @@ def _fulfill_booking(slot_id: str, customer: dict, platform: str, booking_url: s
                 booking_url=booking_url,
                 quantity=quantity,
             )
-            # OCTOBooker returns {"confirmation": str, "supplier_reference": str, "booking_meta": {...}}.
-            # Other bookers return a plain string. Handle both.
-            if isinstance(result, dict):
-                confirmation       = result.get("confirmation", "")
-                supplier_reference = result.get("supplier_reference", "")
-                booking_meta       = result.get("booking_meta", {})
-            else:
-                confirmation       = result
-                supplier_reference = ""
-                booking_meta       = {}
+            # complete_booking() always returns a dict with confirmation,
+            # supplier_reference, and booking_meta keys.
+            confirmation       = result.get("confirmation", "")
+            supplier_reference = result.get("supplier_reference", "")
+            booking_meta       = result.get("booking_meta", {})
             print(f"[FULFILLMENT] Confirmed: {confirmation} supplier_ref={supplier_reference}")
             # Record success with circuit breaker
             if is_octo:

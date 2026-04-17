@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-17 (v22 — Session 20: MCP prompts added (B-27/B-28), search_slots cache overhauled 60s→300s TTL + 1800s stale + startup pre-warm (B-29), all result limits removed (B-30), book_slot/get_booking_status error handling hardened (B-31/B-32); Smithery now shows 4 tools + 3 prompts, no warnings; 126 total bugs fixed)
+**Last updated:** 2026-04-17 (v23 — Session 22 human queue resolved: B-33 Mindbody OTP page-navigation bug, B-34 complete_booking API contract normalized to always-dict, B-35 send_sms_alert Railway persistence (Supabase fallback); 2 new suppliers added (All Washington View, TUTU VIEW Ltd — 16 total); 132 total bugs fixed)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---

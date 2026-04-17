@@ -325,3 +325,22 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | AG-3 | `tools/fetch_octo_slots.py` | 130 | `HTTPError: 400` | Bokun returns 400 for some product/option combinations. Code already catches and skips gracefully. Parse_errors picked it up as a bug but it is handled. Root cause: specific Bokun product config issue; response body now logged for diagnosis. |
 
 ---
+
+## Session 22 Fixes — Human Queue Resolution (2026-04-17)
+
+Autonomous fix Session 22 escalated 3 bugs to the human queue. All 3 resolved manually.
+
+| # | Severity | File | Line | Bug | Fix |
+|---|---|---|---|---|---|
+| B-33 | HIGH | `tools/complete_booking.py` | 601 | `_get_otp_from_yopmail` navigated the **main Playwright page** to yopmail.com to fetch the Mindbody OTP. After returning, `_fill_otp` tried to fill OTP inputs on a page now showing yopmail — not Mindbody. OTP entry always silently failed. | Open a **separate browser tab** (`page.context.new_page()`) for yopmail navigation; close it in `finally` block. Main page stays on Mindbody login form. |
+| B-34 | MEDIUM | `tools/complete_booking.py` | 1522 | `OCTOBooker.run()` returned a `dict` but `complete_booking()` declared `-> str`. API contract violation — callers needed `isinstance` guards. Both `run_api_server.py` and `execution_engine.py` had workarounds but the contract was broken. | Changed `complete_booking()` to always return a consistent `dict` with keys `confirmation`, `supplier_reference`, `booking_meta`. Non-OCTO bookers' string returns wrapped automatically. Removed `isinstance` branches from both callers. Updated docstring and type hint. |
+| B-35 | HIGH | `tools/send_sms_alert.py` | 1 | Read slots from `.tmp/aggregated_slots.json` — does not exist on Railway (ephemeral filesystem). `run_alerts()` always found no file and exited. Autonomous agent couldn't fix because integration test required live Supabase data. | Added `load_slots()` function: queries Supabase `slots` table with pagination (same pattern as `run_api_server.py`), falls back to local file. Updated `run_alerts()` to use it. |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 22 human queue (complete_booking OTP, API contract, SMS persistence) | 3 |
+| **Running total** | **132** |
+
+---
