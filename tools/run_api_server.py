@@ -836,7 +836,7 @@ _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
 _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 
 # Static fallback supplier list — used when Supabase is unreachable.
-# Covers all 13 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+# Covers all 14 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
     {"name": "Arctic Sea Tours",        "destinations": ["Dalvik", "Iceland"],                               "platform": "Bokun"},
@@ -918,7 +918,12 @@ def _get_live_supplier_directory() -> list[dict]:
                     break
                 offset += PAGE_SIZE
 
-            if supplier_map:
+            # Require at least as many suppliers as _SUPPLIER_DIR_STATIC to accept
+            # the live result. If pagination is broken (e.g., only page 1 retrieved),
+            # the live query returns 6 suppliers instead of 14; in that case fall through
+            # to the static list so agents always see the full supplier network.
+            min_expected = len(_SUPPLIER_DIR_STATIC)
+            if len(supplier_map) >= min_expected:
                 result = [
                     {"name": v["name"], "destinations": sorted(v["destinations"]), "platform": v["platform"]}
                     for v in sorted(supplier_map.values(), key=lambda x: x["name"])
@@ -926,6 +931,18 @@ def _get_live_supplier_directory() -> list[dict]:
                 _SUPPLIER_DIR_CACHE["data"]    = result
                 _SUPPLIER_DIR_CACHE["expires"] = now + _SUPPLIER_DIR_CACHE_TTL
                 return result
+            # Partial result — merge live destinations into static list for accuracy
+            result = []
+            for static_entry in _SUPPLIER_DIR_STATIC:
+                live = supplier_map.get(static_entry["name"])
+                if live:
+                    merged_dests = sorted(set(static_entry["destinations"]) | live["destinations"])
+                    result.append({**static_entry, "destinations": merged_dests})
+                else:
+                    result.append(static_entry)
+            _SUPPLIER_DIR_CACHE["data"]    = result
+            _SUPPLIER_DIR_CACHE["expires"] = now + _SUPPLIER_DIR_CACHE_TTL
+            return result
         except Exception:
             pass  # Fall through to static
 
