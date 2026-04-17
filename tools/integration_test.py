@@ -168,6 +168,96 @@ def check_normalize_slot() -> None:
         record(section, "normalize_slot runs without error", False, BLOCKING, str(e)[:80])
 
 
+def check_slot_behavioral_values() -> None:
+    """Deeper behavioral correctness checks — prices sane, future slots exist, no duplicates, booking_url intact."""
+    section = "A. Core Pipeline"
+    path = Path(".tmp/aggregated_slots.json")
+    if not path.exists():
+        skip(section, "Slot behavioral value checks", ".tmp/aggregated_slots.json not found")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        skip(section, "Slot behavioral value checks", "JSON parse failed (checked above)")
+        return
+    if not isinstance(data, list) or not data:
+        skip(section, "Slot behavioral value checks", "no slots to validate")
+        return
+
+    now_ts = datetime.now(timezone.utc).isoformat()
+
+    # 1. Duplicate slot_ids
+    ids = [s.get("slot_id") for s in data if s.get("slot_id")]
+    dupes = len(ids) - len(set(ids))
+    record(section, "No duplicate slot_ids in aggregated output",
+           dupes == 0, BLOCKING,
+           f"{dupes} duplicate(s) found" if dupes else f"{len(ids)} unique IDs")
+
+    # 2. our_price <= price (no upcharging)
+    priced = [s for s in data if s.get("our_price") is not None and s.get("price") is not None]
+    upcharged = [s for s in priced
+                 if float(s["our_price"]) > float(s["price"]) * 1.01]  # 1% tolerance for floats
+    record(section, "our_price never exceeds face price",
+           len(upcharged) == 0, BLOCKING,
+           f"{len(upcharged)} slot(s) have our_price > price" if upcharged else f"OK across {len(priced)} priced slots")
+
+    # 3. At least some slots in the future
+    future = [s for s in data if s.get("start_time", "") > now_ts]
+    pct_future = len(future) / len(data) * 100 if data else 0
+    ok_future = pct_future >= 10   # at least 10% should be in the future
+    record(section, "At least 10% of slots have future start_time",
+           ok_future, BLOCKING,
+           f"{pct_future:.1f}% future ({len(future)}/{len(data)})")
+
+    # 4. booking_url integrity: bokun slots must have parseable booking_url JSON with required OCTO fields
+    bokun_slots = [s for s in data if s.get("platform") in ("bokun", "octo")]
+    bad_urls = []
+    for s in bokun_slots[:50]:  # sample first 50
+        url = s.get("booking_url", "")
+        if not url:
+            bad_urls.append(s.get("slot_id", "?"))
+            continue
+        # booking_url may be a JSON string with OCTO booking keys
+        if url.startswith("{"):
+            try:
+                parsed = json.loads(url)
+                if not parsed.get("product_id") and not parsed.get("option_id"):
+                    bad_urls.append(s.get("slot_id", "?"))
+            except Exception:
+                bad_urls.append(s.get("slot_id", "?"))
+    if bokun_slots:
+        ok_urls = len(bad_urls) == 0
+        record(section, "Bokun booking_url has OCTO fields (product_id/option_id)",
+               ok_urls, BLOCKING,
+               f"{len(bad_urls)} missing/malformed" if bad_urls else f"OK in {min(50, len(bokun_slots))} sampled")
+    else:
+        skip(section, "Bokun booking_url has OCTO fields", "no bokun/octo slots in output")
+
+
+def check_booking_entry_points_static() -> None:
+    """Static AST check: all 4 booking entry point functions must populate the canonical 20-field schema."""
+    section = "A. Core Pipeline"
+    try:
+        import importlib.util as ilu
+        spec = ilu.spec_from_file_location(
+            "validate_pipeline", Path(__file__).parent / "validate_pipeline.py")
+        mod = ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        failures = mod.validate_booking_entry_points()
+        if not failures:
+            record(section, "All booking entry points populate 20-field canonical schema",
+                   True, BLOCKING, "4 entry points validated")
+        else:
+            # Only blocking if HIGH or CRITICAL
+            high = [f for f in failures if f.severity in ("HIGH", "CRITICAL")]
+            msg = f"{len(failures)} gap(s) — {len(high)} HIGH/CRITICAL"
+            record(section, "All booking entry points populate 20-field canonical schema",
+                   len(high) == 0, BLOCKING, msg)
+    except Exception as e:
+        record(section, "Booking entry point schema check (static)",
+               False, BLOCKING, str(e)[:80])
+
+
 def check_circuit_breaker_read() -> None:
     """Circuit breaker module must load and read state without crashing."""
     section = "A. Core Pipeline"
@@ -702,6 +792,8 @@ def run_all(blocking_only: bool = False) -> dict:
 
     print("\nA. Core Python Pipeline")
     check_aggregated_slots_file()
+    check_slot_behavioral_values()
+    check_booking_entry_points_static()
     check_normalize_slot()
     check_circuit_breaker_read()
     check_wallet_schema()
