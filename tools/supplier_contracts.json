@@ -219,6 +219,38 @@
       "country": "TR",
       "products": 115,
       "contract_status": "confirmed"
+    },
+    "All Washington View": {
+      "pricing_model": "commission",
+      "commission_pct": 0.25,
+      "commission_by_type": {
+        "experiences": 0.25,
+        "extras": 0.25,
+        "pick_up": 0.25
+      },
+      "bokun_vendor_id": 4278,
+      "city": "Washington, D.C.",
+      "country": "US",
+      "products": 11,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-17",
+      "notes": "Accepted 17 Apr 2026. Products not yet visible in OCTO catalog — expect to appear in next pipeline run once vendor publishes availability."
+    },
+    "TUTU VIEW Ltd": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 136863,
+      "city": "London",
+      "country": "GB",
+      "products": 10,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-17",
+      "notes": "Accepted 17 Apr 2026. UK-based multi-destination operator. One product identified: 1191944 (9-Day China Tech Tour, Shanghai/Shenzhen/Chongqing). Mapped in product_id_map."
     }
   }
 }

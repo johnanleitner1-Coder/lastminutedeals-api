@@ -90,7 +90,7 @@ mcp = FastMCP(
     instructions=(
         "You have access to real last-minute tour and activity inventory sourced live "
         "from production booking systems via the OCTO open standard. "
-        "14 active suppliers: Arctic Adventures (Iceland — glacier hikes, snowmobiling, "
+        "16 active suppliers: Arctic Adventures (Iceland — glacier hikes, snowmobiling, "
         "whale watching, aurora, lava tunnels), "
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "
         "Boka Bliss (Kotor, Montenegro — boat tours, sea caves), "
@@ -482,6 +482,20 @@ async def get_supplier_info() -> dict:
                 "name": "Vakare Travel Service",
                 "destinations": ["Antalya", "Turkey"],
                 "categories": ["boat tours", "jeep safaris", "cultural excursions", "beach trips"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "All Washington View",
+                "destinations": ["Washington, D.C.", "United States"],
+                "categories": ["city tours", "sightseeing", "monuments", "panoramic views"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "TUTU VIEW Ltd",
+                "destinations": ["London", "Shanghai", "Shenzhen", "Chongqing"],
+                "categories": ["tech tours", "cultural experiences", "multi-city tours"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },
