@@ -11,25 +11,8 @@ Wallet lifecycle:
   3. Agent calls /execute/guaranteed with wallet_id → instant booking, instant debit
   4. Agent checks /api/wallets/{wallet_id}/balance for current balance
 
-Wallet schema (.tmp/wallets.json):
-  {
-    "wlt_<24hex>": {
-      "wallet_id":   "wlt_...",
-      "api_key":     "lmd_...",
-      "owner_name":  "MyAgent",
-      "owner_email": "agent@example.com",
-      "balance_cents": 5000,       // $50.00
-      "currency":    "usd",
-      "stripe_customer_id": "cus_...",
-      "created_at":  "...",
-      "last_funded": "...",
-      "last_used":   "...",
-      "transactions": [
-        {"type": "credit", "amount_cents": 5000, "desc": "Top-up", "ts": "..."},
-        {"type": "debit",  "amount_cents": 1200, "desc": "Booking: slot_xxx", "ts": "..."},
-      ]
-    }
-  }
+Primary storage: Supabase Storage (bookings/config/wallets.json).
+Local .tmp/wallets.json is an ephemeral cache only — not the source of truth.
 
 CLI:
   python tools/manage_wallets.py create --name "MyAgent" --email agent@example.com
@@ -109,29 +92,40 @@ def _load_wallets() -> dict:
     return {}
 
 def _save_wallets(wallets: dict) -> None:
-    """Save wallets to both Supabase Storage (persistent) and local file (cache).
-    Invalidates the in-process cache so subsequent reads get fresh data.
+    """Save wallets to Supabase Storage (persistent) and local file (cache).
+    Raises on Supabase failure to prevent silent data loss — wallet mutations
+    must not succeed if the durable store is unreachable.
     """
     global _WALLETS_MEM_CACHE, _WALLETS_CACHE_AT
+
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not (sb_url and sb_secret):
+        raise RuntimeError(
+            "[WALLETS] SUPABASE_URL/SUPABASE_SECRET_KEY not configured — "
+            "refusing to save wallets to ephemeral storage only"
+        )
+
+    payload = json.dumps(wallets)
+    r = _req.post(
+        f"{sb_url}/storage/v1/object/bookings/{_SB_WALLETS_PATH}",
+        headers={**_sb_headers(), "Content-Type": "application/json", "x-upsert": "true"},
+        data=payload,
+        timeout=8,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"[WALLETS] Supabase save failed (HTTP {r.status_code}): {r.text[:200]} — "
+            "wallet mutation aborted to prevent data loss"
+        )
+
     _WALLETS_MEM_CACHE = wallets
     _WALLETS_CACHE_AT  = _time_mod.time()
     try:
         WALLETS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        WALLETS_FILE.write_text(json.dumps(wallets, indent=2), encoding="utf-8")
+        WALLETS_FILE.write_text(payload, encoding="utf-8")
     except Exception:
         pass
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
-    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if sb_url and sb_secret:
-        try:
-            _req.post(
-                f"{sb_url}/storage/v1/object/bookings/{_SB_WALLETS_PATH}",
-                headers={**_sb_headers(), "Content-Type": "application/json", "x-upsert": "true"},
-                data=json.dumps(wallets),
-                timeout=8,
-            )
-        except Exception as e:
-            print(f"[WALLETS] Supabase save failed (local write succeeded): {e}")
 
 def _generate_wallet_id() -> str:
     return "wlt_" + secrets.token_hex(12)
