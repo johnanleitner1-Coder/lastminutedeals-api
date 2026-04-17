@@ -307,19 +307,21 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 18 (booking conversion — zero payments root cause) | 3 |
 | Session 19 (pricing model — commission vs net-rate) | 2 |
 | Session 20 (MCP prompts, Smithery config schema, search_slots uptime, book_slot hardening) | 6 |
-| **Total** | **126** |
+| Session 21 autonomous (OAuthError compute_pricing, ReadTimeout fetch_octo_slots, _apply_patch hardening) | 3 |
+| **Total** | **129** |
 
 ## Session 21 Fixes — Autonomous Bug-Fix Agent (2026-04-17)
 
 | # | Severity | File | Line | Bug | Fix |
 |---|---|---|---|---|---|
 | AG-1 | HIGH | `tools/compute_pricing.py` | 1 | `OAuthError` — Google Sheets OAuth credentials expired; pricing step crashed on every pipeline run | Autonomous agent patched OAuth handling. Commit: 67c2b8e |
-| AG-2 | HIGH | `tools/fetch_octo_slots.py` | 97 | `ReadTimeout` — availability POST timed out; `ReadTimeout` exception not caught by retry logic | Fixed exception handling to catch `ReadTimeout` specifically; retry-on-timeout path now activates. Commit: 49aefff |
+| AG-2 | HIGH | `tools/fetch_octo_slots.py` | 97 | `ReadTimeout` — Bokun `/products` call times out under load; retry logic only triggered once | Autonomous agent attempted fix (commit 49aefff) but wrote a diff-comment snippet instead of a full file, destroying the 588-line file. **Manually corrected** (commit 9ae138c): restored original + upgraded retry to 3 attempts with exponential backoff (1s, 2s sleep; timeout doubles each retry). Also exposed response body in availability 400 errors for diagnosis. |
+| AG-L | LOW | `tools/run_autonomous_fix.py` | — | `_apply_patch` accepted diff-format Claude responses, overwriting full files with snippet content | Added guards: reject `# BEFORE:`/`# AFTER:` diff markers, reject blocks <50% of original file length, validate Python syntax before writing. Also added explicit CRITICAL OUTPUT RULE to all fix prompts. Commit: 9ae138c |
 
 ### Escalated to Human Review Queue
 
 | # | File | Line | Error | Reason |
 |---|---|---|---|---|
-| AG-3 | `tools/fetch_octo_slots.py` | 130 | `HTTPError: 400` | Bad request payload for a specific product/vendor. Needs manual inspection of `octo_suppliers.json` seed data — autonomous fix not attempted. |
+| AG-3 | `tools/fetch_octo_slots.py` | 130 | `HTTPError: 400` | Bokun returns 400 for some product/option combinations. Code already catches and skips gracefully. Parse_errors picked it up as a bug but it is handled. Root cause: specific Bokun product config issue; response body now logged for diagnosis. |
 
 ---
