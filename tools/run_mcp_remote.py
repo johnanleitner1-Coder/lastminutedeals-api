@@ -48,9 +48,27 @@ PORT        = int(os.getenv("PORT", "8080"))
 _TIMEOUT = httpx.Timeout(15.0, connect=8.0)
 _client  = httpx.AsyncClient(headers=HDRS, timeout=_TIMEOUT)
 
+# Keep-alive ping — Railway free tier sleeps containers after 15 min idle; a cold
+# start takes 10-30s and exhausts our 3×8s retry window, causing ~25% of search_slots
+# calls to fail. Pinging /health every 10 min keeps the container warm.
+_WARMUP_TASK: asyncio.Task | None = None
+_WARMUP_INTERVAL_S = 600  # 10 minutes
+
+
 # Concurrency guard — cap simultaneous outbound API calls to prevent
 # request storms from hammering the booking API or Supabase under burst load.
 _SEMAPHORE = asyncio.Semaphore(10)
+
+
+async def _keep_railway_warm() -> None:
+    while True:
+        await asyncio.sleep(_WARMUP_INTERVAL_S)
+        try:
+            async with _SEMAPHORE:
+                await _client.get(f"{BOOKING_API}/health",
+                                  timeout=httpx.Timeout(10.0, connect=8.0))
+        except Exception:
+            pass  # Warm-up ping; ignore failures — main retry logic covers transients
 
 # ── Slot cache ────────────────────────────────────────────────────────────────
 # Fresh TTL: 300s (5 min). Inventory is refreshed every 4h — 5 min is safe.
@@ -180,7 +198,15 @@ async def search_slots(
     Returns:
         List of available slot dicts sorted by hours_until_start (soonest first).
     """
-    params: dict = {"hours_ahead": hours_ahead, "limit": min(int(limit), 100)}
+    # Start keep-alive task on first invocation — prevents Railway container sleep
+    # (cold starts exhaust the retry window and cause tool failures).
+    global _WARMUP_TASK
+    if _WARMUP_TASK is None or _WARMUP_TASK.done():
+        _WARMUP_TASK = asyncio.create_task(_keep_railway_warm())
+
+    # hours_ahead must be int: Flask's type=int silently returns the default (168h)
+    # when given a float string like "72.0", so the time-window filter is dropped.
+    params: dict = {"hours_ahead": int(hours_ahead), "limit": min(int(limit), 100)}
     if city:
         params["city"] = city
     if category:
@@ -281,8 +307,13 @@ async def get_booking_status(booking_id: str) -> dict:
         booking_id: The booking_id returned by book_slot.
 
     Returns:
-        Booking record with status, confirmation number, and service details.
-        Status values: pending, confirmed, failed, cancelled.
+        Booking record with status, confirmation_number, service details, and checkout_url.
+        Status values:
+          pending_payment — awaiting customer checkout
+          fulfilling      — payment received, confirming with supplier (up to 45s)
+          booked          — confirmed by supplier; confirmation_number is set
+          failed          — fulfillment failed; payment hold cancelled
+          cancelled       — booking cancelled and refunded
     """
     try:
         return await _api_get(f"/bookings/{booking_id}")

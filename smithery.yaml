@@ -47,8 +47,10 @@ tools:
 
   - name: get_booking_status
     description: >
-      Check the status of a booking by booking_id. Returns status, confirmation number,
-      service details, and customer info. Status values: pending, confirmed, failed, cancelled.
+      Check the status of a booking by booking_id. Returns status, confirmation_number,
+      checkout_url (recoverable if lost), service details, and payment_status.
+      Status values: pending_payment (awaiting checkout), fulfilling (paid, confirming
+      with supplier), booked (confirmed — confirmation_number set), failed, cancelled.
 
   - name: get_supplier_info
     description: >
