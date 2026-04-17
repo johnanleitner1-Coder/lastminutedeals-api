@@ -5,21 +5,23 @@ startCommand:
   env:
     LMD_WEBSITE_API_KEY: "${config.lmd_api_key}"
     BOOKING_API_URL: "${config.booking_api_url}"
-  configSchema:
-    type: object
-    properties:
-      lmd_api_key:
-        type: string
-        description: "API key for making bookings. Get yours free at https://web-production-dc74b.up.railway.app/api/keys/register (POST, no body needed)."
-      booking_api_url:
-        type: string
-        description: "Booking API base URL. Leave blank to use the default production server."
-        default: "https://web-production-dc74b.up.railway.app"
-    required: []
-    additionalProperties: false
-  exampleConfig:
-    lmd_api_key: "lmd_..."
-    booking_api_url: "https://web-production-dc74b.up.railway.app"
+
+configSchema:
+  type: object
+  properties:
+    lmd_api_key:
+      type: string
+      description: "API key for making bookings. Get yours free at https://web-production-dc74b.up.railway.app/api/keys/register (POST, no body needed)."
+    booking_api_url:
+      type: string
+      description: "Booking API base URL. Leave blank to use the default production server."
+      default: "https://web-production-dc74b.up.railway.app"
+  required: []
+  additionalProperties: false
+
+exampleConfig:
+  lmd_api_key: "lmd_..."
+  booking_api_url: "https://web-production-dc74b.up.railway.app"
 
 name: Last Minute Deals HQ
 description: >
@@ -63,9 +65,9 @@ suppliers:
     destinations: [Reykjavik, Husafell, Skaftafell, Iceland]
     experiences: [glacier hikes, ice caves, snowmobiling, aurora tours, lava tunnels, whale watching, diving, golden circle]
 
-  - name: Arctic Sea Tours
-    destinations: [Dalvik, North Iceland]
-    experiences: [whale watching, sea excursions]
+  - name: Trivanzo Holidays
+    destinations: [Cairo, Luxor, Aswan, Red Sea, Egypt]
+    experiences: [Nile cruises, cultural tours, Red Sea excursions, desert tours, day trips]
 
   - name: Bicycle Roma
     destinations: [Rome, Appia Antica, Castelli Romani, Orvieto]
