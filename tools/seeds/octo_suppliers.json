@@ -108,12 +108,23 @@
       "ASWAN":                      {"name": "Marvel Egypt Tours",    "city": "Aswan",     "country": "EG"},
       "384441P":                    {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
       "5519190P":                    {"name": "EgyExcursions",         "city": "Cairo",     "country": "EG"},
-      "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"}
+      "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"},
+      "WDC":                         {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"},
+      "26722P":                      {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"}
     },
     "product_id_map": {
       "729972":  {"name": "Íshestar Riding Tours", "city": "Selfoss",  "country": "IS"},
       "1014077": {"name": "Vakare Travel Service",  "city": "Antalya", "country": "TR"},
-      "1191944": {"name": "TUTU VIEW Ltd",          "city": "Shanghai", "country": "CN"}
+      "1191944": {"name": "TUTU VIEW Ltd", "city": "Chongqing", "country": "CN"},
+      "1191762": {"name": "TUTU VIEW Ltd", "city": "Xi'an",     "country": "CN"},
+      "1191683": {"name": "TUTU VIEW Ltd", "city": "Urumqi",    "country": "CN"},
+      "1192673": {"name": "TUTU VIEW Ltd", "city": "Hangzhou",  "country": "CN"},
+      "1191781": {"name": "TUTU VIEW Ltd", "city": "Chengdu",   "country": "CN"},
+      "1191675": {"name": "TUTU VIEW Ltd", "city": "Shanghai",  "country": "CN"},
+      "1191768": {"name": "TUTU VIEW Ltd", "city": "Guiyang",   "country": "CN"},
+      "1191790": {"name": "TUTU VIEW Ltd", "city": "Shanghai",  "country": "CN"},
+      "1191902": {"name": "TUTU VIEW Ltd", "city": "Changsha",  "country": "CN"},
+      "1191663": {"name": "TUTU VIEW Ltd", "city": "Zhengzhou", "country": "CN"}
     },
     "vendor_id_to_supplier_map": {
       "85":     {"name": "Arctic Adventures",       "city": "Reykjavik", "country": "IS"},

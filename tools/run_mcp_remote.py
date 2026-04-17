@@ -494,8 +494,8 @@ async def get_supplier_info() -> dict:
             },
             {
                 "name": "TUTU VIEW Ltd",
-                "destinations": ["London", "Shanghai", "Shenzhen", "Chongqing"],
-                "categories": ["tech tours", "cultural experiences", "multi-city tours"],
+                "destinations": ["China", "Shanghai", "Xi'an", "Beijing", "Chengdu", "Hangzhou", "Chongqing", "Shenzhen", "Changsha"],
+                "categories": ["multi-day tours", "cultural experiences", "silk road", "food tours", "nature tours"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },

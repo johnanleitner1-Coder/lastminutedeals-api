@@ -858,7 +858,7 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "TourTransfer Bucharest",  "destinations": ["Bucharest", "Romania"],                            "platform": "Bokun"},
     {"name": "Vakare Travel Service",   "destinations": ["Antalya", "Turkey"],                               "platform": "Bokun"},
     {"name": "All Washington View",     "destinations": ["Washington, D.C.", "United States"],               "platform": "Bokun"},
-    {"name": "TUTU VIEW Ltd",           "destinations": ["London", "Shanghai", "Shenzhen", "Chongqing"],     "platform": "Bokun"},
+    {"name": "TUTU VIEW Ltd",           "destinations": ["China", "Shanghai", "Xi'an", "Beijing", "Chengdu", "Hangzhou", "Chongqing", "Shenzhen", "Changsha"], "platform": "Bokun"},
 ]
 
 
