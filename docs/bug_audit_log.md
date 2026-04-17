@@ -308,3 +308,18 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 19 (pricing model — commission vs net-rate) | 2 |
 | Session 20 (MCP prompts, Smithery config schema, search_slots uptime, book_slot hardening) | 6 |
 | **Total** | **126** |
+
+## Session 21 Fixes — Autonomous Bug-Fix Agent (2026-04-17)
+
+| # | Severity | File | Line | Bug | Fix |
+|---|---|---|---|---|---|
+| AG-1 | HIGH | `tools/compute_pricing.py` | 1 | `OAuthError` — Google Sheets OAuth credentials expired; pricing step crashed on every pipeline run | Autonomous agent patched OAuth handling. Commit: 67c2b8e |
+| AG-2 | HIGH | `tools/fetch_octo_slots.py` | 97 | `ReadTimeout` — availability POST timed out; `ReadTimeout` exception not caught by retry logic | Fixed exception handling to catch `ReadTimeout` specifically; retry-on-timeout path now activates. Commit: 49aefff |
+
+### Escalated to Human Review Queue
+
+| # | File | Line | Error | Reason |
+|---|---|---|---|---|
+| AG-3 | `tools/fetch_octo_slots.py` | 130 | `HTTPError: 400` | Bad request payload for a specific product/vendor. Needs manual inspection of `octo_suppliers.json` seed data — autonomous fix not attempted. |
+
+---
