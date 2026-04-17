@@ -218,8 +218,11 @@ def load_pricing_history() -> list[dict]:
         from google.auth.transport.requests import Request
         creds = Credentials.from_authorized_user_file("token.json")
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            Path("token.json").write_text(creds.to_json())
+            try:
+                creds.refresh(Request())
+                Path("token.json").write_text(creds.to_json())
+            except Exception:
+                return []
         service = build("sheets", "v4", credentials=creds)
 
         result = service.spreadsheets().values().get(
