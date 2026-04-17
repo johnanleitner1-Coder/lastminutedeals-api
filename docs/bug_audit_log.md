@@ -222,6 +222,17 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 
 ---
 
+## Session 16 Fixes — Booking Flow Hardening
+
+| # | Severity | File(s) | Bug | Fix |
+|---|---|---|---|---|
+| B-18 | CRITICAL | `run_api_server.py` | `_get_live_supplier_directory()` fetched Supabase with `limit=10000` but PostgREST caps every response at 1000 rows regardless. Slots are alphabetically ordered: first 1000 covered only 5 suppliers completely + 64 EgyExcursions rows. 8 suppliers (EgyExcursions, Hillborn, Íshestar, Marvel Egypt, O Turista, Pure Morocco, Ramen Factory, REDRIB, TourTransfer, Vakare) were either absent or partially represented in `get_supplier_info` live lookups | Fixed: paginated loop using `limit=1000 + offset` — breaks when a page has fewer rows than PAGE_SIZE; ensures all 14 suppliers are returned |
+| B-19 | CRITICAL | `run_api_server.py` | `create_checkout()` did not store `booking_url`, `platform`, or `currency` in the booking record — only in Stripe session metadata. Stripe metadata values are capped at 500 characters and silently truncate. A `booking_url` JSON blob for a 5-option OCTO product exceeds this limit; the webhook reading the truncated blob calls `json.loads()` on invalid JSON, crashes, cancels the payment hold, and permanently fails the booking. Customer sees checkout_expired with no retry path | Fixed: `booking_url`, `platform`, `currency` now stored in the Supabase Storage booking record at checkout creation. Webhook reads from record first, falls back to Stripe metadata for sessions created before this deploy |
+| B-20 | HIGH | `run_api_server.py` | Stripe webhook updated `wh_record_key` to `"processing"` but left the customer-facing booking record at `"pending_payment"` before spawning the fulfillment thread. Agents polling `GET /bookings/<id>` for up to 45 seconds after payment saw `pending_payment` — indistinguishable from an unpaid booking. No way to tell if a customer had paid but fulfillment was in flight | Fixed: before spawning the fulfillment thread, `_save_booking_record(pending_booking_id, {..., "status": "fulfilling", "payment_status": "paid"})` so agents immediately see the payment has landed |
+| B-21 | MEDIUM | `run_api_server.py` | `GET /bookings/<id>` response omitted `checkout_url` and `payment_status`. If an agent lost the `checkout_url` from the original `/api/book` response (e.g. tool call result dropped, context cleared), it had no way to recover it by polling — the customer couldn't be sent back to complete payment | Fixed: `checkout_url` and `payment_status` added to `get_booking` response dict |
+
+---
+
 ## Totals
 
 | Session | Bugs Fixed |
@@ -239,4 +250,5 @@ All confirmed bugs found and fixed across debugging sessions. Ordered by bug num
 | Session 13 (architectural gap closure) | 11 |
 | Session 14 (audit follow-up + reliability + agent visibility + Smithery uptime) | 12 |
 | Session 15 (Smithery reconnection + end-to-end audit) | 6 |
-| **Total** | **108** |
+| Session 16 (booking flow hardening) | 4 |
+| **Total** | **112** |

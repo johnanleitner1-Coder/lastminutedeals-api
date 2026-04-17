@@ -880,19 +880,29 @@ def _get_live_supplier_directory() -> list[dict]:
                 "Authorization": f"Bearer {sb_secret}",
                 "Prefer": "count=none",
             }
-            resp = requests.get(
-                f"{sb_url}/rest/v1/slots",
-                headers=hdrs,
-                params=[
-                    ("select", "business_name,location_city,location_country"),
-                    ("order",  "business_name.asc"),
-                    ("limit",  10000),
-                ],
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                supplier_map: dict[str, dict] = {}
-                for row in resp.json():
+            # Paginate — Supabase caps each response at 1000 rows regardless of limit param.
+            # Without pagination only ~5 suppliers appear (those whose rows fit in the first 1000).
+            supplier_map: dict[str, dict] = {}
+            PAGE_SIZE = 1000
+            offset = 0
+            while True:
+                resp = requests.get(
+                    f"{sb_url}/rest/v1/slots",
+                    headers=hdrs,
+                    params=[
+                        ("select", "business_name,location_city,location_country"),
+                        ("order",  "business_name.asc"),
+                        ("limit",  PAGE_SIZE),
+                        ("offset", offset),
+                    ],
+                    timeout=10,
+                )
+                if resp.status_code != 200:
+                    break
+                page = resp.json()
+                if not page:
+                    break
+                for row in page:
                     name    = row.get("business_name") or ""
                     city    = row.get("location_city") or ""
                     country = row.get("location_country") or ""
@@ -904,7 +914,11 @@ def _get_live_supplier_directory() -> list[dict]:
                         supplier_map[name]["destinations"].add(city)
                     if country:
                         supplier_map[name]["destinations"].add(country)
+                if len(page) < PAGE_SIZE:
+                    break
+                offset += PAGE_SIZE
 
+            if supplier_map:
                 result = [
                     {"name": v["name"], "destinations": sorted(v["destinations"]), "platform": v["platform"]}
                     for v in sorted(supplier_map.values(), key=lambda x: x["name"])
@@ -2166,6 +2180,12 @@ def create_checkout():
             "expires_at":     _expires_at,
             "dry_run":        dry_run,
             "created_at":     _now.isoformat(),
+            # Store fulfillment details in the record so the webhook can read
+            # them directly — Stripe metadata has a 500-char value limit and
+            # booking_url (JSON blob) can exceed it, silently breaking fulfillment.
+            "booking_url":    slot.get("booking_url", ""),
+            "platform":       slot.get("platform", ""),
+            "currency":       slot.get("currency", "USD"),
         })
 
         result = {"success": True, "checkout_url": session.url,
@@ -2623,8 +2643,6 @@ def stripe_webhook():
             "email": metadata.get("customer_email", session.get("customer_email", "")),
             "phone": metadata.get("customer_phone", ""),
         }
-        platform    = metadata.get("platform", "")
-        booking_url = metadata.get("booking_url", "")
         amount_total = session.get("amount_total", 0)
         service_name = metadata.get("service_name", "")
         dry_run      = metadata.get("dry_run", "false") == "true"
@@ -2632,6 +2650,25 @@ def stripe_webhook():
         # Use the pre-assigned booking_id if present (new path); fall back to
         # the old derived key for sessions created before this was deployed.
         pending_booking_id = metadata.get("booking_id") or f"bk_{slot_id[:12]}"
+
+        # ── Read booking_url / platform from the stored record first. ────────────
+        # Stripe metadata values are capped at 500 chars and silently truncate —
+        # a long booking_url JSON blob would corrupt fulfillment. The booking record
+        # has no such limit and is written before the checkout session is created.
+        pending_record = _load_booking_record(pending_booking_id) or {}
+        platform    = pending_record.get("platform")    or metadata.get("platform", "")
+        booking_url = pending_record.get("booking_url") or metadata.get("booking_url", "")
+
+        # ── Mark as "fulfilling" so agents see payment has landed ────────────────
+        # Without this, agents polling get_booking_status see "pending_payment"
+        # for up to 45 seconds after the customer has paid, because the webhook
+        # doesn't update the record before the thread completes.
+        _save_booking_record(pending_booking_id, {
+            **pending_record,
+            "status":         "fulfilling",
+            "payment_status": "paid",
+            "payment_intent": payment_intent,
+        })
 
         threading.Thread(
             target=_fulfill_booking_async,
@@ -4408,6 +4445,7 @@ def get_booking(booking_id: str):
     return jsonify({
         "booking_id":          record.get("booking_id", booking_id),
         "status":              record.get("status", "unknown"),
+        "payment_status":      record.get("payment_status"),
         "service_name":        record.get("service_name"),
         "business_name":       record.get("business_name"),
         "location_city":       record.get("location_city"),
@@ -4417,6 +4455,7 @@ def get_booking(booking_id: str):
         "quantity":            record.get("quantity", 1),
         "price_charged":       record.get("price_charged"),
         "currency":            record.get("currency", "USD"),
+        "checkout_url":        record.get("checkout_url"),
         "created_at":          record.get("created_at"),
         "failure_reason":      record.get("failure_reason"),
     })
