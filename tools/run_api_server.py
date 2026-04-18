@@ -453,7 +453,9 @@ def _log_request(response):
         return response
 
     source = _detect_source()
-    _record_request(path, source, response.status_code, latency_ms)
+    _record_request(path, source, response.status_code, latency_ms,
+                    mcp_method=getattr(request, "_mcp_method", None),
+                    mcp_tool=getattr(request, "_mcp_tool", None))
     threading.Thread(
         target=_write_request_log,
         args=(path, request.method, response.status_code, latency_ms, source),
@@ -613,15 +615,21 @@ from collections import deque
 
 _request_log_buffer = deque(maxlen=50000)  # ~7 days at moderate traffic
 
-def _record_request(path: str, source: str, status: int, latency_ms: int | None):
+def _record_request(path: str, source: str, status: int, latency_ms: int | None,
+                    *, mcp_method: str | None = None, mcp_tool: str | None = None):
     """Append a request record to the in-memory buffer."""
-    _request_log_buffer.append({
+    entry = {
         "path": path,
         "source": source,
         "status": status,
         "latency_ms": latency_ms,
         "ts": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if mcp_method:
+        entry["mcp_method"] = mcp_method
+    if mcp_tool:
+        entry["mcp_tool"] = mcp_tool
+    _request_log_buffer.append(entry)
 
 
 # Protected endpoints require X-API-Key header
@@ -1789,38 +1797,56 @@ def _get_api_usage_metrics() -> dict:
     by_path_1h = {}; by_source_1h = {}
     by_path_24h = {}; by_source_24h = {}
     by_path_all = {}; by_source_all = {}
+    # MCP tool-level tracking
+    mcp_tools_1h = {}; mcp_tools_24h = {}; mcp_tools_all = {}
+    mcp_methods_all = {}
 
     for entry in _request_log_buffer:
         path = entry["path"]
         source = entry["source"]
         ts = entry["ts"]
+        mcp_tool = entry.get("mcp_tool")
+        mcp_method = entry.get("mcp_method")
 
         by_path_all[path] = by_path_all.get(path, 0) + 1
         by_source_all[source] = by_source_all.get(source, 0) + 1
 
+        if mcp_method:
+            mcp_methods_all[mcp_method] = mcp_methods_all.get(mcp_method, 0) + 1
+        if mcp_tool:
+            mcp_tools_all[mcp_tool] = mcp_tools_all.get(mcp_tool, 0) + 1
+
         if ts >= t_24h:
             by_path_24h[path] = by_path_24h.get(path, 0) + 1
             by_source_24h[source] = by_source_24h.get(source, 0) + 1
+            if mcp_tool:
+                mcp_tools_24h[mcp_tool] = mcp_tools_24h.get(mcp_tool, 0) + 1
 
         if ts >= t_1h:
             by_path_1h[path] = by_path_1h.get(path, 0) + 1
             by_source_1h[source] = by_source_1h.get(source, 0) + 1
+            if mcp_tool:
+                mcp_tools_1h[mcp_tool] = mcp_tools_1h.get(mcp_tool, 0) + 1
 
     return {
         "last_1h": {
             "total_calls": sum(by_path_1h.values()),
             "by_path": by_path_1h,
             "by_source": by_source_1h,
+            "mcp_tools": mcp_tools_1h,
         },
         "last_24h": {
             "total_calls": sum(by_path_24h.values()),
             "by_path": by_path_24h,
             "by_source": by_source_24h,
+            "mcp_tools": mcp_tools_24h,
         },
         "since_deploy": {
             "total_calls": sum(by_path_all.values()),
             "by_path": by_path_all,
             "by_source": by_source_all,
+            "mcp_tools": mcp_tools_all,
+            "mcp_methods": mcp_methods_all,
         },
     }
 
@@ -3657,6 +3683,10 @@ def mcp_endpoint():
     method = body.get("method", "")
     params = body.get("params", {})
 
+    # Store MCP method/tool on the request so _log_request can enrich its record
+    request._mcp_method = method or None
+    request._mcp_tool = None
+
     def ok(result):
         return jsonify({"jsonrpc": "2.0", "id": req_id, "result": result})
 
@@ -3670,6 +3700,8 @@ def mcp_endpoint():
         # Map old tool names to new ones
         name_map = {"search_last_minute_slots": "search_slots", "get_slot_details": "get_slot"}
         tool_name = name_map.get(tool_name, tool_name)
+        request._mcp_method = "tools/call"
+        request._mcp_tool = tool_name
         try:
             result = _mcp_call_tool(tool_name, arguments)
             return jsonify({"tool": tool_name, "result": result})
@@ -3697,6 +3729,7 @@ def mcp_endpoint():
     elif method == "tools/call":
         tool_name = params.get("name", "")
         arguments  = params.get("arguments", {})
+        request._mcp_tool = tool_name
         try:
             result = _mcp_call_tool(tool_name, arguments)
             return ok({
