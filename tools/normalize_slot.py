@@ -76,10 +76,10 @@ def compute_slot_id(platform: str, business_id: str, start_time: str) -> str:
     """
     Deterministic sha256 hash of platform + business_id + start_time.
     Same open slot discovered on consecutive runs produces the same slot_id,
-    enabling upsert deduplication in write_to_sheets.py.
+    enabling upsert deduplication in sync_to_supabase.py.
 
     Args:
-        platform:    e.g. "mindbody"
+        platform:    e.g. "bokun"
         business_id: platform-native identifier
         start_time:  ISO 8601 UTC string e.g. "2026-03-25T14:00:00Z"
 

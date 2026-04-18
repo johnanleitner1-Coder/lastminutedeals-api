@@ -13,7 +13,7 @@ and returns a confirmation number. No human in the loop.
 ```
 Supplier APIs (Ventrata / Bokun / Rezdy / Peek / Xola)
     ↓
-fetch_octo_slots.py + fetch_rezdy_slots.py
+fetch_octo_slots.py
     ↓
 aggregate_slots.py  →  aggregated_slots.json
     ↓
@@ -73,38 +73,7 @@ Approval: 1-2 business days. They'll email you a production API key.
 
 ---
 
-## Step 2 — Rezdy (Free, 48h Approval)
-
-**Why second:** Free account, faster inventory access than OCTO since many suppliers are already on Rezdy.
-
-### 2a. Create Rezdy account
-1. Go to: `rezdy.com`
-2. Sign up, select **"Reseller"** during signup (not Operator)
-3. Go to **Integrations** menu → Request API Key
-4. Wait ~48 hours for key to be provisioned
-
-### 2b. Add API key to .env
-```
-REZDY_API_KEY=<your_key>
-```
-
-### 2c. Test in staging first
-```bash
-python tools/fetch_rezdy_slots.py --staging
-```
-Note: A new account has limited supplier access. The "Rezdy Agent Certification" test supplier is available to all accounts for testing purposes.
-
-### 2d. Request supplier access
-In the Rezdy Marketplace, browse suppliers and send rate access requests. Each supplier individually approves agents. As approvals come in, inventory grows automatically on next run.
-
-### 2e. Run production fetch
-```bash
-python tools/fetch_rezdy_slots.py
-```
-
----
-
-## Step 3 — Bokun ($49/month, Self-Serve)
+## Step 2 — Bokun ($49/month, Self-Serve)
 
 ### 3a. Sign up
 1. Go to: `bokun.io`
@@ -139,16 +108,16 @@ Once approved, set `PEEK_API_KEY` in `.env` and enable `peek_pro` in `octo_suppl
 
 ## Running the Full Pipeline
 
-### Manual run (all platforms)
+### Manual run
 ```bash
 python tools/fetch_octo_slots.py --hours-ahead 168
-python tools/fetch_rezdy_slots.py --hours-ahead 168
 python tools/aggregate_slots.py --hours-ahead 168
 python tools/compute_pricing.py
+python tools/sync_to_supabase.py
 ```
 
-### Automated (Windows Task Scheduler)
-`run_pipeline.bat` includes OCTO and Rezdy fetch steps. Schedule every 4 hours via `schedule_pipeline.xml`.
+### Automated (Railway)
+Pipeline runs every 4 hours via APScheduler in `run_api_server.py`.
 
 ### Via MCP (from Claude Desktop or agent)
 ```
@@ -199,8 +168,7 @@ If `book_slot` fails, categorize the failure before debugging:
 |---|---|
 | `tools/seeds/octo_suppliers.json` | Supplier registry — enable/disable each platform here |
 | `tools/fetch_octo_slots.py` | OCTO availability fetcher (Ventrata, Bokun, Peek, Xola, Zaui) |
-| `tools/fetch_rezdy_slots.py` | Rezdy Agent API fetcher (own format, free account) |
-| `tools/complete_booking.py` | OCTOBooker + RezdyBooker — pure HTTP booking execution |
+| `tools/complete_booking.py` | OCTOBooker — pure HTTP booking execution |
 | `tools/run_mcp_server.py` | MCP server — exposes search_slots / book_slot to AI agents |
 | `.env` | API keys — VENTRATA_API_KEY, REZDY_API_KEY, BOKUN_API_KEY, etc. |
 | `.env.example` | Template with instructions for every key |

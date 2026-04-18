@@ -27,27 +27,7 @@ OUTPUT_FILE = TMP_DIR / "aggregated_slots.json"
 # Files to read — in priority order (first seen wins on duplicate slot_id)
 # Confidence ranking: api > ical > scrape
 PLATFORM_FILES = [
-    # ── API-backed (highest confidence, first-seen wins on dedup) ─────────────
-    "octo_slots.json",           # OCTO standard: Ventrata, Bokun, Peek Pro, Xola, Zaui
-    "rezdy_slots.json",          # Rezdy Agent API (own format, free account)
-    "liquidspace_slots.json",    # LiquidSpace Marketplace API (workspace bookings)
-    "ticketmaster_slots.json",
-    "seatgeek_slots.json",
-    "mindbody_slots.json",
-    "google_reserve_slots.json",
-    "booking_com_slots.json",
-    "booksy_slots.json",
-    # ── Scrape-backed ──────────────────────────────────────────────────────────
-    "eventbrite_slots.json",
-    "meetup_slots.json",
-    "dice_slots.json",
-    "fareharbor_slots.json",
-    "luma_slots.json",
-    # ── iCal ──────────────────────────────────────────────────────────────────
-    "airbnb_slots.json",
-    # ── Misc / test ───────────────────────────────────────────────────────────
-    "home_services_slots.json",
-    "test_slots.json",
+    "octo_slots.json",           # OCTO standard: Bokun, Ventrata, Peek Pro, Xola, Zaui
 ]
 
 

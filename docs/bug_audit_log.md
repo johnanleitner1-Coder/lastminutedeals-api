@@ -376,3 +376,32 @@ No new bugs fixed this session. This session was a major codebase cleanup:
 | **Running total** | **132** |
 
 ---
+
+## Session 24 — Codebase Simplification (2026-04-18)
+
+Major dead code removal. Deleted 46 scripts from tools/:
+- 11 non-OCTO fetchers (eventbrite, mindbody, ticketmaster, meetup, luma, airbnb, liquidspace, seatgeek, dice, booksy, fareharbor, rezdy)
+- 10 Mindbody debug/test scripts
+- 2 FareHarbor analysis scripts
+- 6 bug-fix automation (run_autonomous_fix, scan_bugs, scan_bugs_auto, deep_audit, call_graph, parse_errors)
+- 3 distribution tools (post_to_twitter, post_to_reddit, post_to_telegram) + route_distribution
+- 6 unused utilities (generate_affiliate_links, generate_deal_visual, generate_demo_video, notify_webhooks, update_landing_page, write_to_sheets)
+- 3 one-time setup scripts (setup_cloudflare_pages, setup_google_sheets, setup_landing_page)
+- 3 misc (scrape_bokun_supplier_directory, enrich_prices, watch_slots_realtime)
+
+Also deleted: workflows/autonomous_bug_fix.md, stale seed files, stale .tmp/ slot files.
+
+**Bug fix:** aggregate_slots.py PLATFORM_FILES was never cleaned (linter reverted Session 23 edit).
+Still listed 17 platform files including eventbrite, ticketmaster, meetup — actively re-polluting
+Supabase with stale non-OCTO data on every pipeline run. Fixed to OCTO-only.
+
+78 scripts → 32. All workflow docs cleaned.
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 24: aggregate_slots.py PLATFORM_FILES regression | 1 |
+| **Running total** | **133** |
+
+---

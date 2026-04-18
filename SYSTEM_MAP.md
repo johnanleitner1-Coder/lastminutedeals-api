@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-17 (v24 — Session 23: Platform focus pivot to Bokun/OCTO-only. Removed all non-OCTO platforms (Eventbrite, Ticketmaster, Meetup, Mindbody, Luma, Airbnb, LiquidSpace, SeatGeek, Dice, Booksy, FareHarbor). Deleted 24+ scripts, rewrote complete_booking.py (1990→480 lines, removed all Playwright bookers), cleaned all pipeline/workflow/config files, purged 8,788 non-OCTO slots from Supabase. 5,400 OCTO slots remain. 132 total bugs fixed)
+**Last updated:** 2026-04-18 (v25 — Session 24: Major codebase simplification. Deleted 46 unused scripts (non-OCTO fetchers, Mindbody/FareHarbor debug tools, distribution tools, setup scripts, bug-fix automation, landing page/sheets/affiliate tools). Fixed aggregate_slots.py PLATFORM_FILES to OCTO-only. Cleaned .tmp/ of stale platform data. Cleaned all workflow docs. Remaining: 32 scripts in tools/. autonomous_bug_fix.md workflow deleted.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -34,7 +34,7 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │  DATA PIPELINE (local laptop OR Railway APScheduler every 4h)        │
 │  fetch_octo_slots.py → aggregate_slots.py → compute_pricing.py      │
-│  → sync_to_supabase.py → update_landing_page.py                     │
+│  → sync_to_supabase.py                                              │
 │  ✅ (A-9) Railway now runs fetch_octo + aggregate autonomously every 4h │
 └────────────────────────────┬────────────────────────────────────────┘
                              │ upserts to Supabase
@@ -135,15 +135,10 @@ Step 3: compute_pricing.py
 Step 4: sync_to_supabase.py
   Upsert all slots to Supabase "slots" table (keyed on slot_id). Purge past slots.
 
-Step 5: update_landing_page.py
-  Renders Jinja2 HTML from Supabase slots. Groups by category/city.
-  Shows: service_name, city, time, our_price — hides platform, booking_url, original_price.
-  Deploys to Cloudflare Pages.
 ```
 
 **IMPORTANT:** `.tmp/aggregated_slots.json` only exists on the local laptop. It does NOT exist on
-Railway. Any Railway code that reads this file (notify_webhooks.py, intent _check_price_trigger)
-will silently get no data or fail. See Bug #12 and Process 13.
+Railway. Railway reads slot data from the Supabase `slots` table.
 
 ---
 
@@ -985,33 +980,9 @@ Admin endpoint: GET /admin/circuit-breaker → get_all_states() from all supplie
 
 ## 14. Process 13: Webhook Subscriber Notifications
 
-**Tool: notify_webhooks.py**
-**Status:** ❌ NEVER FIRES ON RAILWAY (Bug #13)
-
-```
-notify_webhooks.py:
-  │
-  ├─ Load .tmp/aggregated_slots.json
-  │    ← ❌ BUG (Bug #13): this file ONLY exists on local laptop
-  │    ← Railway has no access to laptop .tmp/ files
-  │    ← On Railway: FileNotFoundError → tool exits silently, no notifications sent
-  │
-  ├─ Load .tmp/webhook_subscriptions.json
-  │    ← ❌ ALSO local only — subscription state lost on Railway
-  │
-  ├─ Compare new slots vs last-notified state
-  ├─ For each new slot matching a subscriber's filters:
-  │    └─ POST to subscriber's webhook URL with slot data
-  │
-  └─ Write .tmp/webhooks_last_notified.json
-       ← ❌ ALSO local only
-
-Fix required:
-  1. Move webhook subscriptions to Supabase Storage (like intent sessions need)
-  2. Trigger notifications from sync_to_supabase.py on the pipeline run
-     OR add a Railway-side compare-and-notify job that queries Supabase directly
-  3. Move last-notified state to Supabase Storage
-```
+**Status:** 🔲 Not yet built (notify_webhooks.py was removed in Session 24 cleanup).
+If needed in future: build a Railway-side job that queries Supabase for new slots
+and POSTs to subscriber callback URLs.
 
 ---
 
@@ -1047,34 +1018,9 @@ These endpoints exist and are wired but were not covered in the main booking flo
 
 ## 15a. Disabled Platforms & Inactive Tools
 
-The following fetchers and Playwright completers exist in code but are NOT currently active.
-Only the OCTO/Bokun path runs in production.
-
-**Slot fetchers (all disabled — only `fetch_octo_slots.py` runs):**
-- `fetch_mindbody_slots.py` — Mindbody Open API (wellness/fitness). Bot-detection issues. Blocked.
-- `fetch_eventbrite_slots.py` — Eventbrite API. Requires API key. Disabled.
-- `fetch_booksy_slots.py` — Booksy (salons/beauty). No partner access yet.
-- `fetch_dice_slots.py` — Dice.fm events. Disabled.
-- `fetch_fareharbor_slots.py` — FareHarbor (tours/activities). Disabled.
-- `fetch_liquidspace_slots.py` — LiquidSpace (workspace bookings). OAuth required.
-- `fetch_luma_slots.py` — Lu.ma events. Disabled.
-- `fetch_meetup_slots.py` — Meetup groups. Disabled.
-- `fetch_rezdy_slots.py` — Rezdy (tour operators). Disabled.
-- `fetch_seatgeek_slots.py` — SeatGeek (events/sports). Disabled.
-- `fetch_ticketmaster_slots.py` — Ticketmaster. High bot-detection. Disabled.
-
-**Real-time watcher (NOT running):**
-- `watch_slots_realtime.py` — Polls eventbrite/luma/meetup/seatgeek every 45-60s.
-  Not started. `/api/watcher/status` always returns `{"running": false}` on Railway.
-
-**Playwright booking completers in `complete_booking.py` (NOT used in production):**
-- `EventbriteBooker`, `MindbodyBooker`, `LumaBooker`, `MeetupBooker`, `TicketmasterBooker`
-  (Playwright/browser automation — Playwright not installed on Railway)
-- `RezdyBooker` (HTTP/API-based — would work without Playwright but platform disabled)
-- `LiquidSpaceBooker` (OAuth2/API-based — would work without Playwright but platform disabled)
-- `GenericBooker` — fallback that NEVER raises exceptions; flags for manual review.
-  Risk: if a platform routes to GenericBooker incorrectly, it reports "success" with no real booking.
-- `OCTOBooker` ✅ — only active completer. Pure HTTP. No Playwright required.
+All non-OCTO fetchers, Playwright bookers, and debug scripts were deleted in Sessions 23-24.
+Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
+`complete_booking.py` but is dormant (no Rezdy fetch script in pipeline).
 
 **SDK & client tools (not server-side components):**
 - `lmd_sdk.py` — Python SDK wrapping the Railway API. Client-side only.
@@ -1115,7 +1061,7 @@ Only the OCTO/Bokun path runs in production.
 | Request logs | Supabase Postgres "request_logs" | ❌ | TCP blocked — /health success rates always null |
 | Intent sessions | .tmp/intent_sessions.json | ❌ | LOCAL only — lost on every Railway redeploy |
 | Webhook subscriptions | .tmp/webhook_subscriptions.json | ❌ | LOCAL only — never fires on Railway |
-| Aggregated slots | .tmp/aggregated_slots.json | ❌ | LOCAL only — notify_webhooks + price_trigger read this |
+| Aggregated slots | .tmp/aggregated_slots.json | ⚠️ | LOCAL only — Railway reads from Supabase instead |
 | Execute/guaranteed bookings | .tmp/booked_slots.json | ❌ | LOCAL only — lost on Railway redeploy |
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
 | MCP SSE server | Railway (mcp service) | ✅ | run_mcp_remote.py |

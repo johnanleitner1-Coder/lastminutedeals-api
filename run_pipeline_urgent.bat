@@ -20,12 +20,4 @@ REM Reprice (urgency multipliers change fast for sub-12h slots)
 REM Sync to Supabase
 %PYTHON% tools/sync_to_supabase.py
 
-REM Rebuild landing page
-%PYTHON% tools/update_landing_page.py
-
-REM Notify webhooks
-if exist tools\notify_webhooks.py (
-    %PYTHON% tools/notify_webhooks.py
-)
-
 echo [%date% %time%] Urgent pipeline complete.
