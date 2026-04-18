@@ -74,14 +74,8 @@ def main():
         "kept":           0,
     }
 
-    # Process known files first (priority order), then any extra *_slots.json.
-    # Explicitly exclude the output file to prevent circular re-ingestion.
-    ordered = [tmp_dir / f for f in PLATFORM_FILES if (tmp_dir / f).exists()]
-    extras  = [
-        p for p in tmp_dir.glob("*_slots.json")
-        if p not in ordered and p.name != OUTPUT_FILE.name
-    ]
-    all_files = ordered + sorted(extras)
+    # Only read files explicitly listed in PLATFORM_FILES — no glob.
+    all_files = [tmp_dir / f for f in PLATFORM_FILES if (tmp_dir / f).exists()]
 
     for path in all_files:
         slots = load_platform_file(path)
