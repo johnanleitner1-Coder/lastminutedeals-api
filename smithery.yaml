@@ -26,9 +26,9 @@ exampleConfig:
 name: Last Minute Deals HQ
 description: >
   Real-time last-minute tour and activity inventory sourced live from production
-  booking systems via the OCTO open standard. 16 active suppliers across Iceland,
-  Italy, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt,
-  Turkey, United States, United Kingdom, and China. Search available slots and
+  booking systems via the OCTO open standard. 17 active suppliers across Iceland,
+  Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania,
+  Egypt, Turkey, United States, United Kingdom, and China. Search available slots and
   create Stripe checkout sessions — customers pay on our page, suppliers are
   confirmed automatically. Inventory refreshed every 4 hours. To enable bookings,
   register a free API key at the booking server.
@@ -121,6 +121,10 @@ suppliers:
   - name: All Washington View
     destinations: [Washington D.C., United States]
     experiences: [city tours, sightseeing, monuments, panoramic views]
+
+  - name: Tours El Chiquiz
+    destinations: [Puerto Vallarta, Mexico]
+    experiences: [tequila tasting, hiking, nightlife tours, botanical gardens, cultural day trips]
 
   - name: TUTU VIEW Ltd
     destinations: [China, Shanghai, Xi'an, Beijing, Chengdu, Hangzhou, Chongqing, Shenzhen, Changsha]

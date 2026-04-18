@@ -251,6 +251,22 @@
       "contract_status": "confirmed",
       "contract_date": "2026-04-17",
       "notes": "Accepted 17 Apr 2026. UK-based multi-destination operator. One product identified: 1191944 (9-Day China Tech Tour, Shanghai/Shenzhen/Chongqing). Mapped in product_id_map."
+    },
+    "Tours El Chiquiz": {
+      "pricing_model": "commission",
+      "commission_pct": 0.23,
+      "commission_by_type": {
+        "experiences": 0.23,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 126903,
+      "city": "Puerto Vallarta",
+      "country": "MX",
+      "products": 8,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-17",
+      "notes": "Accepted 17 Apr 2026. Puerto Vallarta tours: hiking, tequila tasting, nightlife, botanical gardens, day trips. 23% commission on experiences."
     }
   }
 }

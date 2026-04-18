@@ -590,7 +590,7 @@ def check_bokun_octo() -> None:
         if ok:
             try:
                 count = len(r.json())
-                detail = f"{count} products"
+                detail = f"reachable (first page: {count} products — full catalog requires pagination)"
             except Exception:
                 detail = "reachable"
         else:

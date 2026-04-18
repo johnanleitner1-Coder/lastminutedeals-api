@@ -927,7 +927,7 @@ def _get_live_supplier_directory() -> list[dict]:
 
             # Require at least as many suppliers as _SUPPLIER_DIR_STATIC to accept
             # the live result. If pagination is broken (e.g., only page 1 retrieved),
-            # the live query returns 6 suppliers instead of 14; in that case fall through
+            # the live query returns fewer suppliers than expected; in that case fall through
             # to the static list so agents always see the full supplier network.
             min_expected = len(_SUPPLIER_DIR_STATIC)
             if len(supplier_map) >= min_expected:
@@ -1664,7 +1664,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "16 suppliers, OCTO protocol, instant confirmation",
+            "17 suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,
@@ -5682,10 +5682,10 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from Bokun (Arctic Adventures, Bicycle Roma, Boka Bliss, "
+            "from 17 Bokun suppliers (All Washington View, Arctic Adventures, Bicycle Roma, Boka Bliss, "
             "EgyExcursions, Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, "
             "O Turista Tours, Pure Morocco Experience, REDRIB Experience, Ramen Factory Kyoto, "
-            "TourTransfer Bucharest, Trivanzo Holidays, Vakare Travel Service) via the OCTO open booking protocol. "
+            "TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service) via the OCTO open booking protocol. "
             "Use city/category/hours_ahead/max_price to filter. "
             "Slots are sorted by urgency (soonest first). "
             "Call get_supplier_info first to see all available destinations."

@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-18 (v25 — Session 24: Major codebase simplification. Deleted 46 unused scripts (non-OCTO fetchers, Mindbody/FareHarbor debug tools, distribution tools, setup scripts, bug-fix automation, landing page/sheets/affiliate tools). Fixed aggregate_slots.py PLATFORM_FILES to OCTO-only. Cleaned .tmp/ of stale platform data. Cleaned all workflow docs. Remaining: 32 scripts in tools/. autonomous_bug_fix.md workflow deleted.)
+**Last updated:** 2026-04-18 (v27 — Session 25 continued: Added Tours El Chiquiz (vendor 126903, Puerto Vallarta, MX) — now 17 vendors. Disabled local pipeline + Task Scheduler jobs, archived to archive/local_pipeline/. Fixed stale Supabase entries (Arctic Sea Tours, Bokun Reseller). Updated all supplier counts 16→17.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -32,7 +32,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  DATA PIPELINE (local laptop OR Railway APScheduler every 4h)        │
+│  DATA PIPELINE (Railway APScheduler every 4h)                        │
 │  fetch_octo_slots.py → aggregate_slots.py → compute_pricing.py      │
 │  → sync_to_supabase.py                                              │
 │  ✅ (A-9) Railway now runs fetch_octo + aggregate autonomously every 4h │
@@ -90,8 +90,8 @@
 
 ## 2. Process 1: Slot Discovery Pipeline
 
-**Trigger:** `run_pipeline.bat` — local laptop, every ~4h via Task Scheduler
-**Status:** ✅ Bokun path working | ⚠️ All other platforms disabled
+**Trigger:** Railway APScheduler every 4h (automated, 24/7). Local Task Scheduler jobs DISABLED 2026-04-18 — see archive/local_pipeline/README.md
+**Status:** ✅ Bokun path working
 **Inventory (2026-04-16):** 1,491 live slots in Supabase | 904 within 72h window | 14 cities | 4 categories
 **Test supplier guard:** `sync_to_supabase.py` filters `_TEST_SUPPLIER_NAMES` before every upsert — Zaui/Ventrata/Peek test slots cannot re-enter production
 
@@ -104,7 +104,7 @@ START
   │    Only processes: enabled=true AND API key set in .env
   │    Currently enabled: bokun_reseller ONLY
   │
-  ├─ For each vendor_id (11 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991]
+  ├─ For each vendor_id (17 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903]
   │    ├─ GET /products  (NO pricing capability header — avoids Bokun hang)
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
@@ -113,7 +113,7 @@ START
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
   │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
-  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 13 vendors mapped)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 17 vendors mapped)
   │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
   │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)
@@ -125,7 +125,7 @@ START
   └─ Write .tmp/octo_slots.json
 
 Step 2: aggregate_slots.py
-  Read all .tmp/*_slots.json → deduplicate on slot_id → filter → sort by hours_until_start → .tmp/aggregated_slots.json
+  Read ONLY .tmp/octo_slots.json (explicit allowlist, no glob) → deduplicate on slot_id → filter → sort by hours_until_start → .tmp/aggregated_slots.json
 
 Step 3: compute_pricing.py
   Per slot: base 8-12% markup × urgency multiplier (×1.0 at 48-72h → ×2.5 at 0-12h)
@@ -1066,11 +1066,11 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
 | MCP SSE server | Railway (mcp service) | ✅ | run_mcp_remote.py |
 | Payments | Stripe | ✅ | Checkout + webhooks + auth-capture + saved cards |
-| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 16 vendor IDs |
+| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 17 vendor IDs, 417 products, ~6,400 total in marketplace |
 | Bokun notifications | HTTP notification (URL token auth) | ✅ | Smoke tested 2026-04-16 |
 | Email | SendGrid (primary) + SMTP (fallback) | ✅ | 4 email types wired |
 | Landing page | Cloudflare Pages | ✅ | Rebuilt every pipeline run |
-| Slot discovery | Local Windows laptop | ⚠️ | No cloud scheduling — fails if laptop sleeps |
+| Slot discovery | Railway APScheduler (every 4h) | ✅ | Local Task Scheduler DISABLED 2026-04-18 — Railway handles it 24/7 |
 | Pricing history | Google Sheets | ❌ | OAuth token expired — urgency pricing disabled |
 | Booked slot dedup | .tmp/booked_slots.json (ALL paths) | ❌ | Lost on Railway redeploy — fast dedup breaks; Stripe path degrades gracefully via OCTO 409; execute/guaranteed double-booking risk |
 | Stripe customer records | .tmp/stripe_customers.json | ❌ | LOCAL ONLY — ALL saved-card customers lost on every Railway redeploy (Bug #20) |
@@ -1183,7 +1183,7 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | A-6 | `reconcile_bookings.py` flags `reconciliation_required` but no auto-refund or customer notification | `reconcile_bookings.py` | Silent accumulation, no customer action |
 | A-7 | ~~2 Bokun products unmapped (null/empty ref strings)~~ | `octo_suppliers.json` | FIXED — `product_id_map` fallback added to `fetch_octo_slots.py`; 0 unresolved slots |
 | A-8 | Google Sheets OAuth expired | `compute_pricing.py` | Urgency pricing disabled, no pricing learning |
-| A-9 | Slot discovery runs on local laptop only | `run_pipeline.bat` | Pipeline stops when laptop sleeps |
+| A-9 | ~~Slot discovery runs on local laptop only~~ | `run_pipeline.bat` | FIXED — Railway APScheduler runs pipeline every 4h. Local Task Scheduler + batch files archived 2026-04-18 |
 | A-10 | No real end-to-end booking test completed | All paths | Unknown if OCTOBooker actually works in production |
 | A-11 | No partial refund/cancellation for multi-qty bookings | All cancel paths | All-or-nothing cancel only |
 | A-12 | Wallet storage uses single shared JSON file — concurrent write race | `manage_wallets.py` | Balance overwrites possible under high concurrency |

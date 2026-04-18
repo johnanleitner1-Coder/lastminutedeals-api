@@ -405,3 +405,69 @@ Supabase with stale non-OCTO data on every pipeline run. Fixed to OCTO-only.
 | **Running total** | **133** |
 
 ---
+
+## Session 25 — Local Pipeline Conflict Resolution
+
+**Date:** 2026-04-18
+
+### Root cause: `.tmp/aggregated_slots.json` constantly overwritten
+
+The local laptop had **5 redundant Windows Task Scheduler jobs** all running pipeline scripts,
+plus a local API server (port 5050) with its own APScheduler. The "urgent pipeline" ran every
+30 minutes with `--hours-ahead 12`, overwriting `aggregated_slots.json` from ~5,100 slots to
+~123 slots. This made the file unreliable and confused pipeline debugging.
+
+Railway already runs the full pipeline every 4h via APScheduler (the fix for Bug A-9). All local
+scheduling was redundant.
+
+### Actions taken
+
+| Action | Detail |
+|---|---|
+| Killed local API server | Port 5050 processes (PIDs 28640, 32956) terminated |
+| Disabled 5 Task Scheduler jobs | `LastMinuteDeals Pipeline`, `LastMinuteDeals-Pipeline`, `LastMinuteDeals_Pipeline`, `LastMinuteDeals Urgent Pipeline`, `LastMinuteDeals_SeedRefresh` |
+| Archived batch files | `run_pipeline.bat`, `run_pipeline_urgent.bat`, `setup_scheduler.bat`, `refresh_seeds.bat` → `archive/local_pipeline/` |
+| Fixed manage_wallets.py | Changed `BOOKING_SERVER_HOST` default from `localhost:5050` to Railway URL |
+| Updated SYSTEM_MAP | A-9 marked fully resolved; slot discovery now Railway-only |
+| Integration test fix | Bokun product count message clarified (first page of marketplace, not total) |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 25: local pipeline conflict (not a code bug — infrastructure misconfiguration) | 0 |
+| **Running total** | **133** |
+
+---
+
+## Session 25 (continued) — Tours El Chiquiz Onboarding + Stale Entry Cleanup
+
+**Date:** 2026-04-18
+
+### New supplier: Tours El Chiquiz (vendor 126903)
+
+| File | Change |
+|---|---|
+| `tools/seeds/octo_suppliers.json` | Added vendor 126903 to vendor_ids, reference_supplier_map (`5608078P`), vendor_id_to_supplier_map |
+| `tools/supplier_contracts.json` | Added Tours El Chiquiz entry: 23% commission on experiences, Puerto Vallarta, MX |
+| `tools/run_api_server.py` | Updated `_MCP_TOOLS` and capabilities to 17 suppliers, added Tours El Chiquiz |
+| `tools/run_mcp_remote.py` | Updated search_slots docstring to list 17 suppliers |
+| `smithery.yaml` | Updated description to 17 suppliers, added Mexico, added Tours El Chiquiz supplier entry |
+| `SYSTEM_MAP.md` | Updated to v27, vendor count 16→17, removed local pipeline references |
+
+### Stale Supabase data cleanup
+
+| Issue | Fix |
+|---|---|
+| "Arctic Sea Tours" in Supabase | Deleted — was product 618325 resolved before AST prefix was mapped to Arctic Adventures |
+| "Bokun Reseller" in Supabase | Deleted — was product 869253 with unmapped `#1 SINTRA` reference prefix |
+| Missing `#1 SINTRA` prefix | Added to reference_supplier_map → O Turista Tours, Sintra, PT |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 25 continued: no new code bugs (supplier onboarding + data cleanup) | 0 |
+| **Running total** | **133** |
+
+---

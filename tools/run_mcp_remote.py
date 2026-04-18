@@ -188,9 +188,11 @@ async def search_slots(
     """
     Search for last-minute available tours and activities.
 
-    Returns real production inventory from Arctic Adventures, Bicycle Roma,
-    Pure Morocco Experience, Ramen Factory Kyoto, O Turista Tours, Trivanzo Holidays,
-    and more — sourced live via the OCTO open booking protocol.
+    Returns real production inventory from 17 suppliers (All Washington View, Arctic Adventures,
+    Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences, Íshestar Riding Tours,
+    Marvel Egypt Tours, O Turista Tours, Pure Morocco Experience, REDRIB Experience,
+    Ramen Factory Kyoto, TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays,
+    TUTU VIEW Ltd, Vakare Travel Service) sourced live via the OCTO open booking protocol.
     Slots are sorted by urgency (soonest first).
 
     Args:

@@ -63,7 +63,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -85,6 +85,7 @@
       "MULTI DAY TOURS":            {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "#1 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#2 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#3 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#5 SINTRA WALKING TOUR":     {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
@@ -109,6 +110,7 @@
       "384441P":                    {"name": "Marvel Egypt Tours",    "city": "Cairo",     "country": "EG"},
       "5519190P":                    {"name": "EgyExcursions",         "city": "Cairo",     "country": "EG"},
       "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"},
+      "5608078P":                     {"name": "Tours El Chiquiz",       "city": "Puerto Vallarta", "country": "MX"},
       "WDC":                         {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"},
       "26722P":                      {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"}
     },
@@ -142,7 +144,8 @@
       "98502":  {"name": "Vakare Travel Service",   "city": "Antalya",   "country": "TR"},
       "109399": {"name": "Trivanzo Holidays",        "city": "Cairo",          "country": "EG"},
       "4278":   {"name": "All Washington View",     "city": "Washington, D.C.", "country": "US"},
-      "136863": {"name": "TUTU VIEW Ltd",           "city": "London",           "country": "GB"}
+      "136863": {"name": "TUTU VIEW Ltd",           "city": "London",           "country": "GB"},
+      "126903": {"name": "Tours El Chiquiz",       "city": "Puerto Vallarta",  "country": "MX"}
     }
   },
   {
