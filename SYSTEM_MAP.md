@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-18 (v27 — Session 25 continued: Added Tours El Chiquiz (vendor 126903, Puerto Vallarta, MX) — now 17 vendors. Disabled local pipeline + Task Scheduler jobs, archived to archive/local_pipeline/. Fixed stale Supabase entries (Arctic Sea Tours, Bokun Reseller). Updated all supplier counts 16→17.)
+**Last updated:** 2026-04-18 (v28 — Session 26: Cleaned stale platform refs (deleted MCP_README.md, 5 dead outreach scripts, pruned octo_suppliers.json to Bokun-only). Fixed server.json for MCP Registry. Published to MCP Registry. Made GitHub repo public. Added glama.json for Glama indexing. Added /.well-known/glama.json endpoint. Replaced broken Postgres request_logs with in-memory deque tracking. /metrics now returns live usage stats.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -51,7 +51,7 @@
 │  • "market_snapshot.json"     — pre-computed market intelligence    │
 │  • "sms_subscribers.json"     — SMS opt-in subscriber list          │
 │  • "sms_sent_log.json"        — per-phone daily send tracking       │
-│  • "request_logs" (Postgres)  — API call logs (BLOCKED from Railway)│
+│  • "request_logs" (Postgres)  — UNUSED (IPv6-only, blocked from Railway)│
 └──────────┬──────────────────────────────────────────────────────────┘
            │ REST API
            ▼
@@ -993,7 +993,7 @@ These endpoints exist and are wired but were not covered in the main booking flo
 | Endpoint | Auth | Purpose | Data source | Status |
 |---|---|---|---|---|
 | GET /health | None | Slot count + DB success rates | Supabase (slot count) + Postgres (rates always null — TCP blocked) | ✅ partial |
-| GET /metrics | None | Public perf beacon: slot count, platform count, success rates, fill velocity | Supabase slots + market_insights (.tmp/insights/ — empty after redeploy) | ⚠️ |
+| GET /metrics | None | Public perf beacon: slot count, platform count, success rates, fill velocity, **api_usage** (in-memory deque, last 1h/24h/since-deploy by path+source) | Supabase slots + in-memory request log | ✅ |
 | GET /slots | None | Search slots with category/city/hours_ahead/max_price filter | Supabase REST, paginated (1000/page), falls back to .tmp/ | ✅ |
 | GET /slots/{slot_id}/quote | None | Confirm availability + price for one slot | Supabase + .tmp/booked_slots.json | ⚠️ dedup lost on redeploy |
 | POST /api/keys/register | None | Register free API key (name + email → lmd_... key) | Supabase Storage config/api_keys.json ✅ persists | ✅ |
@@ -1058,7 +1058,7 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | Circuit breaker state | Supabase Storage "circuit_breaker/" | ✅ | Per-supplier JSON, persists across redeploys |
 | Cancellation queue | Supabase Storage "cancellation_queue/" | ✅ | Used by DELETE /bookings only |
 | Inbound emails | Supabase Storage "inbound_emails/" | ✅ | SendGrid inbound parse → stored here |
-| Request logs | Supabase Postgres "request_logs" | ❌ | TCP blocked — /health success rates always null |
+| Request logs | In-memory deque (50k entries) | ✅ FIXED | Was Postgres (TCP blocked). Now in-memory — resets on redeploy but tracks all requests live. Powers /metrics api_usage. |
 | Intent sessions | .tmp/intent_sessions.json | ❌ | LOCAL only — lost on every Railway redeploy |
 | Webhook subscriptions | .tmp/webhook_subscriptions.json | ❌ | LOCAL only — never fires on Railway |
 | Aggregated slots | .tmp/aggregated_slots.json | ⚠️ | LOCAL only — Railway reads from Supabase instead |

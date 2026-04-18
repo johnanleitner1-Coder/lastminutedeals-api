@@ -471,3 +471,45 @@ scheduling was redundant.
 | **Running total** | **133** |
 
 ---
+
+## Session 26 Fixes (commits 4b7cffd, ada4a06, 41a00f5, 0f88949, 0801999, 074d2fa, 9d946ec)
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 134 | `run_api_server.py` | `_get_api_usage_metrics()` used direct Postgres query to `request_logs` table — IPv6-only DB unreachable from Railway and local. Always returned empty/error. `/metrics` api_usage was permanently broken. | Replaced with in-memory `deque(maxlen=50000)` buffer. `_record_request()` called from `_log_request` after_request handler. `_get_api_usage_metrics()` now aggregates from buffer: last_1h, last_24h, since_deploy by path+source. Resets on redeploy. |
+| 135 | `run_api_server.py` | `_ensure_request_log_table()` and `_write_request_log()` used direct Postgres TCP — silently failed on every request since project start. No request was ever logged. | Removed Postgres log writes. In-memory tracking replaces both functions. |
+
+### MEDIUM
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 136 | `octo_suppliers.json` | Listed 6 disabled supplier entries (Ventrata test, Ventrata template, Zaui, Rezdy, Xola, Peek Pro, FareHarbor) — caused Glama and other crawlers to generate incorrect descriptions mentioning dead platforms | Removed all disabled entries. Only active Bokun entry remains. |
+| 137 | `server.json` | Stale name `lastminute-booking`, title "LastMinuteDeals Booking API", description "14 suppliers" — created duplicate Glama listing | Updated to correct name, title, description matching MCP Registry. |
+| 138 | `server.json` | Description 190+ chars — MCP Registry requires <=100 | Shortened to 87 chars |
+
+### LOW
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 139 | `MCP_README.md` | Stale doc listed Ventrata, Zaui, Peek Pro as active platforms at lines 238-241. Superseded by README.md. | Deleted file entirely. |
+| 140 | Various outreach scripts | 5 dead scripts (send_peek_outreach, send_ventrata_followup, send_ventrata_supplier_outreach, send_ventrata_new_batch, send_partner_outreach) — 1,495 lines of unused code for platforms we don't use | Deleted all 5 files. |
+
+### Config/Infra
+
+| Issue | Fix |
+|---|---|
+| GitHub repo was private — blocked Glama server indexing and MCP Registry crawling | Made public via GitHub API |
+| No `glama.json` in repo — Glama indexes servers via this file | Added `glama.json` to repo root |
+| No `/.well-known/glama.json` on API — Glama connector verification | Added endpoint to run_api_server.py |
+| MCP Registry not published | Published server.json to registry.modelcontextprotocol.io (status: active) |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 26: 5 code bugs fixed, 2 stale config, 5 cleanup | 7 |
+| **Running total** | **140** |
+
+---
