@@ -1329,6 +1329,13 @@ def get_slot_by_id(slot_id: str) -> dict | None:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.route("/.well-known/glama.json", methods=["GET"])
+def glama_well_known():
+    return jsonify({
+        "$schema": "https://glama.ai/mcp/schemas/connector.json",
+        "maintainers": [{"email": "johnanleitner1@gmail.com"}]
+    })
+
 @app.route("/health", methods=["GET"])
 def health():
     slot_count = 0
