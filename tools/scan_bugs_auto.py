@@ -396,46 +396,5 @@ def _auto_check_003(source: str, tree: ast.AST, filepath: pathlib.Path) -> list[
 _AUTO_PATTERNS.append(_auto_check_003)
 
 
-# Added 2026-04-17 — caught after fixing: HTTPError in tools/fetch_octo_slots.py:130
-def _auto_check_004(source: str, tree: ast.AST, filepath: pathlib.Path) -> list[dict]:
-    """Detect OCTO unit dicts using 'id' instead of the spec-required 'unitId' key.
-
-    The OCTO availability API requires units to carry 'unitId', not 'id'.
-    Passing 'id' silently produces a 400 HTTPError with no clear message.
-    """
-    results = []
-    if "octo" not in filepath.stem.lower() and "octo" not in source.lower():
-        return results
-
-    for node in ast.walk(tree):
-        # Look for dict literals like {"id": ..., "quantity": ...}
-        if isinstance(node, ast.Dict):
-            key_strings = []
-            for k in node.keys:
-                if isinstance(k, ast.Constant) and isinstance(k.value, str):
-                    key_strings.append(k.value)
-            if "id" in key_strings and "quantity" in key_strings and "unitId" not in key_strings:
-                results.append({
-                    "line": node.lineno,
-                    "description": (
-                        "Unit dict uses 'id' instead of OCTO-required 'unitId'. "
-                        "The availability/booking API will return HTTP 400."
-                    ),
-                    "severity": "high",
-                })
-        # Look for dict() calls like dict(id=..., quantity=...)
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == "dict":
-                kw_names = [kw.arg for kw in node.keywords if kw.arg is not None]
-                if "id" in kw_names and "quantity" in kw_names and "unitId" not in kw_names:
-                    results.append({
-                        "line": node.lineno,
-                        "description": (
-                            "Unit dict uses 'id' instead of OCTO-required 'unitId'. "
-                            "The availability/booking API will return HTTP 400."
-                        ),
-                        "severity": "high",
-                    })
-    return results
-
-_AUTO_PATTERNS.append(_auto_check_004)
+# _auto_check_004 removed — it was backwards. Bokun availability API requires
+# "id" (not "unitId") in the units array. The check flagged correct code as buggy.

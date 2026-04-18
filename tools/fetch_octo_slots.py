@@ -136,10 +136,9 @@ class OCTOClient:
             List of availability objects with id, localDateTimeStart,
             localDateTimeEnd, status, vacancies, capacity, unitPricing
         """
-        # OCTO spec requires "unitId" in the units array — normalize from callers
-        # that may pass the legacy "id" key, so the API doesn't return a 400.
+        # Bokun expects "id" (not "unitId") in the units array.
         normalized_units = [
-            {"unitId": u.get("unitId") or u.get("id", ""), "quantity": u.get("quantity", 1)}
+            {"id": u.get("id") or u.get("unitId", ""), "quantity": u.get("quantity", 1)}
             for u in units
         ]
         payload = {
@@ -195,7 +194,7 @@ def _extract_price(unit_pricing: list[dict], avail_pricing: dict | None = None) 
         ordered = sorted(
             unit_pricing,
             key=lambda u: next(
-                (i for i, p in enumerate(preferred) if p in (u.get("unitId", "")).lower()),
+                (i for i, p in enumerate(preferred) if p in (u.get("unitId") or u.get("id", "")).lower()),
                 99,
             ),
         )
@@ -501,7 +500,7 @@ def fetch_supplier(supplier: dict, hours_ahead: float = 72.0) -> list[dict]:
             continue
 
         option_id, unit_id = _primary_unit(product)
-        units = [{"unitId": unit_id, "quantity": 1}]
+        units = [{"id": unit_id, "quantity": 1}]
 
         # Retry availability once on timeout if configured
         availability = None
