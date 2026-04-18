@@ -232,7 +232,7 @@ chk("OCTO cancellation retry worker", PASS if Path(__file__).parent.joinpath("re
 print("\n[Developer Assets]")
 
 base = Path(__file__).parent.parent
-chk("MCP README (for registry)", PASS if (base / "MCP_README.md").exists() else FAIL,
+chk("README (for registry)", PASS if (base / "README.md").exists() else FAIL,
     "ready to submit to modelcontextprotocol/servers")
 chk("Developer landing page", PASS if (base / ".tmp" / "landing_page_build" / "developers.html").exists() else FAIL,
     "deploy to /developers")

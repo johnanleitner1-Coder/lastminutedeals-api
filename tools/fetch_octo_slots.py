@@ -16,12 +16,6 @@ Output:
 
 ── Getting started ─────────────────────────────────────────────────────────────
 
-Ventrata (fastest path — test sandbox available immediately, no signup):
-  1. Get test API key from: https://docs.ventrata.com/getting-started/getting-started
-  2. Add to .env:  VENTRATA_API_KEY=<your_key>
-  3. Set enabled=true for ventrata_edinexplore in tools/seeds/octo_suppliers.json
-  4. Run: python tools/fetch_octo_slots.py --test-only
-
 Bokun ($49/month, self-serve):
   1. Sign up at bokun.io, select Reseller role
   2. Generate API key: Settings > Connections > API Keys
