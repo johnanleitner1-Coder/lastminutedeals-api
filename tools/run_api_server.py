@@ -1761,65 +1761,67 @@ def _compute_trust_signal(reliability: dict) -> dict:
 
 def _get_api_usage_metrics() -> dict:
     """
-    Query request_logs for real API call stats broken down by source.
-    Returns counts for last 24h and last 30d, plus median latency.
+    Query request_logs via Supabase REST API for real API call stats.
+    Returns counts for last 24h and last 7d, broken down by path and source.
     """
-    if not os.getenv("SUPABASE_DB_URL", ""):
+    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_secret:
         return {}
     try:
-        import psycopg2
-        conn = _pg_connect(timeout=5)
-        cur  = conn.cursor()
-
-        cur.execute("""
-            SELECT
-                source,
-                COUNT(*)                                        AS calls,
-                ROUND(AVG(latency_ms))                         AS avg_latency_ms,
-                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)) AS median_latency_ms,
-                SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END)  AS success_calls
-            FROM request_logs
-            WHERE logged_at > NOW() - INTERVAL '30 days'
-              AND path IN ('/slots', '/api/book', '/slots/quote')
-            GROUP BY source
-            ORDER BY calls DESC
-        """)
-        rows_30d = cur.fetchall()
-
-        cur.execute("""
-            SELECT COUNT(*), path
-            FROM request_logs
-            WHERE logged_at > NOW() - INTERVAL '24 hours'
-              AND path IN ('/slots', '/api/book')
-            GROUP BY path
-        """)
-        rows_24h = cur.fetchall()
-
-        cur.execute("""
-            SELECT COUNT(*) FROM request_logs
-            WHERE logged_at > NOW() - INTERVAL '30 days'
-              AND path = '/api/book' AND status = 200
-        """)
-        book_attempts_30d = (cur.fetchone() or [0])[0]
-
-        cur.close()
-        conn.close()
-
-        by_source = {
-            row[0]: {"calls": row[1], "avg_latency_ms": row[2],
-                     "median_latency_ms": row[3], "success_calls": row[4]}
-            for row in rows_30d
+        headers = {
+            "apikey": sb_secret,
+            "Authorization": f"Bearer {sb_secret}",
         }
-        last_24h = {row[1]: row[0] for row in rows_24h}
+        now = datetime.now(timezone.utc)
+        t_24h = (now - timedelta(hours=24)).isoformat()
+        t_7d  = (now - timedelta(days=7)).isoformat()
+
+        # Fetch last 7 days of logs (paths we care about)
+        resp = requests.get(
+            f"{sb_url}/rest/v1/request_logs",
+            headers={**headers, "Prefer": "count=exact"},
+            params={
+                "select": "path,source,status,logged_at",
+                "logged_at": f"gte.{t_7d}",
+                "path": "in.(/mcp,/slots,/api/book,/api/book/direct,/bookings)",
+                "order": "logged_at.desc",
+                "limit": "10000",
+            },
+            timeout=8,
+        )
+        rows = resp.json() if resp.status_code == 200 else []
+
+        # Aggregate
+        by_path_7d = {}
+        by_source_7d = {}
+        by_path_24h = {}
+        by_source_24h = {}
+        for row in rows:
+            path = row.get("path", "")
+            source = row.get("source", "unknown")
+            logged_at = row.get("logged_at", "")
+
+            by_path_7d[path] = by_path_7d.get(path, 0) + 1
+            by_source_7d[source] = by_source_7d.get(source, 0) + 1
+
+            if logged_at >= t_24h:
+                by_path_24h[path] = by_path_24h.get(path, 0) + 1
+                by_source_24h[source] = by_source_24h.get(source, 0) + 1
+
+        total_24h = sum(by_path_24h.values())
+        total_7d = sum(by_path_7d.values())
 
         return {
-            "last_30d": {
-                "by_source":          by_source,
-                "checkout_initiated": int(book_attempts_30d),
-            },
             "last_24h": {
-                "slot_searches":  int(last_24h.get("/slots", 0)),
-                "book_attempts":  int(last_24h.get("/api/book", 0)),
+                "total_calls": total_24h,
+                "by_path": by_path_24h,
+                "by_source": by_source_24h,
+            },
+            "last_7d": {
+                "total_calls": total_7d,
+                "by_path": by_path_7d,
+                "by_source": by_source_7d,
             },
         }
     except Exception as e:
