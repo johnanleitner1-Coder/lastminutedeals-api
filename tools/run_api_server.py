@@ -452,9 +452,11 @@ def _log_request(response):
     if path in ("/health", "/sse", "/messages") or path.startswith("/static"):
         return response
 
+    source = _detect_source()
+    _record_request(path, source, response.status_code, latency_ms)
     threading.Thread(
         target=_write_request_log,
-        args=(path, request.method, response.status_code, latency_ms, _detect_source()),
+        args=(path, request.method, response.status_code, latency_ms, source),
         daemon=True,
     ).start()
     return response
@@ -601,9 +603,25 @@ def _ensure_request_log_table() -> None:
         """)
         cur.close()
         conn.close()
-        print("[DB] request_logs table ready")
+        print("[DB] request_logs table created")
     except Exception as e:
         print(f"[DB] request_logs table setup error: {e}")
+
+
+# ── In-memory request tracking (no DB required) ──────────────────────────────
+from collections import deque
+
+_request_log_buffer = deque(maxlen=50000)  # ~7 days at moderate traffic
+
+def _record_request(path: str, source: str, status: int, latency_ms: int | None):
+    """Append a request record to the in-memory buffer."""
+    _request_log_buffer.append({
+        "path": path,
+        "source": source,
+        "status": status,
+        "latency_ms": latency_ms,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # Protected endpoints require X-API-Key header
@@ -1761,71 +1779,50 @@ def _compute_trust_signal(reliability: dict) -> dict:
 
 def _get_api_usage_metrics() -> dict:
     """
-    Query request_logs via Supabase REST API for real API call stats.
-    Returns counts for last 24h and last 7d, broken down by path and source.
+    Aggregate in-memory request logs for usage stats.
+    Returns counts for last 1h, 24h, and since deploy, broken down by path and source.
     """
-    sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
-    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if not sb_url or not sb_secret:
-        return {}
-    try:
-        headers = {
-            "apikey": sb_secret,
-            "Authorization": f"Bearer {sb_secret}",
-        }
-        now = datetime.now(timezone.utc)
-        t_24h = (now - timedelta(hours=24)).isoformat()
-        t_7d  = (now - timedelta(days=7)).isoformat()
+    now = datetime.now(timezone.utc)
+    t_1h  = (now - timedelta(hours=1)).isoformat()
+    t_24h = (now - timedelta(hours=24)).isoformat()
 
-        # Fetch last 7 days of logs (paths we care about)
-        resp = requests.get(
-            f"{sb_url}/rest/v1/request_logs",
-            headers={**headers, "Prefer": "count=exact"},
-            params={
-                "select": "path,source,status,logged_at",
-                "logged_at": f"gte.{t_7d}",
-                "path": "in.(/mcp,/slots,/api/book,/api/book/direct,/bookings)",
-                "order": "logged_at.desc",
-                "limit": "10000",
-            },
-            timeout=8,
-        )
-        rows = resp.json() if resp.status_code == 200 else []
+    by_path_1h = {}; by_source_1h = {}
+    by_path_24h = {}; by_source_24h = {}
+    by_path_all = {}; by_source_all = {}
 
-        # Aggregate
-        by_path_7d = {}
-        by_source_7d = {}
-        by_path_24h = {}
-        by_source_24h = {}
-        for row in rows:
-            path = row.get("path", "")
-            source = row.get("source", "unknown")
-            logged_at = row.get("logged_at", "")
+    for entry in _request_log_buffer:
+        path = entry["path"]
+        source = entry["source"]
+        ts = entry["ts"]
 
-            by_path_7d[path] = by_path_7d.get(path, 0) + 1
-            by_source_7d[source] = by_source_7d.get(source, 0) + 1
+        by_path_all[path] = by_path_all.get(path, 0) + 1
+        by_source_all[source] = by_source_all.get(source, 0) + 1
 
-            if logged_at >= t_24h:
-                by_path_24h[path] = by_path_24h.get(path, 0) + 1
-                by_source_24h[source] = by_source_24h.get(source, 0) + 1
+        if ts >= t_24h:
+            by_path_24h[path] = by_path_24h.get(path, 0) + 1
+            by_source_24h[source] = by_source_24h.get(source, 0) + 1
 
-        total_24h = sum(by_path_24h.values())
-        total_7d = sum(by_path_7d.values())
+        if ts >= t_1h:
+            by_path_1h[path] = by_path_1h.get(path, 0) + 1
+            by_source_1h[source] = by_source_1h.get(source, 0) + 1
 
-        return {
-            "last_24h": {
-                "total_calls": total_24h,
-                "by_path": by_path_24h,
-                "by_source": by_source_24h,
-            },
-            "last_7d": {
-                "total_calls": total_7d,
-                "by_path": by_path_7d,
-                "by_source": by_source_7d,
-            },
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    return {
+        "last_1h": {
+            "total_calls": sum(by_path_1h.values()),
+            "by_path": by_path_1h,
+            "by_source": by_source_1h,
+        },
+        "last_24h": {
+            "total_calls": sum(by_path_24h.values()),
+            "by_path": by_path_24h,
+            "by_source": by_source_24h,
+        },
+        "since_deploy": {
+            "total_calls": sum(by_path_all.values()),
+            "by_path": by_path_all,
+            "by_source": by_source_all,
+        },
+    }
 
 
 @app.route("/test/dry-run", methods=["POST"])
