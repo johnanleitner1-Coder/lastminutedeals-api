@@ -1,254 +1,222 @@
-# LastMinuteDeals — Execution Infrastructure for AI Agents
+# Last Minute Deals HQ
 
-**The intent-to-confirmation layer for real-world service bookings.**
+[![Smithery](https://smithery.ai/badge/@johnanleitner1/Last_Minute_Deals_HQ)](https://smithery.ai/server/johnanleitner1/Last_Minute_Deals_HQ)
 
-An AI agent tells LastMinuteDeals what it wants to book. The system searches, decides, executes, retries on failure, and returns a confirmed outcome — synchronously or via persistent delegated intent.
+MCP server with real-time last-minute tour and activity inventory. 5,000+ live bookable slots across 17 suppliers in 15 countries, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
 
-```python
-from lmd_sdk import LastMinuteDeals
+Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers are confirmed automatically.
 
-lmd = LastMinuteDeals.register("MyAgent", "agent@example.com")  # get your API key
+## Install
 
-# Fire-and-forget delegated intent
-intent = lmd.intent(
-    goal="find_and_book",
-    category="wellness",
-    city="New York",
-    budget=120,
-    customer={"name": "Jane Smith", "email": "jane@example.com", "phone": "+15550001234"},
-    wallet_id="wlt_...",           # pre-funded wallet — no per-booking redirect
-    callback_url="https://your-agent.com/webhook",
-)
-# System monitors continuously, executes when a match appears, POSTs to callback_url
+### Claude Desktop
+
+```bash
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client claude
 ```
 
----
+### Claude Code
 
-## Why this exists
+```bash
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client claude-code
+```
 
-When an AI agent needs to book a real-world service, it has two options:
+### Cursor
 
-| Build in-house | Use LastMinuteDeals |
+```bash
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client cursor
+```
+
+### Windsurf
+
+```bash
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client windsurf
+```
+
+### Other MCP Clients
+
+```bash
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client <client-name>
+```
+
+Or connect directly to the remote MCP endpoint:
+
+```
+https://api.lastminutedealshq.com/mcp
+```
+
+## Tools
+
+| Tool | Description |
 |---|---|
-| 3–6 months of engineering | 1 API key, 1 HTTP call |
-| Platform-specific Playwright automation | 8+ platforms already built |
-| No historical data | Market insights accumulate from day 1 |
-| Breaks when platforms change | Maintained continuously |
-| No retry logic | 7-strategy fallback engine |
-| No wallet system | Pre-funded wallets, instant execution |
+| `search_slots` | Search available tours and activities. Filter by city, category, `hours_ahead` window, and `max_price`. Returns live inventory sorted by urgency (soonest first). |
+| `book_slot` | Book a slot for a customer. **Approval mode** (default) returns a Stripe checkout URL for the customer to pay. **Autonomous mode** charges a pre-funded wallet and returns a confirmation number directly. Supports quantity for group bookings. |
+| `get_booking_status` | Check booking status by `booking_id`. Returns status, confirmation number, checkout URL (recoverable if lost), service details, and payment status. |
+| `get_supplier_info` | Returns the full supplier network — destinations, experience types, booking platform, and confirmation speed. Use before searching to understand what inventory is available. |
 
----
+## Example
 
-## Core capabilities
+**"What tours are available in Rome this weekend under $50?"**
 
-### Guaranteed Execution
-`POST /execute/guaranteed` — synchronous, hard outcome. Returns only when booking is confirmed or all paths exhausted.
-
-7 fallback strategies in order:
-1. Original slot
-2. Retry original (transient failure)
-3. Similar slot (same category/city, ±2h)
-4. Any slot (same category/city)
-5. Any platform (same category/city)
-6. Metro area match
-7. Alternative category (if allowed)
-
-### Goal-Oriented Decisioning
-`POST /execute/best` — tell us what you want, we decide what to book.
-
-Goals: `maximize_value` · `minimize_wait` · `maximize_success` · `minimize_price`
-
-### Delegated Intent Sessions
-`POST /intent/create` — create a persistent goal. System works until done.
-
-Autonomy levels:
-- `full` — auto-execute when matching slots appear (fire and forget)
-- `notify` — POST to callback_url first, wait for your approval
-- `monitor` — observe and alert only, never execute
-
-Goal types:
-- `find_and_book` — monitor + execute
-- `monitor_only` — notify when slots appear
-- `price_alert` — notify when price drops below target
-
-### Agent Wallets
-Pre-funded accounts. Deposit once, execute many times — no Stripe redirect per booking.
-
-```python
-wallet = lmd.wallet_create("MyAgent", "agent@example.com")
-fund_url = lmd.wallet_fund(wallet["wallet_id"], amount_dollars=100)
-# Customer visits fund_url once. Wallet now has $100.
-# Future bookings debit instantly — no redirect, no latency.
+```
+search_slots(city="Rome", hours_ahead=72, max_price=50)
 ```
 
-### Market Intelligence
-`GET /insights/market` — data that compounds over time and is not reproducible from a standing start.
+```json
+[
+  {
+    "service_name": "E-Bike Tour of Ancient Rome & Appian Way",
+    "business_name": "Bicycle Roma",
+    "start_time": "2026-04-19T09:00:00+00:00",
+    "price": 42.00,
+    "currency": "EUR",
+    "location_city": "Rome",
+    "hours_until_start": 26.5,
+    "slot_id": "a1b2c3..."
+  },
+  {
+    "service_name": "Castelli Romani Wine & Food E-Bike Tour",
+    "business_name": "Bicycle Roma",
+    "start_time": "2026-04-19T13:00:00+00:00",
+    "price": 48.50,
+    "currency": "EUR",
+    "location_city": "Rome",
+    "hours_until_start": 30.5,
+    "slot_id": "d4e5f6..."
+  }
+]
+```
 
-- Platform success rates (which platforms complete bookings reliably)
-- Fill velocity per category (how fast slots sell out)
-- Optimal booking windows (when to book for best success rate)
-- Competing demand signals (how many other agents are hunting the same category/city)
+**"Book the e-bike tour for Jane Smith"**
 
-### Real-Time Watchers
-Continuous slot watchers update inventory every 30–60 seconds per platform (vs. 4-hour polling cycle). New slots trigger instant downstream pricing, Supabase sync, and webhook notifications.
+```
+book_slot(
+  slot_id="a1b2c3...",
+  customer_name="Jane Smith",
+  customer_email="jane@example.com",
+  customer_phone="+15550001234"
+)
+```
 
----
+```json
+{
+  "booking_id": "bk_a1b2c3_x9y8z7",
+  "status": "pending_payment",
+  "checkout_url": "https://checkout.stripe.com/c/pay/...",
+  "message": "Customer should complete payment at checkout_url"
+}
+```
 
-## Quick start
+**"Did she pay yet?"**
 
-### 1. Get an API key (free)
+```
+get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
+```
+
+```json
+{
+  "status": "booked",
+  "confirmation_number": "BR-20260419-001",
+  "service_name": "E-Bike Tour of Ancient Rome & Appian Way",
+  "start_time": "2026-04-19T09:00:00+00:00",
+  "payment_status": "captured"
+}
+```
+
+## Suppliers
+
+17 active suppliers. Live inventory across Iceland, Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China.
+
+| Supplier | Destinations | Experiences |
+|---|---|---|
+| Arctic Adventures | Reykjavik, Husafell, Skaftafell, Iceland | Glacier hikes, ice caves, snowmobiling, aurora tours, whale watching, diving |
+| Bicycle Roma | Rome, Appia Antica, Castelli Romani | E-bike tours, food tours, guided city tours, bike rentals |
+| Boka Bliss | Kotor, Montenegro | Boat tours, sea caves, coastal experiences |
+| EgyExcursions | Cairo, Egypt | Pyramids, cultural tours, day trips |
+| Hillborn Experiences | Arusha, Serengeti, Zanzibar, Kilimanjaro | Private safaris, Kilimanjaro climbs, ultra-luxury wildlife tours |
+| Íshestar Riding Tours | Selfoss, Iceland | Horse riding, glacier rides, Viking tours |
+| Marvel Egypt Tours | Cairo, Luxor, Aswan | Pyramids, Nile cruises, temple tours |
+| O Turista Tours | Lisbon, Porto, Sintra, Fatima, Nazaré | Private tours, day trips, wine experiences |
+| Pure Morocco Experience | Marrakech, Sahara Desert | Desert tours, multi-day tours, cultural experiences |
+| Ramen Factory Kyoto | Kyoto, Japan | Cooking classes, ramen workshops |
+| REDRIB Experience | Helsinki, Finland | Speed boat tours, archipelago experiences |
+| TourTransfer Bucharest | Bucharest, Romania | City tours, Dracula castle, Peles castle |
+| Tours El Chiquiz | Puerto Vallarta, Mexico | Tequila tasting, hiking, nightlife tours, botanical gardens |
+| Trivanzo Holidays | Cairo, Luxor, Red Sea, Egypt | Nile cruises, cultural tours, desert tours |
+| TUTU VIEW Ltd | Shanghai, Xi'an, Beijing, Chengdu, Hangzhou | Multi-day tours, Silk Road, food tours, nature tours |
+| Vakare Travel Service | Antalya, Turkey | Boat tours, jeep safaris, cultural excursions |
+| All Washington View | Washington D.C. | City tours, sightseeing, monuments, panoramic views |
+
+## Categories
+
+`experiences` · `wellness` · `beauty` · `hospitality`
+
+## API Key
+
+Free. No credit card required. Needed for booking operations — search works without one.
+
 ```bash
 curl -X POST https://api.lastminutedealshq.com/api/keys/register \
   -H "Content-Type: application/json" \
   -d '{"name": "MyAgent", "email": "agent@example.com"}'
-# → {"api_key": "lmd_..."}
 ```
-
-### 2. Search slots
-```bash
-curl "https://api.lastminutedealshq.com/slots?city=NYC&category=wellness&hours_ahead=24"
-```
-
-### 3. Guaranteed booking (wallet)
-```bash
-# First, create and fund a wallet:
-curl -X POST .../api/wallets/create -d '{"name":"MyAgent","email":"agent@example.com"}'
-curl -X POST .../api/wallets/fund -d '{"wallet_id":"wlt_...","amount_dollars":100}'
-# Visit checkout_url once to fund. Then:
-
-curl -X POST .../execute/guaranteed \
-  -H "X-API-Key: lmd_..." \
-  -d '{
-    "category": "wellness", "city": "New York", "hours_ahead": 24,
-    "customer": {"name":"Jane","email":"jane@example.com","phone":"+15550001234"},
-    "wallet_id": "wlt_..."
-  }'
-# → {"success":true,"status":"booked","confirmation":"MB-12345","attempts":1,"confidence_score":0.82,...}
-```
-
-### 4. Python SDK (zero dependencies)
-```bash
-# No install needed — drop the file in your project:
-curl -O https://lastminutedealshq.com/lmd_sdk.py
-```
-
-```python
-from lmd_sdk import LastMinuteDeals
-
-lmd = LastMinuteDeals(api_key="lmd_...")
-result = lmd.execute(category="wellness", city="NYC", customer={...}, wallet_id="wlt_...")
-```
-
----
-
-## API reference
-
-Full OpenAPI 3.1 spec: `https://lastminutedealshq.com/openapi.json`
-
-| Endpoint | Description |
-|---|---|
-| `GET /slots` | Search available slots |
-| `GET /slots/{id}/quote` | Confirm availability + price |
-| `POST /api/book` | Stripe checkout (user redirect) |
-| `POST /execute/guaranteed` | Synchronous guaranteed outcome |
-| `POST /execute/best` | Goal-optimized selection + execution |
-| `POST /intent/create` | Persistent delegated intent |
-| `GET /intent/{id}` | Check intent status |
-| `POST /intent/{id}/execute` | Manually trigger notify-autonomy intent |
-| `GET /intent/list` | All your active intents |
-| `POST /api/wallets/create` | Create pre-funded wallet |
-| `POST /api/wallets/fund` | Stripe link to fund wallet |
-| `GET /api/wallets/{id}/balance` | Current balance |
-| `GET /insights/market` | Market intelligence snapshot |
-| `GET /insights/platform/{name}` | Per-platform performance data |
-| `GET /metrics` | Public system performance metrics |
-| `POST /mcp` | MCP-over-HTTP (no transport needed) |
-| `POST /api/webhooks/subscribe` | Subscribe to deal alert webhooks |
-| `GET /api/watcher/status` | Real-time data freshness |
-
-Authentication: `X-API-Key: lmd_...` header (free registration at `/api/keys/register`)
-
----
-
-## MCP server
-
-For Claude, GPT, and any MCP-compatible agent:
-
-```
-POST /mcp
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_slots","arguments":{"city":"NYC","category":"experiences"}}}
-```
-
-Available tools: `search_slots` · `book_slot` · `get_booking_status` · `get_supplier_info`
-
-Remote endpoint: `https://web-production-dc74b.up.railway.app/mcp`
-
----
-
-## Example agents
-
-| File | Pattern |
-|---|---|
-| `examples/wellness_booking_agent.py` | Direct booking + intent fallback |
-| `examples/event_finder_agent.py` | minimize_wait goal + monitoring intent |
-| `examples/concierge_agent.py` | Multi-category natural-language concierge |
-
----
-
-## Response format
-
-Every execution response includes `system_context` — live proof that the infrastructure behind the booking is healthy:
 
 ```json
-{
-  "success": true,
-  "status": "booked",
-  "confirmation": "EVT-98765",
-  "price_charged": 65.00,
-  "attempts": 2,
-  "fallbacks_used": 1,
-  "confidence_score": 0.79,
-  "system_context": {
-    "system_success_rate": 0.91,
-    "live_bookable_slots": 8432,
-    "data_freshness_seconds": 23,
-    "total_bookings_processed": 1847
-  }
-}
+{"api_key": "lmd_..."}
 ```
 
----
+Pass the key when configuring the MCP server or as `X-API-Key` header for REST calls.
 
-## Platforms covered
+## REST API
 
-| Platform | Category | Method |
+Base URL: `https://api.lastminutedealshq.com`
+
+| Endpoint | Method | Description |
 |---|---|---|
-| Eventbrite | Entertainment | Public API |
-| Mindbody | Wellness, Fitness | Open API |
-| Luma | Events | Public API |
-| Meetup | Events | GraphQL |
-| SeatGeek | Entertainment | Public API |
-| Ticketmaster | Entertainment | Discovery API |
-| Dice.fm | Entertainment | Web API |
-| Booksy | Beauty, Wellness | Partner API |
-| FareHarbor | Activities | Partner API |
+| `/api/slots` | GET | Search slots — `city`, `category`, `hours_ahead`, `max_price` |
+| `/api/book` | POST | Create Stripe checkout for a slot |
+| `/api/book/direct` | POST | Book with pre-funded wallet (autonomous agents) |
+| `/bookings/{id}` | GET | Check booking status |
+| `/api/keys/register` | POST | Get a free API key |
+| `/api/wallets/create` | POST | Create a pre-funded agent wallet |
+| `/api/wallets/fund` | POST | Get Stripe link to fund wallet |
+| `/health` | GET | System health check |
+| `/metrics` | GET | Live system metrics |
 
----
+## Booking Modes
 
-## Self-hosting
+**Approval (default)** — Returns a Stripe checkout URL. The customer visits the link, pays, and the booking is confirmed with the supplier automatically. Best for human-in-the-loop flows.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/lastminutedeals
-cd lastminutedeals
-pip install -r tools/requirements.txt
-cp .env.example .env   # fill in your keys
-python tools/run_api_server.py
+**Autonomous** — Requires a pre-funded wallet. The system debits the wallet instantly and confirms with the supplier. No redirect, no latency. Best for fully autonomous agents.
+
+```
+book_slot(
+  slot_id="...",
+  customer_name="Jane Smith",
+  customer_email="jane@example.com",
+  mode="autonomous",
+  wallet_id="wlt_..."
+)
 ```
 
-Minimum viable `.env`:
+## How It Works
+
 ```
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-BOOKING_SERVER_HOST=https://your-api-domain.com
-LANDING_PAGE_URL=https://lastminutedealshq.com
+Every 4 hours:
+  fetch_octo_slots.py   →  Pull availability from 17 suppliers via OCTO API
+  aggregate_slots.py    →  Deduplicate, filter, sort by urgency
+  compute_pricing.py    →  Dynamic commission-based pricing
+  sync_to_supabase.py   →  Upsert to production database
+
+MCP/REST requests:
+  Agent calls search_slots  →  Supabase query  →  Live results
+  Agent calls book_slot     →  Stripe checkout  →  OCTO booking  →  Supplier confirmed
 ```
+
+## Status
+
+- **Slots live:** 5,000+
+- **Suppliers:** 17
+- **Countries:** 15
+- **Refresh interval:** Every 4 hours
+- **Uptime:** Hosted on Railway (24/7)
+- **Payments:** Stripe (authorization-then-capture — customer is never charged for a failed booking)
