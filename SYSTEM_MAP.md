@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-18 (v28 — Session 26: Cleaned stale platform refs (deleted MCP_README.md, 5 dead outreach scripts, pruned octo_suppliers.json to Bokun-only). Fixed server.json for MCP Registry. Published to MCP Registry. Made GitHub repo public. Added glama.json for Glama indexing. Added /.well-known/glama.json endpoint. Replaced broken Postgres request_logs with in-memory deque tracking. /metrics now returns live usage stats.)
+**Last updated:** 2026-04-19 (v29 — Session 27: Fixed Railway 502: app now reads Railway's PORT env var as fallback (BOOKING_SERVER_PORT -> PORT -> 5050). Added 18th supplier Zestro Bizlinks (vendor 137927, Japan). Fixed stale supplier counts (16/17 -> 18) in MCP instructions, static fallback list, and search_slots description. Added Tours El Chiquiz + Zestro Bizlinks to _SUPPLIER_DIR_STATIC fallback. Created MIT LICENSE for Glama score. Configured Glama Dockerfile build spec for mcp-proxy + --stdio. Created Glama release (License=A, Security/Quality processing). Added Glama badge to awesome-mcp-servers PR #5074.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---

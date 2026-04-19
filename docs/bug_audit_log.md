@@ -524,3 +524,29 @@ scheduling was redundant.
 | **Running total** | **142** |
 
 ---
+
+## Session 28 — 2026-04-19 — Railway 502 fix, supplier count cleanup
+
+### CRITICAL
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 143 | `tools/run_api_server.py` | **Railway 502: PORT mismatch** — app read `BOOKING_SERVER_PORT` (default 5050) but ignored Railway's injected `PORT` env var. If Railway assigned a different port, Flask listened on wrong port causing 502. | Changed to `os.getenv("BOOKING_SERVER_PORT", os.getenv("PORT", "5050"))` — respects Railway's PORT as fallback. |
+
+### LOW
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 144 | `tools/run_api_server.py` | Stale supplier count "16" in embedded MCP instructions (line 6127) — should be 18 | Updated to 18 |
+| 145 | `tools/run_api_server.py` | Stale supplier count "16" in static fallback comment (line 870) — should be 18 | Updated to 18 |
+| 146 | `tools/run_api_server.py` | Stale supplier count "17" in MCP JSON-RPC search_slots description (line 5724) — should be 18, missing Zestro Bizlinks | Updated to 18, added Zestro Bizlinks to list |
+| 147 | `tools/run_api_server.py` | `_SUPPLIER_DIR_STATIC` fallback list missing Tours El Chiquiz and Zestro Bizlinks (16 entries vs 18 vendors) | Added both suppliers to static list |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 28: 1 critical PORT bug, 4 stale-count bugs | 5 |
+| **Running total** | **147** |
+
+---
