@@ -513,13 +513,14 @@ scheduling was redundant.
 
 | # | File | Bug | Fix |
 |---|---|---|---|
-| 141 | `tools/run_mcp_remote.py` | **Smithery MCP server used deprecated SSE transport** (`transport="sse"`). MCP spec deprecated HTTP+SSE on 2025-03-26; deadline April 1 2026. Smithery migrated to Streamable HTTP — our SSE server caused 20.6% Unavailable on tools/call, traffic declined to zero. | Changed `mcp.run(transport="sse")` → `mcp.run(transport="streamable-http")`. Updated docstring endpoint references `/sse` → `/mcp`. |
+| 141 | `tools/run_mcp_remote.py` | **Smithery MCP server used deprecated SSE transport** (`transport="sse"`). MCP spec deprecated HTTP+SSE on 2025-03-26; deadline April 1 2026. Smithery migrated to Streamable HTTP. | Changed `mcp.run(transport="sse")` → `mcp.run(transport="streamable-http")`. Updated docstring endpoint references `/sse` → `/mcp`. |
+| 142 | `tools/run_mcp_remote.py` | **search_slots returned unlimited results (2,391 slots, 1.38 MB) through Smithery proxy** — `limit` parameter removed on Apr 17 (commit `000e86b`). Caused 30.3% failure rate on search_slots specifically (69.7% uptime) while book_slot/get_booking_status stayed at 100%. Smithery agents hit timeouts/truncated responses, stopped retrying, traffic went to zero. | Restored `limit` param with default=50, max=200, server-side clamping. Client-side truncation as safety net. |
 
 ### Bug Counts
 
 | Source | Count |
 |---|---|
-| Session 27: 1 critical transport bug | 1 |
-| **Running total** | **141** |
+| Session 27: 1 transport bug, 1 critical response-size bug | 2 |
+| **Running total** | **142** |
 
 ---
