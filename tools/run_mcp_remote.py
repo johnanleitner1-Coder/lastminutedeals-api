@@ -203,8 +203,10 @@ async def search_slots(
                      Leave empty for all categories.
         hours_ahead: Return slots starting within this many hours (default: 72).
         max_price:   Maximum price in USD. Set to 0 to return all prices.
-        limit:       Max results to return (default 50, max 200). Results are sorted
-                     by urgency so the most time-sensitive slots come first.
+        limit:       Max results to return (default 50). Results are sorted by urgency
+                     so the most time-sensitive slots come first. Increase for broader
+                     browsing (e.g. limit=500). Use city/category filters to narrow
+                     results instead of raising the limit when possible.
 
     Returns:
         List of available slot dicts sorted by hours_until_start (soonest first).
@@ -217,10 +219,11 @@ async def search_slots(
 
     # hours_ahead must be int: Flask's type=int silently returns the default (168h)
     # when given a float string like "72.0", so the time-window filter is dropped.
-    # Clamp limit to [1, 200] — unbounded responses (2000+ slots, 1.4MB) timeout
-    # through Smithery's proxy and caused 30% search_slots failure rate.
-    clamped_limit = max(1, min(int(limit), 200))
-    params: dict = {"hours_ahead": int(hours_ahead), "limit": clamped_limit}
+    # Default 50 keeps responses small (~30KB) for fast proxy transit.
+    # No hard cap — agents can request more when filtering by city/category.
+    # The 30% failure rate was caused by having NO default (2400 slots, 1.4MB per call).
+    safe_limit = max(1, int(limit))
+    params: dict = {"hours_ahead": int(hours_ahead), "limit": safe_limit}
     if city:
         params["city"] = city
     if category:
@@ -246,7 +249,7 @@ async def search_slots(
                 f"No slots found for city={city!r} hours_ahead={hours_ahead}. "
                 "Try expanding hours_ahead or clearing city filter."
             )}]
-        result = [_safe_slot(s) for s in raw[:clamped_limit]]
+        result = [_safe_slot(s) for s in raw[:safe_limit]]
         # Evict oldest entry if at capacity before inserting
         if len(_SLOTS_CACHE) >= _SLOTS_CACHE_MAX and cache_key not in _SLOTS_CACHE:
             oldest = min(_SLOTS_CACHE, key=lambda k: _SLOTS_CACHE[k]["expires"])
