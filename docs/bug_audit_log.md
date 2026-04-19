@@ -505,11 +505,21 @@ scheduling was redundant.
 | No `/.well-known/glama.json` on API — Glama connector verification | Added endpoint to run_api_server.py |
 | MCP Registry not published | Published server.json to registry.modelcontextprotocol.io (status: active) |
 
+---
+
+## Session 27 — 2026-04-18 — Smithery transport fix
+
+### Critical
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 141 | `tools/run_mcp_remote.py` | **Smithery MCP server used deprecated SSE transport** (`transport="sse"`). MCP spec deprecated HTTP+SSE on 2025-03-26; deadline April 1 2026. Smithery migrated to Streamable HTTP — our SSE server caused 20.6% Unavailable on tools/call, traffic declined to zero. | Changed `mcp.run(transport="sse")` → `mcp.run(transport="streamable-http")`. Updated docstring endpoint references `/sse` → `/mcp`. |
+
 ### Bug Counts
 
 | Source | Count |
 |---|---|
-| Session 26: 5 code bugs fixed, 2 stale config, 5 cleanup | 7 |
-| **Running total** | **140** |
+| Session 27: 1 critical transport bug | 1 |
+| **Running total** | **141** |
 
 ---

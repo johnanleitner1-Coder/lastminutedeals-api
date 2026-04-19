@@ -801,7 +801,7 @@ Bokun: POST /api/bokun/webhook?token=...
 **Entry points:**
 - `POST /mcp` — MCP-over-HTTP (Smithery, direct API agents) — on Flask server
 - `GET /sse` + `POST /messages` — SSE proxied to embedded FastMCP thread
-- `mcp.lastminutedealshq.com` — standalone SSE server (run_mcp_remote.py, separate Railway service)
+- `mcp.lastminutedealshq.com` — standalone Streamable HTTP server (run_mcp_remote.py, separate Railway service)
 
 **Status:** ✅ search_slots, get_supplier_info working | ✅ book_slot returns checkout_url | ⚠️ Human Stripe payment still required for bookings
 
@@ -834,7 +834,8 @@ MCP tool: get_supplier_info()
   ← Both implementations were missing Vakare Travel Service (61% of OCTO inventory) — FIXED
 ```
 
-**Smithery connection path:** Smithery → `server.json` → `POST /mcp` on Flask → `_mcp_call_tool()`
+**Smithery connection path:** Smithery → `run_mcp_remote.py` (Streamable HTTP transport) → Railway REST API
+  ← Previously used SSE transport (deprecated April 1 2026); caused 20.6% Unavailable on tools/call — FIXED
 **Claude Desktop path:** `GET /sse` → proxied SSE → embedded FastMCP
 
 ---
@@ -1064,7 +1065,7 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | Aggregated slots | .tmp/aggregated_slots.json | ⚠️ | LOCAL only — Railway reads from Supabase instead |
 | Execute/guaranteed bookings | .tmp/booked_slots.json | ❌ | LOCAL only — lost on Railway redeploy |
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
-| MCP SSE server | Railway (mcp service) | ✅ | run_mcp_remote.py |
+| MCP Streamable HTTP server | Railway (mcp service) | ✅ | run_mcp_remote.py (transport changed SSE → streamable-http, 2026-04-18) |
 | Payments | Stripe | ✅ | Checkout + webhooks + auth-capture + saved cards |
 | Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 17 vendor IDs, 417 products, ~6,400 total in marketplace |
 | Bokun notifications | HTTP notification (URL token auth) | ✅ | Smoke tested 2026-04-16 |

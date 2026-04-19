@@ -13,13 +13,13 @@ Add to %APPDATA%\\Claude\\claude_desktop_config.json:
 {
   "mcpServers": {
     "lastminutedeals": {
-      "url": "https://mcp.lastminutedealshq.com/sse"
+      "url": "https://mcp.lastminutedealshq.com/mcp"
     }
   }
 }
 
 ── Claude Code config ───────────────────────────────────────────────────────
-claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/sse
+claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/mcp
 
 ── Environment variables ────────────────────────────────────────────────────
   BOOKING_API_URL        — Railway API base URL (e.g. https://web-production-dc74b.up.railway.app)
@@ -568,4 +568,4 @@ def autonomous_booking(wallet_id: str, city: str = "", category: str = "") -> st
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    mcp.run(transport="streamable-http")
