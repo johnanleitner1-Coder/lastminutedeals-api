@@ -189,11 +189,11 @@ async def search_slots(
     """
     Search for last-minute available tours and activities.
 
-    Returns real production inventory from 17 suppliers (All Washington View, Arctic Adventures,
+    Returns real production inventory from 18 suppliers (All Washington View, Arctic Adventures,
     Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences, Íshestar Riding Tours,
     Marvel Egypt Tours, O Turista Tours, Pure Morocco Experience, REDRIB Experience,
     Ramen Factory Kyoto, TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays,
-    TUTU VIEW Ltd, Vakare Travel Service) sourced live via the OCTO open booking protocol.
+    TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks) sourced live via the OCTO open booking protocol.
     Slots are sorted by urgency (soonest first).
 
     Args:
@@ -507,6 +507,20 @@ async def get_supplier_info() -> dict:
                 "name": "TUTU VIEW Ltd",
                 "destinations": ["China", "Shanghai", "Xi'an", "Beijing", "Chengdu", "Hangzhou", "Chongqing", "Shenzhen", "Changsha"],
                 "categories": ["multi-day tours", "cultural experiences", "silk road", "food tours", "nature tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Tours El Chiquiz",
+                "destinations": ["Puerto Vallarta", "Mexico"],
+                "categories": ["tours", "excursions", "cultural experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Zestro Bizlinks",
+                "destinations": ["Japan"],
+                "categories": ["experiences"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },

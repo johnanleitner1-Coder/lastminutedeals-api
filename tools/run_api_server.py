@@ -1697,7 +1697,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "17 suppliers, OCTO protocol, instant confirmation",
+            "18 suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,

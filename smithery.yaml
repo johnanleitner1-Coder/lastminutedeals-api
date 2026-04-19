@@ -26,7 +26,7 @@ exampleConfig:
 name: Last Minute Deals HQ
 description: >
   Real-time last-minute tour and activity inventory sourced live from production
-  booking systems via the OCTO open standard. 17 active suppliers across Iceland,
+  booking systems via the OCTO open standard. 18 active suppliers across Iceland,
   Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania,
   Egypt, Turkey, United States, United Kingdom, and China. Search available slots and
   create Stripe checkout sessions — customers pay on our page, suppliers are
@@ -129,3 +129,7 @@ suppliers:
   - name: TUTU VIEW Ltd
     destinations: [China, Shanghai, Xi'an, Beijing, Chengdu, Hangzhou, Chongqing, Shenzhen, Changsha]
     experiences: [multi-day tours, silk road, cultural experiences, food tours, nature tours]
+
+  - name: Zestro Bizlinks
+    destinations: [Japan]
+    experiences: [experiences]

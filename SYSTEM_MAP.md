@@ -104,7 +104,7 @@ START
   │    Only processes: enabled=true AND API key set in .env
   │    Currently enabled: bokun_reseller ONLY
   │
-  ├─ For each vendor_id (17 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903]
+  ├─ For each vendor_id (18 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927]
   │    ├─ GET /products  (NO pricing capability header — avoids Bokun hang)
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
@@ -113,7 +113,7 @@ START
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
   │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
-  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 17 vendors mapped)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 18 vendors mapped)
   │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
   │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)
