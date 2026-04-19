@@ -6,6 +6,3 @@ cmds = [
   "/opt/venv/bin/pip install -r requirements.txt",
   "/opt/venv/bin/playwright install chromium --with-deps || true"
 ]
-
-[start]
-cmd = "python -c "import os, runpy; runpy.run_path('tools/run_mcp_remote.py' if os.getenv('RAILWAY_SERVICE_NAME')=='mcp' else 'tools/run_api_server.py', run_name='__main__')""
