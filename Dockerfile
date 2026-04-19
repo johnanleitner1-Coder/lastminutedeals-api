@@ -2,21 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for Playwright/Chromium
-RUN apt-get update && apt-get install -y \
-    wget curl gnupg ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir mcp httpx uvicorn python-dotenv
 
-# Install Python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY tools/run_mcp_remote.py tools/run_mcp_remote.py
 
-# Install Playwright browser
-RUN playwright install chromium --with-deps || true
+ENV BOOKING_API_URL=https://web-production-dc74b.up.railway.app
+ENV PORT=8080
 
-# Copy source
-COPY . .
+EXPOSE 8080
 
-EXPOSE 5050
-
-CMD ["python", "tools/run_api_server.py"]
+CMD ["python", "tools/run_mcp_remote.py"]
