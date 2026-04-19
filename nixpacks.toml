@@ -3,6 +3,6 @@ nixPkgs = ["python311"]
 
 [phases.install]
 cmds = [
-  "/opt/venv/bin/pip install -r requirements.txt",
-  "/opt/venv/bin/playwright install chromium --with-deps || true"
+  "python -m pip install -r requirements.txt",
+  "python -m playwright install chromium --with-deps || true"
 ]
