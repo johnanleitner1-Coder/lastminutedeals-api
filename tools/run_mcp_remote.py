@@ -577,4 +577,8 @@ def autonomous_booking(wallet_id: str, city: str = "", category: str = "") -> st
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    import sys
+    if "--stdio" in sys.argv:
+        mcp.run()  # stdio mode for mcp-proxy (Glama)
+    else:
+        mcp.run(transport="streamable-http")
