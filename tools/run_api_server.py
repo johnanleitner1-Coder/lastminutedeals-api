@@ -851,7 +851,7 @@ def require_api_key():
 
 DATA_FILE   = Path(".tmp/aggregated_slots.json")
 BOOKED_FILE = Path(".tmp/booked_slots.json")
-PORT        = int(os.getenv("BOOKING_SERVER_PORT", "5050"))
+PORT        = int(os.getenv("BOOKING_SERVER_PORT", os.getenv("PORT", "5050")))
 
 # MCP search_slots cache — avoids repeated Supabase pagination on burst agent calls
 # Fresh TTL: 300s (5 min). Inventory refreshes every 4h so 5 min is safe and eliminates
