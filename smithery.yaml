@@ -25,13 +25,13 @@ exampleConfig:
 
 name: Last Minute Deals HQ
 description: >
-  Real-time last-minute tour and activity inventory sourced live from production
-  booking systems via the OCTO open standard. 20 active suppliers across Iceland,
-  Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania,
-  Egypt, Turkey, United States, United Kingdom, and China. Search available slots and
-  create Stripe checkout sessions — customers pay on our page, suppliers are
-  confirmed automatically. Inventory refreshed every 4 hours. To enable bookings,
-  register a free API key at the booking server.
+  7,000+ live bookable slots across 20 suppliers in 15 countries, sourced from
+  production booking systems via the OCTO open standard. Covers tours, activities,
+  and photography experiences in 28 cities including Reykjavik, Rome, Cairo, Kyoto,
+  London, Marrakech, Puerto Vallarta, and more. Search available slots, create Stripe
+  checkout sessions, or book autonomously with a pre-funded wallet. Inventory
+  refreshed every 4 hours. To enable bookings, register a free API key at the
+  booking server.
 
 tools:
   - name: search_slots
