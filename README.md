@@ -3,7 +3,7 @@
 [![Smithery](https://smithery.ai/badge/@johnanleitner1/Last_Minute_Deals_HQ)](https://smithery.ai/server/johnanleitner1/Last_Minute_Deals_HQ)
 [![lastminutedeals-api MCP server](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api/badges/score.svg)](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api)
 
-MCP server with real-time last-minute tour and activity inventory. 5,000+ live bookable slots across 18 suppliers in 15 countries, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
+MCP server with real-time last-minute tour and activity inventory. 5,000+ live bookable slots across 19 suppliers in 15 countries, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
 
 Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers are confirmed automatically.
 
@@ -125,7 +125,7 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 
 ## Suppliers
 
-17 active suppliers. Live inventory across Iceland, Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China.
+19 active suppliers. Live inventory across Iceland, Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China.
 
 | Supplier | Destinations | Experiences |
 |---|---|---|
@@ -146,6 +146,8 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 | TUTU VIEW Ltd | Shanghai, Xi'an, Beijing, Chengdu, Hangzhou | Multi-day tours, Silk Road, food tours, nature tours |
 | Vakare Travel Service | Antalya, Turkey | Boat tours, jeep safaris, cultural excursions |
 | All Washington View | Washington D.C. | City tours, sightseeing, monuments, panoramic views |
+| Zestro Bizlinks | Japan | Experiences |
+| Adi Tours - Nuba travel | Cairo, Egypt | Pyramids, cultural tours, Nile excursions, desert tours, day trips |
 
 ## Categories
 

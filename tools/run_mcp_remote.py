@@ -189,11 +189,11 @@ async def search_slots(
     """
     Search for last-minute available tours and activities.
 
-    Returns real production inventory from 18 suppliers (All Washington View, Arctic Adventures,
-    Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences, Íshestar Riding Tours,
-    Marvel Egypt Tours, O Turista Tours, Pure Morocco Experience, REDRIB Experience,
-    Ramen Factory Kyoto, TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays,
-    TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks) sourced live via the OCTO open booking protocol.
+    Returns real production inventory from 19 suppliers (Adi Tours - Nuba travel, All Washington View,
+    Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences,
+    Íshestar Riding Tours, Marvel Egypt Tours, O Turista Tours, Pure Morocco Experience,
+    REDRIB Experience, Ramen Factory Kyoto, TourTransfer Bucharest, Tours El Chiquiz,
+    Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks) sourced live via the OCTO open booking protocol.
     Slots are sorted by urgency (soonest first).
 
     Args:
@@ -520,6 +520,13 @@ async def get_supplier_info() -> dict:
             {
                 "name": "Zestro Bizlinks",
                 "destinations": ["Japan"],
+                "categories": ["experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Adi Tours - Nuba travel",
+                "destinations": ["Cairo", "Egypt"],
                 "categories": ["experiences"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",

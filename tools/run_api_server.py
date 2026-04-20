@@ -867,7 +867,7 @@ _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
 _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 
 # Static fallback supplier list — used when Supabase is unreachable.
-# Covers all 18 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+# Covers all 19 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
     {"name": "Trivanzo Holidays",        "destinations": ["Cairo", "Egypt", "Luxor", "Red Sea"],              "platform": "Bokun"},
@@ -887,6 +887,7 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "TUTU VIEW Ltd",           "destinations": ["China", "Shanghai", "Xi'an", "Beijing", "Chengdu", "Hangzhou", "Chongqing", "Shenzhen", "Changsha"], "platform": "Bokun"},
     {"name": "Tours El Chiquiz",        "destinations": ["Puerto Vallarta", "Mexico"],                           "platform": "Bokun"},
     {"name": "Zestro Bizlinks",         "destinations": ["Japan"],                                               "platform": "Bokun"},
+    {"name": "Adi Tours - Nuba travel", "destinations": ["Cairo", "Egypt"],                                      "platform": "Bokun"},
 ]
 
 
@@ -5723,10 +5724,10 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from 18 Bokun suppliers (All Washington View, Arctic Adventures, Bicycle Roma, Boka Bliss, "
+            "from 19 Bokun suppliers (All Washington View, Arctic Adventures, Bicycle Roma, Boka Bliss, "
             "EgyExcursions, Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, "
             "O Turista Tours, Pure Morocco Experience, REDRIB Experience, Ramen Factory Kyoto, "
-            "TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks) via the OCTO open booking protocol. "
+            "TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks, Adi Tours - Nuba travel) via the OCTO open booking protocol. "
             "Use city/category/hours_ahead/max_price to filter. "
             "Slots are sorted by urgency (soonest first). "
             "Call get_supplier_info first to see all available destinations."
@@ -6126,7 +6127,7 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory sourced live "
             "from production booking systems via the OCTO open standard. "
-            "18 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
+            "19 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
             "Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China. "
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "

@@ -16,7 +16,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -99,7 +99,8 @@
       "4278":   {"name": "All Washington View",     "city": "Washington, D.C.", "country": "US"},
       "136863": {"name": "TUTU VIEW Ltd",           "city": "London",           "country": "GB"},
       "126903": {"name": "Tours El Chiquiz",       "city": "Puerto Vallarta",  "country": "MX"},
-      "137927": {"name": "Zestro Bizlinks",       "city": "Tokyo",            "country": "JP"}
+      "137927": {"name": "Zestro Bizlinks",       "city": "Tokyo",            "country": "JP"},
+      "104051": {"name": "Adi Tours - Nuba travel", "city": "Cairo",           "country": "EG"}
     }
   }
 ]
