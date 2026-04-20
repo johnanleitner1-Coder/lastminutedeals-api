@@ -104,7 +104,7 @@ START
   │    Only processes: enabled=true AND API key set in .env
   │    Currently enabled: bokun_reseller ONLY
   │
-  ├─ For each vendor_id (19 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051]
+  ├─ For each vendor_id (20 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252]
   │    ├─ GET /products  (NO pricing capability header — avoids Bokun hang)
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)

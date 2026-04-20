@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.johnanleitner1-Coder/lastminutedeals-api",
   "title": "Last Minute Deals HQ",
-  "description": "Real-time last-minute tour and activity booking across 19 suppliers in 15 countries.",
+  "description": "Real-time last-minute tour and activity booking across 20 suppliers in 15 countries.",
   "version": "1.0.0",
   "websiteUrl": "https://api.lastminutedealshq.com",
   "repository": {
