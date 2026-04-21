@@ -1,8 +1,8 @@
 """
 run_mcp_remote.py — Hosted remote MCP server for Last Minute Deals HQ.
 
-Exposes last-minute tour/activity inventory as MCP tools via SSE transport.
-Runs on Railway at https://mcp.lastminutedealshq.com
+Exposes last-minute tour/activity inventory as MCP tools via Streamable HTTP transport.
+Runs on Railway at https://api.lastminutedealshq.com
 
 Unlike run_mcp_server.py (which reads local .tmp/ files), this server
 calls the Railway booking API directly — no local setup required.
@@ -13,13 +13,13 @@ Add to %APPDATA%\\Claude\\claude_desktop_config.json:
 {
   "mcpServers": {
     "lastminutedeals": {
-      "url": "https://mcp.lastminutedealshq.com/mcp"
+      "url": "https://api.lastminutedealshq.com/mcp"
     }
   }
 }
 
 ── Claude Code config ───────────────────────────────────────────────────────
-claude mcp add lastminutedeals --url https://mcp.lastminutedealshq.com/mcp
+claude mcp add lastminutedeals --url https://api.lastminutedealshq.com/mcp
 
 ── Environment variables ────────────────────────────────────────────────────
   BOOKING_API_URL        — Railway API base URL (e.g. https://web-production-dc74b.up.railway.app)
@@ -87,11 +87,13 @@ mcp = FastMCP(
     "Last Minute Deals HQ",
     host="0.0.0.0",
     port=PORT,
+    stateless_http=True,
     instructions=(
         "You have access to real last-minute tour and activity inventory sourced live "
         "from production booking systems via the OCTO open standard. "
-        "16 active suppliers: Arctic Adventures (Iceland — glacier hikes, snowmobiling, "
-        "whale watching, aurora, lava tunnels), "
+        "20 active suppliers: Adi Tours - Nuba travel (Cairo, Egypt — pyramids, desert tours), "
+        "All Washington View (Washington D.C. — city tours, sightseeing), "
+        "Arctic Adventures (Iceland — glacier hikes, snowmobiling, whale watching, aurora, lava tunnels), "
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "
         "Boka Bliss (Kotor, Montenegro — boat tours, sea caves), "
         "EgyExcursions (Cairo, Egypt — pyramids, cultural tours), "
@@ -102,16 +104,21 @@ mcp = FastMCP(
         "Pure Morocco Experience (Marrakech, Sahara — desert tours), "
         "REDRIB Experience (Helsinki, Finland — speed boat tours), "
         "Ramen Factory Kyoto (Japan — cooking classes), "
+        "The Photo Experience (London — photography tours), "
         "TourTransfer Bucharest (Romania — city tours, Dracula castle), "
+        "Tours El Chiquiz (Puerto Vallarta, Mexico — tequila tasting, hiking), "
         "Trivanzo Holidays (Egypt — Nile cruises, Red Sea, cultural tours), "
-        "Vakare Travel Service (Antalya, Turkey — boat tours, jeep safaris). "
+        "TUTU VIEW Ltd (China — multi-day tours, silk road, cultural experiences), "
+        "Vakare Travel Service (Antalya, Turkey — boat tours, jeep safaris), "
+        "Zestro Bizlinks (Japan — experiences). "
         "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
         "1. Call search_slots with the user's city/destination and preferred timeframe. "
         "2. Present options and get the user's selection. "
-        "3. Collect the customer's full name, email, and phone number. "
-        "4. Call book_slot with slot_id and customer details. "
-        "5. IMMEDIATELY share the checkout_url with the customer — do not wait, do not "
-        "summarise, show the URL directly. Session expires in 24 hours. "
+        "3. Call preview_slot(slot_id) to get a booking page URL. "
+        "4. Share the booking_page_url with the user — they click it, enter their details, "
+        "and pay via Stripe. No need to collect name/email/phone yourself. "
+        "5. If the user prefers, you can instead collect their name, email, and phone "
+        "and call book_slot directly — then share the checkout_url immediately. "
         "6. Call get_booking_status to confirm once payment is complete. "
         "AUTONOMOUS MODE: if you have a wallet_id, pass it with execution_mode='autonomous' "
         "to skip the checkout step entirely — booking completes immediately with a "
@@ -182,7 +189,7 @@ def _safe_slot(s: dict) -> dict:
 async def search_slots(
     city: str = "",
     category: str = "",
-    hours_ahead: float = 72.0,
+    hours_ahead: float = 168.0,
     max_price: float = 0.0,
     limit: int = 50,
 ) -> list[dict]:
@@ -202,7 +209,7 @@ async def search_slots(
                      Leave empty to search all locations.
         category:    Category filter. Use "experiences" for tours/activities.
                      Leave empty for all categories.
-        hours_ahead: Return slots starting within this many hours (default: 72).
+        hours_ahead: Return slots starting within this many hours (default: 168).
         max_price:   Maximum price in USD. Set to 0 to return all prices.
         limit:       Max results to return (default 50). Results are sorted by urgency
                      so the most time-sensitive slots come first. Increase for broader
@@ -280,7 +287,7 @@ async def book_slot(
     customer_phone: str,
     quantity: int = 1,
     wallet_id: str = "",
-    execution_mode: str = "",
+    execution_mode: str = "approval",
 ) -> dict:
     """
     Book a last-minute slot for a customer. Two modes:
@@ -359,6 +366,45 @@ async def get_booking_status(booking_id: str) -> dict:
         return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
+
+
+@mcp.tool()
+async def preview_slot(slot_id: str) -> dict:
+    """
+    Get a shareable booking page URL for a slot.
+
+    Returns a link the user can open in their browser to see full details
+    (service name, date/time, price, location) and complete the booking
+    themselves — they enter their own name, email, and phone on the page
+    and pay via Stripe.
+
+    Use this instead of book_slot when the user is a human browsing with an
+    AI assistant. No need to collect customer details yourself — the booking
+    page handles everything.
+
+    Args:
+        slot_id: Slot ID from search_slots results.
+
+    Returns:
+        booking_page_url, service name, price, start time, and location.
+    """
+    try:
+        data = await _api_get(f"/slots/{slot_id}/quote")
+    except Exception:
+        data = None
+    if not data or not data.get("available"):
+        return {"error": "Slot not found or no longer available."}
+    host = BOOKING_API.replace("web-production-dc74b.up.railway.app", "api.lastminutedealshq.com")
+    return {
+        "booking_page_url": f"{host}/book/{slot_id}",
+        "service_name": data.get("service_name", ""),
+        "business_name": data.get("business_name", ""),
+        "start_time": data.get("start_time", ""),
+        "location_city": data.get("location_city", ""),
+        "price": float(data.get("our_price") or data.get("price") or 0),
+        "currency": data.get("currency", "USD"),
+        "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
+    }
 
 
 @mcp.tool()
@@ -564,8 +610,8 @@ def find_experiences(city: str, hours_ahead: str = "72") -> str:
         "Call search_slots with that city and hours_ahead value. "
         "Show me the results — service name, start time, price, and duration — "
         "then ask which one I'd like to book. "
-        "Once I choose, collect my name, email, and phone number, then call book_slot. "
-        "Share the checkout_url immediately after booking — do not summarise it."
+        "Once I choose, call preview_slot to get a booking page link and share it with me "
+        "so I can enter my details and pay directly."
     )
 
 

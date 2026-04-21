@@ -55,6 +55,13 @@ tools:
       Status values: pending_payment (awaiting checkout), fulfilling (paid, confirming
       with supplier), booked (confirmed — confirmation_number set), failed, cancelled.
 
+  - name: preview_slot
+    description: >
+      Get a shareable booking page URL for a slot. Returns a link the user can click
+      to see details and complete the booking themselves — they enter their own name,
+      email, and phone on the page and pay via Stripe. Use this instead of book_slot
+      when the user is a human browsing with an AI assistant.
+
   - name: get_supplier_info
     description: >
       Returns the full supplier network — destinations, experience types, booking platform,

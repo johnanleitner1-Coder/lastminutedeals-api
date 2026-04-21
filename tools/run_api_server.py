@@ -47,7 +47,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -2673,127 +2673,141 @@ def stripe_webhook():
       2. Supabase Storage record (webhook_session_{session_id}) — prevents
          re-processing across process restarts and Railway redeploys.
     """
-    stripe         = _stripe()
+    import traceback as _tb
+    stripe_mod     = _stripe()
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     payload        = request.get_data()
     sig_header     = request.headers.get("Stripe-Signature", "")
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-    except stripe.error.SignatureVerificationError:
-        return jsonify({"error": "Invalid signature"}), 400
+        event = stripe_mod.Webhook.construct_event(payload, sig_header, webhook_secret)
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        print(f"[WEBHOOK] construct_event failed ({type(e).__name__}): {e}")
+        return jsonify({"error": "Invalid signature or payload"}), 400
 
-    if event["type"] == "checkout.session.expired":
-        # Mark the pending booking record as expired so polling agents resolve cleanly
-        session    = event["data"]["object"]
-        metadata   = session.get("metadata", {})
-        booking_id = metadata.get("booking_id", "")
-        slot_id    = metadata.get("slot_id", "")
-        if booking_id:
-            existing = _load_booking_record(booking_id)
-            if existing and existing.get("status") == "pending_payment":
-                existing.update({
-                    "status":         "expired",
-                    "payment_status": "expired",
-                    "expired_at":     datetime.now(timezone.utc).isoformat(),
-                })
-                _save_booking_record(booking_id, existing)
-                print(f"[WEBHOOK] Checkout expired: {booking_id} slot={slot_id}")
+    event_type = event.get("type", "unknown") if hasattr(event, "get") else "unknown"
+
+    # ── checkout.session.expired ──────────────────────────────────────────────
+    if event_type == "checkout.session.expired":
+        try:
+            session    = event["data"]["object"]
+            metadata   = session.get("metadata", {})
+            booking_id = metadata.get("booking_id", "")
+            slot_id    = metadata.get("slot_id", "")
+            if booking_id:
+                existing = _load_booking_record(booking_id)
+                if existing and existing.get("status") == "pending_payment":
+                    existing.update({
+                        "status":         "expired",
+                        "payment_status": "expired",
+                        "expired_at":     datetime.now(timezone.utc).isoformat(),
+                    })
+                    _save_booking_record(booking_id, existing)
+                    print(f"[WEBHOOK] Checkout expired: {booking_id} slot={slot_id}")
+        except Exception as e:
+            print(f"[WEBHOOK] Error handling checkout.session.expired: {e}")
+            _tb.print_exc()
         return jsonify({"status": "ok"})
 
-    if event["type"] == "checkout.session.completed":
-        session    = event["data"]["object"]
-        session_id = session.get("id", "")
-        metadata   = session.get("metadata", {})
+    # ── checkout.session.completed ────────────────────────────────────────────
+    if event_type == "checkout.session.completed":
+        try:
+            session    = event["data"]["object"]
+            session_id = session.get("id", "")
+            metadata   = session.get("metadata", {})
 
-        # ── Wallet top-up: fast path — no async needed ────────────────────────
-        if metadata.get("event_type") == "wallet_topup":
-            wid    = metadata.get("wallet_id", "")
-            amount = int(metadata.get("amount_cents", 0))
-            if wid and amount > 0:
-                try:
-                    spec = _ilu.spec_from_file_location("manage_wallets",
-                               Path(__file__).parent / "manage_wallets.py")
-                    wlt_mod = _ilu.module_from_spec(spec)
-                    spec.loader.exec_module(wlt_mod)
-                    wlt_mod.credit_wallet(wid, amount, "Stripe top-up")
-                    print(f"[WEBHOOK] Wallet {wid} credited ${amount/100:.2f}")
-                except Exception as wlt_err:
-                    print(f"[WEBHOOK] Wallet credit failed: {wlt_err}")
-            return jsonify({"status": "ok"})
+            # ── Wallet top-up: fast path — no async needed ────────────────────
+            if metadata.get("event_type") == "wallet_topup":
+                wid    = metadata.get("wallet_id", "")
+                amount = int(metadata.get("amount_cents", 0))
+                if wid and amount > 0:
+                    try:
+                        spec = _ilu.spec_from_file_location("manage_wallets",
+                                   Path(__file__).parent / "manage_wallets.py")
+                        wlt_mod = _ilu.module_from_spec(spec)
+                        spec.loader.exec_module(wlt_mod)
+                        wlt_mod.credit_wallet(wid, amount, "Stripe top-up")
+                        print(f"[WEBHOOK] Wallet {wid} credited ${amount/100:.2f}")
+                    except Exception as wlt_err:
+                        print(f"[WEBHOOK] Wallet credit failed: {wlt_err}")
+                return jsonify({"status": "ok"})
 
-        # ── Idempotency check (in-memory) — same session already executing ────
-        with _WEBHOOK_LOCK:
-            if _WEBHOOK_IN_FLIGHT.get(session_id):
-                print(f"[WEBHOOK] Already in-flight, ignoring retry: {session_id}")
-                return jsonify({"status": "ok", "note": "already_processing"})
-            _WEBHOOK_IN_FLIGHT[session_id] = True
-
-        # ── Idempotency check (persistent) — already completed ────────────────
-        # Only suppress for "booked" — a prior "failed" attempt should be retried
-        # (Stripe retries its webhook for up to 3 days; the next attempt may succeed).
-        wh_record_key = f"webhook_session_{session_id[:40]}"
-        existing = _load_booking_record(wh_record_key)
-        if existing and existing.get("status") == "booked":
-            print(f"[WEBHOOK] Already processed session {session_id}: booked")
+            # ── Idempotency check (in-memory) — same session already executing
             with _WEBHOOK_LOCK:
-                _WEBHOOK_IN_FLIGHT.pop(session_id, None)
-            return jsonify({"status": "ok", "note": "already_processed"})
+                if _WEBHOOK_IN_FLIGHT.get(session_id):
+                    print(f"[WEBHOOK] Already in-flight, ignoring retry: {session_id}")
+                    return jsonify({"status": "ok", "note": "already_processing"})
+                _WEBHOOK_IN_FLIGHT[session_id] = True
 
-        # ── Mark session as processing (persistent, survives redeploy) ─────────
-        _save_booking_record(wh_record_key, {
-            "session_id": session_id,
-            "status":     "processing",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        })
+            # ── Idempotency check (persistent) — already completed ────────────
+            # Only suppress for "booked" — a prior "failed" attempt should be retried
+            # (Stripe retries its webhook for up to 3 days; the next attempt may succeed).
+            wh_record_key = f"webhook_session_{session_id[:40]}"
+            existing = _load_booking_record(wh_record_key)
+            if existing and existing.get("status") == "booked":
+                print(f"[WEBHOOK] Already processed session {session_id}: booked")
+                with _WEBHOOK_LOCK:
+                    _WEBHOOK_IN_FLIGHT.pop(session_id, None)
+                return jsonify({"status": "ok", "note": "already_processed"})
 
-        # ── Spawn fulfillment thread — return 200 immediately to Stripe ────────
-        slot_id        = metadata.get("slot_id", "")
-        payment_intent = session.get("payment_intent", "")
-        customer = {
-            "name":  metadata.get("customer_name", ""),
-            "email": metadata.get("customer_email", session.get("customer_email", "")),
-            "phone": metadata.get("customer_phone", ""),
-        }
-        amount_total = session.get("amount_total", 0)
-        service_name = metadata.get("service_name", "")
-        dry_run      = metadata.get("dry_run", "false") == "true"
-        quantity     = max(1, int(metadata.get("quantity") or 1))
-        # Use the pre-assigned booking_id if present (new path); fall back to
-        # the old derived key for sessions created before this was deployed.
-        pending_booking_id = metadata.get("booking_id") or f"bk_{slot_id[:12]}"
+            # ── Mark session as processing (persistent, survives redeploy) ────
+            _save_booking_record(wh_record_key, {
+                "session_id": session_id,
+                "status":     "processing",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            })
 
-        # ── Read booking_url / platform from the stored record first. ────────────
-        # Stripe metadata values are capped at 500 chars and silently truncate —
-        # a long booking_url JSON blob would corrupt fulfillment. The booking record
-        # has no such limit and is written before the checkout session is created.
-        pending_record = _load_booking_record(pending_booking_id) or {}
-        platform    = pending_record.get("platform")    or metadata.get("platform", "")
-        booking_url = pending_record.get("booking_url") or metadata.get("booking_url", "")
+            # ── Spawn fulfillment thread — return 200 immediately to Stripe ──
+            slot_id        = metadata.get("slot_id", "")
+            payment_intent = session.get("payment_intent", "")
+            customer = {
+                "name":  metadata.get("customer_name", ""),
+                "email": metadata.get("customer_email", session.get("customer_email", "")),
+                "phone": metadata.get("customer_phone", ""),
+            }
+            amount_total = session.get("amount_total", 0)
+            service_name = metadata.get("service_name", "")
+            dry_run      = metadata.get("dry_run", "false") == "true"
+            quantity     = max(1, int(metadata.get("quantity") or 1))
+            # Use the pre-assigned booking_id if present (new path); fall back to
+            # the old derived key for sessions created before this was deployed.
+            pending_booking_id = metadata.get("booking_id") or f"bk_{slot_id[:12]}"
 
-        # ── Mark as "fulfilling" so agents see payment has landed ────────────────
-        # Without this, agents polling get_booking_status see "pending_payment"
-        # for up to 45 seconds after the customer has paid, because the webhook
-        # doesn't update the record before the thread completes.
-        _save_booking_record(pending_booking_id, {
-            **pending_record,
-            "status":         "fulfilling",
-            "payment_status": "paid",
-            "payment_intent": payment_intent,
-        })
+            # ── Read booking_url / platform from the stored record first. ─────
+            # Stripe metadata values are capped at 500 chars and silently truncate —
+            # a long booking_url JSON blob would corrupt fulfillment. The booking record
+            # has no such limit and is written before the checkout session is created.
+            pending_record = _load_booking_record(pending_booking_id) or {}
+            platform    = pending_record.get("platform")    or metadata.get("platform", "")
+            booking_url = pending_record.get("booking_url") or metadata.get("booking_url", "")
 
-        threading.Thread(
-            target=_fulfill_booking_async,
-            args=(session_id, wh_record_key, slot_id, payment_intent,
-                  customer, platform, booking_url, amount_total, service_name,
-                  dry_run, pending_booking_id, quantity),
-            daemon=True,
-            name=f"fulfill-{session_id[:12]}",
-        ).start()
+            # ── Mark as "fulfilling" so agents see payment has landed ──────────
+            # Without this, agents polling get_booking_status see "pending_payment"
+            # for up to 45 seconds after the customer has paid, because the webhook
+            # doesn't update the record before the thread completes.
+            _save_booking_record(pending_booking_id, {
+                **pending_record,
+                "status":         "fulfilling",
+                "payment_status": "paid",
+                "payment_intent": payment_intent,
+            })
 
-        print(f"[WEBHOOK] Fulfillment queued: session={session_id} slot={slot_id}")
+            threading.Thread(
+                target=_fulfill_booking_async,
+                args=(session_id, wh_record_key, slot_id, payment_intent,
+                      customer, platform, booking_url, amount_total, service_name,
+                      dry_run, pending_booking_id, quantity),
+                daemon=True,
+                name=f"fulfill-{session_id[:12]}",
+            ).start()
+
+            print(f"[WEBHOOK] Fulfillment queued: session={session_id} slot={slot_id}")
+
+        except Exception as e:
+            print(f"[WEBHOOK] Error handling checkout.session.completed: {e}")
+            _tb.print_exc()
+            # Return 500 so Stripe retries — customer has paid, we MUST fulfill.
+            return jsonify({"error": "fulfillment_setup_failed", "detail": str(e)}), 500
 
     return jsonify({"status": "ok"})
 
@@ -3145,6 +3159,222 @@ def _sanitize_slot(slot: dict) -> dict:
     return out
 
 
+# ── Booking page (human-facing) ─────────────────────────────────────────────
+
+_BOOKING_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{service_name} — Last Minute Deals HQ</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh;display:flex;flex-direction:column}}
+.header{{background:#1a1a2e;color:#fff;padding:16px 24px;text-align:center;font-size:14px;letter-spacing:.5px}}
+.header span{{color:#e94560}}
+.container{{max-width:520px;margin:32px auto;padding:0 16px;flex:1}}
+.card{{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);overflow:hidden}}
+.card-header{{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:24px}}
+.card-header h1{{font-size:20px;line-height:1.3;margin-bottom:8px}}
+.card-header .supplier{{opacity:.8;font-size:14px}}
+.details{{padding:20px 24px;border-bottom:1px solid #eee}}
+.detail-row{{display:flex;justify-content:space-between;padding:8px 0;font-size:15px}}
+.detail-row .label{{color:#666}}
+.detail-row .value{{font-weight:600}}
+.price-row .value{{color:#e94560;font-size:18px}}
+form{{padding:24px}}
+form h2{{font-size:16px;margin-bottom:16px;color:#333}}
+.field{{margin-bottom:14px}}
+.field label{{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:500}}
+.field input,.field select{{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:15px;transition:border-color .2s}}
+.field input:focus,.field select:focus{{outline:none;border-color:#e94560}}
+.qty-row{{display:flex;gap:12px;align-items:end}}
+.qty-row .field{{flex:1}}
+.btn{{display:block;width:100%;padding:14px;background:#e94560;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;transition:background .2s;margin-top:8px}}
+.btn:hover{{background:#d63851}}
+.btn:disabled{{background:#ccc;cursor:not-allowed}}
+.note{{text-align:center;font-size:12px;color:#999;margin-top:12px;padding:0 24px 20px}}
+.footer{{text-align:center;padding:24px;font-size:12px;color:#999}}
+.error{{background:#fff0f0;color:#c00;padding:16px 24px;border-radius:12px;margin-bottom:16px;text-align:center}}
+.gone{{text-align:center;padding:48px 24px}}
+.gone h2{{margin-bottom:8px;color:#666}}
+</style>
+</head>
+<body>
+<div class="header">LAST MINUTE DEALS <span>HQ</span></div>
+<div class="container">
+{error_block}
+<div class="card">
+<div class="card-header">
+<h1>{service_name}</h1>
+<div class="supplier">{business_name}</div>
+</div>
+<div class="details">
+<div class="detail-row"><span class="label">Date &amp; Time</span><span class="value">{formatted_time}</span></div>
+<div class="detail-row"><span class="label">Location</span><span class="value">{location}</span></div>
+<div class="detail-row"><span class="label">Duration</span><span class="value">{duration}</span></div>
+<div class="detail-row price-row"><span class="label">Price per person</span><span class="value">{price_display}</span></div>
+</div>
+<form method="POST" action="/book/{slot_id}/checkout" id="bookForm">
+<h2>Your Details</h2>
+<div class="field"><label for="name">Full Name</label><input type="text" id="name" name="customer_name" required placeholder="Jane Smith"></div>
+<div class="field"><label for="email">Email</label><input type="email" id="email" name="customer_email" required placeholder="jane@example.com"></div>
+<div class="field"><label for="phone">Phone (with country code)</label><input type="tel" id="phone" name="customer_phone" required placeholder="+1 555 000 1234"></div>
+<div class="qty-row">
+<div class="field"><label for="qty">Guests</label><select id="qty" name="quantity">{qty_options}</select></div>
+<div class="field"><label>&nbsp;</label><div style="font-size:14px;color:#666;padding:10px 0">Total: <strong id="total">{price_display}</strong></div></div>
+</div>
+<button type="submit" class="btn" id="bookBtn">Book Now — Pay Securely</button>
+</form>
+<div class="note">You'll be redirected to Stripe for secure payment. Your card is only charged after the booking is confirmed with the supplier.</div>
+</div>
+</div>
+<div class="footer">Powered by Last Minute Deals HQ &middot; Secure payments by Stripe</div>
+<script>
+(function(){{
+var price={price_raw},cur="{currency}";
+var sel=document.getElementById("qty"),total=document.getElementById("total"),btn=document.getElementById("bookBtn");
+function fmt(v){{return new Intl.NumberFormat(undefined,{{style:"currency",currency:cur}}).format(v)}}
+sel.addEventListener("change",function(){{total.innerHTML=fmt(price*parseInt(sel.value))}});
+document.getElementById("bookForm").addEventListener("submit",function(){{btn.disabled=true;btn.textContent="Redirecting to payment…"}});
+}})();
+</script>
+</body>
+</html>"""
+
+_BOOKING_PAGE_GONE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slot Not Available — Last Minute Deals HQ</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh;display:flex;flex-direction:column}}
+.header{{background:#1a1a2e;color:#fff;padding:16px 24px;text-align:center;font-size:14px;letter-spacing:.5px}}
+.header span{{color:#e94560}}
+.container{{max-width:520px;margin:32px auto;padding:0 16px;flex:1}}
+.gone{{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center;padding:48px 24px}}
+.gone h2{{margin-bottom:8px;color:#666}}
+.gone p{{color:#999}}
+.footer{{text-align:center;padding:24px;font-size:12px;color:#999}}
+</style>
+</head>
+<body>
+<div class="header">LAST MINUTE DEALS <span>HQ</span></div>
+<div class="container">
+<div class="gone"><h2>Slot Not Available</h2><p>This slot may have been booked or expired. Ask your AI assistant to search for more options.</p></div>
+</div>
+<div class="footer">Powered by Last Minute Deals HQ</div>
+</body>
+</html>"""
+
+
+@app.route("/book/<slot_id>", methods=["GET"])
+def booking_page(slot_id):
+    """Render an HTML booking page for a slot. Agents share this URL with users."""
+    slot = get_slot_by_id(slot_id)
+    if not slot:
+        return _BOOKING_PAGE_GONE.format(), 404
+
+    # Check it hasn't started
+    start_iso = slot.get("start_time", "")
+    try:
+        start_dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        if start_dt <= datetime.now(timezone.utc):
+            return _BOOKING_PAGE_GONE.format(), 410
+    except Exception:
+        pass
+
+    # Format display values
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        formatted_time = dt.strftime("%B %d, %Y at %I:%M %p UTC")
+    except Exception:
+        formatted_time = start_iso[:16].replace("T", " ") if start_iso else "TBD"
+
+    price = float(slot.get("our_price") or slot.get("price") or 0)
+    currency = (slot.get("currency") or "USD").upper()
+    duration_min = slot.get("duration_minutes")
+    if duration_min:
+        hours, mins = divmod(int(duration_min), 60)
+        duration = f"{hours}h {mins}m" if hours else f"{mins} min"
+    else:
+        duration = "See details"
+
+    city = slot.get("location_city", "")
+    country = slot.get("location_country", "")
+    location = f"{city}, {country}" if city and country else city or country or "See details"
+
+    qty_options = "".join(
+        f'<option value="{i}"{" selected" if i == 1 else ""}>{i}</option>'
+        for i in range(1, 11)
+    )
+
+    try:
+        import locale
+        price_display = f"{currency} {price:,.2f}"
+    except Exception:
+        price_display = f"{currency} {price:.2f}"
+
+    error_block = ""
+    error_msg = request.args.get("error")
+    if error_msg:
+        error_block = f'<div class="error">{error_msg}</div>'
+
+    html = _BOOKING_PAGE_HTML.format(
+        service_name=slot.get("service_name", "Experience")[:100],
+        business_name=slot.get("business_name", "")[:80],
+        formatted_time=formatted_time,
+        location=location,
+        duration=duration,
+        price_display=price_display,
+        price_raw=price,
+        currency=currency,
+        slot_id=slot_id,
+        qty_options=qty_options,
+        error_block=error_block,
+    )
+    return html, 200, {"Content-Type": "text/html"}
+
+
+@app.route("/book/<slot_id>/checkout", methods=["POST"])
+def booking_checkout(slot_id):
+    """Accept the booking form POST, create a Stripe checkout session, and redirect."""
+    customer_name  = (request.form.get("customer_name") or "").strip()
+    customer_email = (request.form.get("customer_email") or "").strip()
+    customer_phone = (request.form.get("customer_phone") or "").strip()
+    quantity       = max(1, min(int(request.form.get("quantity") or 1), 20))
+
+    if not all([customer_name, customer_email, customer_phone]):
+        return redirect(f"/book/{slot_id}?error=Please+fill+in+all+fields")
+
+    # Reuse the existing /api/book logic via internal HTTP call
+    api_key = os.getenv("LMD_WEBSITE_API_KEY", "")
+    try:
+        r = requests.post(
+            f"http://localhost:{PORT}/api/book",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            json={
+                "slot_id": slot_id,
+                "customer_name": customer_name,
+                "customer_email": customer_email,
+                "customer_phone": customer_phone,
+                "quantity": quantity,
+            },
+            timeout=15,
+        )
+        data = r.json()
+        if data.get("success") and data.get("checkout_url"):
+            return redirect(data["checkout_url"])
+        error = data.get("error", "Booking failed. Please try again.")
+    except Exception as e:
+        error = f"Service temporarily unavailable. Please try again."
+
+    from urllib.parse import quote
+    return redirect(f"/book/{slot_id}?error={quote(error)}")
+
+
 @app.route("/slots", methods=["GET"])
 def search_slots():
     """
@@ -3254,6 +3484,7 @@ def slot_quote(slot_id: str):
         "available": True,
         "slot_id": slot_id,
         "service_name": slot.get("service_name"),
+        "business_name": slot.get("business_name"),
         "our_price": price,
         "currency": slot.get("currency", "USD"),
         "start_time": slot.get("start_time"),
@@ -3496,9 +3727,11 @@ def book_with_saved_card(customer_id: str):
                 "booking_url": slot.get("booking_url", ""),
             },
         )
-    except stripe.error.CardError as e:
-        return jsonify({"success": False, "error": f"Card declined: {e.user_message}"}), 402
     except Exception as e:
+        # CardError has user_message; other exceptions don't
+        user_msg = getattr(e, "user_message", None)
+        if user_msg:
+            return jsonify({"success": False, "error": f"Card declined: {user_msg}"}), 402
         return jsonify({"success": False, "error": str(e)}), 500
 
     # Execute booking on source platform
@@ -5817,6 +6050,29 @@ _MCP_TOOLS = [
         },
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "preview_slot",
+        "description": (
+            "Get a shareable booking page URL for a slot. Returns a link the user can open "
+            "in their browser to see full details and complete the booking themselves. "
+            "Use this instead of book_slot when the user is a human who will pay directly — "
+            "they enter their own name, email, and phone on the page and pay via Stripe. "
+            "No need to collect customer details yourself."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slot_id": {"type": "string", "description": "Slot ID from search_slots results."},
+            },
+            "required": ["slot_id"],
+        },
+    },
 ]
 
 _MCP_PROMPTS = [
@@ -5876,8 +6132,8 @@ def _mcp_render_prompt(name: str, arguments: dict) -> dict:
             "Call search_slots with that city and hours_ahead value. "
             "Show me the results — service name, start time, price, and duration — "
             "then ask which one I'd like to book. "
-            "Once I choose, collect my name, email, and phone number, then call book_slot. "
-            "Share the checkout_url immediately after booking — do not summarise it."
+            "Once I choose, call preview_slot to get a booking page link and share it with me "
+            "so I can enter my details and pay directly."
         )
         return {
             "description": "Search for last-minute tours and activities in a specific destination",
@@ -5995,6 +6251,25 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
             "protocol": "OCTO",
             "confirmation": "instant",
             "docs": "https://lastminutedealshq.com/developers",
+        }
+
+    elif name == "preview_slot":
+        sid = arguments.get("slot_id", "")
+        if not sid:
+            return {"error": "slot_id is required."}
+        slot = get_slot_by_id(sid)
+        if not slot:
+            return {"error": "Slot not found or no longer available."}
+        host = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
+        return {
+            "booking_page_url": f"{host}/book/{sid}",
+            "service_name": slot.get("service_name", ""),
+            "business_name": slot.get("business_name", ""),
+            "start_time": slot.get("start_time", ""),
+            "location_city": slot.get("location_city", ""),
+            "price": float(slot.get("our_price") or slot.get("price") or 0),
+            "currency": slot.get("currency", "USD"),
+            "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
         }
 
     else:
@@ -6133,11 +6408,11 @@ def _start_mcp_thread():
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
             "2. Present the options to the user and get their selection. "
-            "3. Collect the customer's full name, email address, and phone number. "
-            "4. Call book_slot with the slot_id and customer details. "
-            "5. IMMEDIATELY share the checkout_url with the customer — do not wait, do not "
-            "summarise, show the URL directly so they can complete payment. The session "
-            "expires in 24 hours. "
+            "3. Call preview_slot(slot_id) to get a booking page URL. "
+            "4. Share the booking_page_url with the user — they click it, enter their details, "
+            "and pay via Stripe. No need to collect name/email/phone yourself. "
+            "5. If the user prefers, you can instead collect their name, email, and phone "
+            "and call book_slot directly — then share the checkout_url immediately. "
             "6. Call get_booking_status to confirm once payment is complete. "
             "AUTONOMOUS MODE: If you have a wallet_id (pre-funded agent wallet), pass it "
             "with execution_mode='autonomous' to book_slot — the booking completes immediately "
@@ -6265,6 +6540,39 @@ def _start_mcp_thread():
             "suppliers": _get_live_supplier_directory(),
             "protocol": "OCTO via Bokun — direct supplier API, production inventory only",
             "payment": "Stripe checkout, instant supplier confirmation",
+        }
+
+    @mcp.tool()
+    def preview_slot(slot_id: str) -> dict:
+        """Get a shareable booking page URL for a slot. Returns a link the user can click
+        to see details and book themselves — they enter their own name, email, phone and
+        pay via Stripe. Use this instead of book_slot when the user is a human browsing
+        with an AI assistant. No need to collect customer details yourself.
+
+        Args:
+            slot_id: Slot ID from search_slots results.
+
+        Returns:
+            booking_page_url, service name, price, start time, and location.
+        """
+        try:
+            r = _mcp_req.get(f"{BOOKING_API}/slots/{slot_id}/quote", headers=_HDRS, timeout=10)
+            r.raise_for_status()
+            slot = r.json()
+        except Exception:
+            slot = None
+        if not slot or not slot.get("available"):
+            return {"error": "Slot not found or no longer available."}
+        host = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
+        return {
+            "booking_page_url": f"{host}/book/{slot_id}",
+            "service_name": slot.get("service_name", ""),
+            "business_name": slot.get("business_name", ""),
+            "start_time": slot.get("start_time", ""),
+            "location_city": slot.get("location_city", ""),
+            "price": float(slot.get("our_price") or slot.get("price") or 0),
+            "currency": slot.get("currency", "USD"),
+            "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
         }
 
     def _run():

@@ -31,7 +31,7 @@ uvicorn[standard]
 psycopg2-binary
 
 # ── Payments ──────────────────────────────────────────────────────────────────
-stripe
+stripe>=14.0.0,<15.0.0   # Pin major version — stripe.error.* removal would break exception handling
 
 # ── SMS alerts ────────────────────────────────────────────────────────────────
 twilio

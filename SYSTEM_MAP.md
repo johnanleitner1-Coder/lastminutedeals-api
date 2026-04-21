@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-19 (v29 — Session 27: Fixed Railway 502: app now reads Railway's PORT env var as fallback (BOOKING_SERVER_PORT -> PORT -> 5050). Added 18th supplier Zestro Bizlinks (vendor 137927, Japan). Fixed stale supplier counts (16/17 -> 18) in MCP instructions, static fallback list, and search_slots description. Added Tours El Chiquiz + Zestro Bizlinks to _SUPPLIER_DIR_STATIC fallback. Created MIT LICENSE for Glama score. Configured Glama Dockerfile build spec for mcp-proxy + --stdio. Created Glama release (License=A, Security/Quality processing). Added Glama badge to awesome-mcp-servers PR #5074.)
+**Last updated:** 2026-04-21 (v31 — Session 30: Fixed Stripe webhook 500 on checkout.session.expired (B-149). Fixed dead mcp.lastminutedealshq.com domain — all MCP URLs now point to api.lastminutedealshq.com/mcp (B-150). Added stateless_http=True to remote MCP for Smithery proxy compatibility.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -67,6 +67,10 @@
 │  POST /execute/best          — goal-optimized autonomous booking    │
 │  POST /api/execute           — semi-auto: agent picks, human pays   │
 │  POST /intent/create         — persistent goal session              │
+│                                                                     │
+│  Human booking page:                                                │
+│  GET /book/{slot_id}         — HTML booking page (slot details+form)│
+│  POST /book/{slot_id}/checkout — form POST → Stripe redirect       │
 │                                                                     │
 │  Cancellation entry points:                                         │
 │  DELETE /bookings/{id}       — API cancel (Stripe + OCTO + retry)  │
@@ -801,7 +805,7 @@ Bokun: POST /api/bokun/webhook?token=...
 **Entry points:**
 - `POST /mcp` — MCP-over-HTTP (Smithery, direct API agents) — on Flask server
 - `GET /sse` + `POST /messages` — SSE proxied to embedded FastMCP thread
-- `mcp.lastminutedealshq.com` — standalone Streamable HTTP server (run_mcp_remote.py, separate Railway service)
+- `api.lastminutedealshq.com/mcp` — also serves as MCP endpoint (same Railway service; run_mcp_remote.py used by Smithery on their infra)
 
 **Status:** ✅ search_slots, get_supplier_info working | ✅ book_slot returns checkout_url | ⚠️ Human Stripe payment still required for bookings
 
@@ -826,12 +830,29 @@ MCP tool: book_slot(slot_id, customer_name, customer_email, customer_phone, quan
 MCP tool: get_booking_status(booking_id)
   └─ GET /bookings/{booking_id} → returns record (now includes price_per_person field)
 
+MCP tool: preview_slot(slot_id)
+  ├─ Looks up slot via get_slot_by_id (JSON-RPC) or GET /slots/{id}/quote (FastMCP/remote)
+  ├─ Returns { booking_page_url, service_name, start_time, location_city, price, currency }
+  └─ booking_page_url → GET /book/{slot_id} → HTML page where human enters details + pays
+  ← NEW: Added v30. Preferred flow for human-in-the-loop bookings (no need to collect details)
+
 MCP tool: get_supplier_info()
   ├─ _get_live_supplier_directory() — queries Supabase for distinct (business_name, city, country)
   ├─ Groups client-side, 5-minute cache
   └─ Falls back to _SUPPLIER_DIR_STATIC (14 known Bokun suppliers) if Supabase unreachable
   ← Previously: TWO diverging hardcoded lists (POST /mcp: 9 suppliers; FastMCP SSE: 7 suppliers)
   ← Both implementations were missing Vakare Travel Service (61% of OCTO inventory) — FIXED
+```
+
+**Booking page flow (NEW v30):**
+```
+Agent calls preview_slot(slot_id)
+  → Returns booking_page_url: https://api.lastminutedealshq.com/book/{slot_id}
+  → Agent shares URL with user
+  → User clicks URL → GET /book/{slot_id} → HTML page with slot details + form
+  → User fills name/email/phone/quantity → POST /book/{slot_id}/checkout
+  → Server calls /api/book internally → Stripe checkout session created → redirect to Stripe
+  → User pays → webhook confirms booking with supplier
 ```
 
 **Smithery connection path:** Smithery → `run_mcp_remote.py` (Streamable HTTP transport) → Railway REST API
@@ -996,7 +1017,9 @@ These endpoints exist and are wired but were not covered in the main booking flo
 | GET /health | None | Slot count + DB success rates | Supabase (slot count) + Postgres (rates always null — TCP blocked) | ✅ partial |
 | GET /metrics | None | Public perf beacon: slot count, platform count, success rates, fill velocity, **api_usage** (in-memory deque, last 1h/24h/since-deploy by path+source) | Supabase slots + in-memory request log | ✅ |
 | GET /slots | None | Search slots with category/city/hours_ahead/max_price filter | Supabase REST, paginated (1000/page), falls back to .tmp/ | ✅ |
-| GET /slots/{slot_id}/quote | None | Confirm availability + price for one slot | Supabase + .tmp/booked_slots.json | ⚠️ dedup lost on redeploy |
+| GET /slots/{slot_id}/quote | None | Confirm availability + price for one slot (now includes business_name — B-148 FIXED) | Supabase + .tmp/booked_slots.json | ⚠️ dedup lost on redeploy |
+| GET /book/{slot_id} | None | HTML booking page — slot details + form for name/email/phone/qty + Stripe checkout | Supabase via get_slot_by_id | ✅ NEW v30 |
+| POST /book/{slot_id}/checkout | None | Form POST → creates Stripe session via /api/book loopback → redirect to Stripe | Internal POST to /api/book | ✅ NEW v30 |
 | POST /api/keys/register | None | Register free API key (name + email → lmd_... key) | Supabase Storage config/api_keys.json ✅ persists | ✅ |
 | POST /test/dry-run | X-API-Key | Trigger dry-run fulfillment (no real booking, no charge) | Uses get_slot_by_id → Supabase | ✅ |
 | GET /verify/{booking_id} | None | Public receipt verification with HMAC signature check | Supabase Storage | ✅ |

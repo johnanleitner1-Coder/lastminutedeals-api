@@ -1,0 +1,316 @@
+openapi: 3.1.0
+info:
+  title: Last Minute Deals HQ
+  description: >
+    Search and book last-minute tours, activities, and experiences in 28 cities
+    across 15 countries. Live inventory from 20 suppliers — glacier hikes in Iceland,
+    e-bike tours in Rome, cooking classes in Kyoto, photography sessions in London,
+    desert tours in Morocco, and more. Inventory refreshed every 4 hours.
+  version: 1.0.0
+  contact:
+    name: Last Minute Deals HQ
+    url: https://api.lastminutedealshq.com
+
+servers:
+  - url: https://api.lastminutedealshq.com
+    description: Production
+
+paths:
+  /slots:
+    get:
+      operationId: searchSlots
+      summary: Search available tours and activities
+      description: >
+        Returns live inventory sorted by urgency (soonest departures first).
+        Filter by city, category, time window, and max price. All results are
+        real bookable slots from production booking systems.
+      parameters:
+        - name: city
+          in: query
+          description: >
+            City or country to search. Partial match — e.g. "Rome", "Iceland", "Cairo".
+            Leave empty to search all locations.
+          schema:
+            type: string
+          examples:
+            rome:
+              value: Rome
+            iceland:
+              value: Iceland
+        - name: category
+          in: query
+          description: >
+            Category filter. Common values: experiences, wellness, beauty, hospitality.
+            Leave empty for all categories.
+          schema:
+            type: string
+        - name: hours_ahead
+          in: query
+          description: >
+            Return slots starting within this many hours from now. Default: 168 (1 week).
+            Use 24 for today, 72 for the next 3 days.
+          schema:
+            type: integer
+            default: 168
+        - name: max_price
+          in: query
+          description: Maximum price filter. Omit or set to 0 for no limit.
+          schema:
+            type: number
+        - name: limit
+          in: query
+          description: Maximum number of results. Default returns all matching slots.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of available slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Slot"
+
+  /slots/{slot_id}/quote:
+    get:
+      operationId: getSlotQuote
+      summary: Check availability and price for a specific slot
+      description: >
+        Confirm a slot is still available and get its current price.
+        Use this before sharing a booking link to verify the slot hasn't been taken.
+      parameters:
+        - name: slot_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Slot is available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: boolean
+                  slot_id:
+                    type: string
+                  service_name:
+                    type: string
+                  our_price:
+                    type: number
+                  currency:
+                    type: string
+                  start_time:
+                    type: string
+                  location_city:
+                    type: string
+        "404":
+          description: Slot not found or expired
+        "409":
+          description: Slot already booked
+        "410":
+          description: Slot already started
+
+  /book/{slot_id}:
+    get:
+      operationId: getBookingPage
+      summary: Get the booking page for a slot
+      description: >
+        Returns an HTML booking page where the user can see slot details and
+        complete their booking. Share this URL with users so they can enter
+        their name, email, phone, and pay via Stripe.
+
+        This is the recommended way to help users book — give them this link
+        instead of collecting their personal details yourself.
+      parameters:
+        - name: slot_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML booking page
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Slot not found
+        "410":
+          description: Slot already started
+
+  /bookings/{booking_id}:
+    get:
+      operationId: getBookingStatus
+      summary: Check booking status
+      description: >
+        Returns the current status of a booking. Use this after the user
+        has completed payment to confirm the booking went through.
+      parameters:
+        - name: booking_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Booking record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingStatus"
+        "401":
+          description: Missing or invalid API key
+        "404":
+          description: Booking not found
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: System health check
+      description: Returns system status and live slot count.
+      responses:
+        "200":
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  inventory_slot_count:
+                    type: integer
+
+  /api/keys/register:
+    post:
+      operationId: registerApiKey
+      summary: Get a free API key
+      description: >
+        Register for a free API key. No credit card required.
+        The key is needed for booking operations — search works without one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Your name or application name
+                email:
+                  type: string
+                  description: Your email address
+              required:
+                - name
+                - email
+      responses:
+        "200":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key:
+                    type: string
+
+components:
+  schemas:
+    Slot:
+      type: object
+      properties:
+        slot_id:
+          type: string
+          description: Unique slot identifier. Use this with preview_slot or book endpoints.
+        service_name:
+          type: string
+          description: Name of the tour or activity
+        business_name:
+          type: string
+          description: Supplier / operator name
+        category:
+          type: string
+        location_city:
+          type: string
+        location_state:
+          type: string
+        location_country:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        duration_minutes:
+          type: integer
+        hours_until_start:
+          type: number
+          description: Hours from now until the slot starts
+        our_price:
+          type: number
+          description: Price per person
+        currency:
+          type: string
+          description: ISO 4217 currency code (e.g. USD, EUR)
+        spots_open:
+          type: integer
+        confidence:
+          type: string
+          enum: [high, medium, low]
+
+    BookingStatus:
+      type: object
+      properties:
+        booking_id:
+          type: string
+        status:
+          type: string
+          enum: [pending_payment, fulfilling, booked, failed, cancelled]
+          description: >
+            pending_payment = awaiting checkout,
+            fulfilling = paid and confirming with supplier,
+            booked = confirmed (confirmation_number set),
+            failed = fulfillment failed (payment refunded),
+            cancelled = booking cancelled
+        payment_status:
+          type: string
+        service_name:
+          type: string
+        business_name:
+          type: string
+        location_city:
+          type: string
+        start_time:
+          type: string
+        confirmation_number:
+          type: string
+        quantity:
+          type: integer
+        price_per_person:
+          type: number
+        price_charged:
+          type: number
+        currency:
+          type: string
+        checkout_url:
+          type: string
+        created_at:
+          type: string
+
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        Free API key. Register at /api/keys/register.
+        Required for booking status checks. Search works without it.

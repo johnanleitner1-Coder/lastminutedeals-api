@@ -51,6 +51,7 @@ https://api.lastminutedealshq.com/mcp
 |---|---|
 | `search_slots` | Search available tours and activities. Filter by city, category, `hours_ahead` window, and `max_price`. Returns live inventory sorted by urgency (soonest first). |
 | `book_slot` | Book a slot for a customer. **Approval mode** (default) returns a Stripe checkout URL for the customer to pay. **Autonomous mode** charges a pre-funded wallet and returns a confirmation number directly. Supports quantity for group bookings. |
+| `preview_slot` | Get a shareable booking page URL for a slot. The user clicks the link, sees full details, enters their own name/email/phone, and pays via Stripe. Use this when a human is browsing with an AI assistant. |
 | `get_booking_status` | Check booking status by `booking_id`. Returns status, confirmation number, checkout URL (recoverable if lost), service details, and payment status. |
 | `get_supplier_info` | Returns the full supplier network — destinations, experience types, booking platform, and confirmation speed. Use before searching to understand what inventory is available. |
 

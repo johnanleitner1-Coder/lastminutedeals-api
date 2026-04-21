@@ -550,3 +550,46 @@ scheduling was redundant.
 | **Running total** | **147** |
 
 ---
+
+## Session 29 — 2026-04-20 — preview_slot tool + booking page, OpenAPI spec
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 148 | `tools/run_api_server.py` | **`/slots/{slot_id}/quote` missing `business_name` field** — endpoint returned service_name, price, city, state but omitted business_name. The new `preview_slot` tool (remote MCP) calls this endpoint, so agents would receive slot data without the supplier name. Booking page itself was unaffected (uses `get_slot_by_id` directly). | Added `"business_name": slot.get("business_name")` to the quote response dict. |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 29: 1 missing-field bug found during impact review | 1 |
+| **Running total** | **148** |
+
+---
+
+## Session 30 — 2026-04-21 — Stripe webhook 500 fix, dead MCP domain fix
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 149 | `tools/run_api_server.py` | **Stripe webhook returns 500 on `checkout.session.expired` events** — 284 failures since April 18, all returning Flask's generic 500 error page. The handler had no try/except wrapper, and the `except stripe.error.SignatureVerificationError` clause risked `AttributeError` in newer Stripe SDK versions. | Wrapped expired + completed handlers in try/except with `traceback.print_exc()` logging. Replaced fragile `stripe.error.SignatureVerificationError` with generic `except Exception`. Returns 200 on error to stop retries. |
+| 150 | `tools/run_mcp_remote.py`, `SYSTEM_MAP.md` | **`mcp.lastminutedealshq.com` DNS record missing** — domain returns "Non-existent domain" since ~April 18. All Claude Desktop/Code users using the documented MCP URL get connection refused. Smithery also lost traffic after the same date. | Updated all 4 references from dead `mcp.lastminutedealshq.com` to working `api.lastminutedealshq.com/mcp`. Added `stateless_http=True` to FastMCP for better Smithery proxy compatibility. |
+
+| 151 | `tools/run_api_server.py` | **`stripe.error.CardError` except clause vulnerable to SDK version change** — saved-card booking function (`/api/customers/{id}/book`) uses `except stripe.error.CardError` which would raise `AttributeError` in future SDK versions where `stripe.error` is removed. The fallback `except Exception` wouldn't catch the cascading error. | Replaced with generic `except Exception` + `getattr(e, "user_message", None)` check to preserve CardError-specific messaging. |
+| 152 | `requirements.txt` | **Stripe SDK unpinned** — `stripe` with no version constraint means Railway could install a breaking major version, changing exception hierarchy or API behavior without warning. | Pinned to `>=14.0.0,<15.0.0`. |
+| 153 | `tools/run_mcp_remote.py` | **Remote MCP supplier count says "16" — should be 20** — instructions listed 14 suppliers, missed All Washington View, Tours El Chiquiz, TUTU VIEW Ltd, Zestro Bizlinks, Adi Tours, The Photo Experience. | Updated to "20 active suppliers" with all 20 listed. |
+| 154 | `tools/run_mcp_remote.py` | **`hours_ahead` default 72 vs 168 on other surfaces** — remote MCP's `search_slots` defaulted to 72h (3 days) while JSON-RPC and embedded MCP default to 168h (1 week). Agents see different result sets depending on which surface they connect through. | Normalized to 168. |
+| 155 | `tools/run_mcp_remote.py` | **`execution_mode` default `""` vs `"approval"`** — remote MCP's `book_slot` defaulted to empty string while embedded MCP defaults to `"approval"`. Functionally equivalent but schema inconsistency visible to agents. | Normalized to `"approval"`. |
+| 156 | `tools/run_api_server.py` | **Embedded FastMCP `preview_slot` missing `business_name`** — JSON-RPC and remote versions return `business_name`, embedded did not. Agents on the SSE surface wouldn't see the supplier name. | Added `business_name` to embedded FastMCP `preview_slot` return dict. |
+| 157 | `tools/run_mcp_remote.py` | **Remote `preview_slot` missing price fallback** — JSON-RPC and embedded use `our_price or price`, remote only checked `our_price`. If `our_price` is missing, remote returns 0 while others return the base price. | Added `data.get("price")` fallback. |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 30: 2 Stripe bugs, 1 dead domain, 1 pinning, 4 MCP inconsistencies | 8 |
+| **Running total** | **157** |
+
+---
