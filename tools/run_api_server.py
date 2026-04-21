@@ -2685,13 +2685,13 @@ def stripe_webhook():
         print(f"[WEBHOOK] construct_event failed ({type(e).__name__}): {e}")
         return jsonify({"error": "Invalid signature or payload"}), 400
 
-    event_type = event.get("type", "unknown") if hasattr(event, "get") else "unknown"
+    event_type = event["type"] if "type" in event else "unknown"
 
     # ── checkout.session.expired ──────────────────────────────────────────────
     if event_type == "checkout.session.expired":
         try:
             session    = event["data"]["object"]
-            metadata   = session.get("metadata", {})
+            metadata   = getattr(session, "metadata", None) or {}
             booking_id = metadata.get("booking_id", "")
             slot_id    = metadata.get("slot_id", "")
             if booking_id:
@@ -2713,8 +2713,8 @@ def stripe_webhook():
     if event_type == "checkout.session.completed":
         try:
             session    = event["data"]["object"]
-            session_id = session.get("id", "")
-            metadata   = session.get("metadata", {})
+            session_id = getattr(session, "id", "") or ""
+            metadata   = getattr(session, "metadata", None) or {}
 
             # ── Wallet top-up: fast path — no async needed ────────────────────
             if metadata.get("event_type") == "wallet_topup":
@@ -2759,13 +2759,13 @@ def stripe_webhook():
 
             # ── Spawn fulfillment thread — return 200 immediately to Stripe ──
             slot_id        = metadata.get("slot_id", "")
-            payment_intent = session.get("payment_intent", "")
+            payment_intent = getattr(session, "payment_intent", "") or ""
             customer = {
                 "name":  metadata.get("customer_name", ""),
-                "email": metadata.get("customer_email", session.get("customer_email", "")),
+                "email": metadata.get("customer_email", getattr(session, "customer_email", "") or ""),
                 "phone": metadata.get("customer_phone", ""),
             }
-            amount_total = session.get("amount_total", 0)
+            amount_total = getattr(session, "amount_total", 0) or 0
             service_name = metadata.get("service_name", "")
             dry_run      = metadata.get("dry_run", "false") == "true"
             quantity     = max(1, int(metadata.get("quantity") or 1))
