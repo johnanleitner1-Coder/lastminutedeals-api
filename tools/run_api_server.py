@@ -3270,6 +3270,37 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 </html>"""
 
 
+@app.route("/privacy", methods=["GET"])
+def privacy_policy():
+    """Simple privacy policy page required by GPT Store and app registries."""
+    return """<!DOCTYPE html>
+<html><head><title>Privacy Policy — Last Minute Deals HQ</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,sans-serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.6;color:#333}h1{font-size:1.5em}h2{font-size:1.15em;margin-top:1.5em}</style>
+</head><body>
+<h1>Privacy Policy</h1>
+<p><strong>Last Minute Deals HQ LLC</strong> — Effective April 21, 2026</p>
+
+<h2>What We Collect</h2>
+<p>When you book a tour or activity through our service, we collect your name, email address, and phone number. This information is provided by you on the booking page and is used solely to complete your reservation with the tour supplier.</p>
+
+<h2>Search Data</h2>
+<p>Slot searches (city, category, date filters) are processed in real time and not stored or linked to any individual user. We do not track browsing behavior or use cookies.</p>
+
+<h2>Payment</h2>
+<p>Payments are processed by Stripe. We do not store credit card numbers or payment credentials. See <a href="https://stripe.com/privacy">Stripe's Privacy Policy</a> for details on how they handle payment data.</p>
+
+<h2>Data Sharing</h2>
+<p>Your booking details (name, email, phone) are shared only with the tour supplier fulfilling your reservation. We do not sell, rent, or share your personal information with any other third parties.</p>
+
+<h2>Data Retention</h2>
+<p>Booking records are retained for customer support and cancellation purposes. You may request deletion of your data by emailing johnanleitner1@gmail.com.</p>
+
+<h2>Contact</h2>
+<p>Last Minute Deals HQ LLC — johnanleitner1@gmail.com</p>
+</body></html>"""
+
+
 @app.route("/book/<slot_id>", methods=["GET"])
 def booking_page(slot_id):
     """Render an HTML booking page for a slot. Agents share this URL with users."""
