@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-21 (v31 — Session 30: Fixed Stripe webhook 500 on checkout.session.expired (B-149). Fixed dead mcp.lastminutedealshq.com domain — all MCP URLs now point to api.lastminutedealshq.com/mcp (B-150). Added stateless_http=True to remote MCP for Smithery proxy compatibility.)
+**Last updated:** 2026-04-21 (v32 — Session 30 continued: Root cause of 284 Stripe webhook 500s confirmed from Railway logs — `session.get()` crashes on StripeObject in SDK v14+ (B-158 FIXED). All `session.get()` replaced with `getattr()`. Previous fixes: dead MCP domain (B-150), stateless_http (B-150), preview_slot + booking page added.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---

@@ -585,11 +585,17 @@ scheduling was redundant.
 | 156 | `tools/run_api_server.py` | **Embedded FastMCP `preview_slot` missing `business_name`** — JSON-RPC and remote versions return `business_name`, embedded did not. Agents on the SSE surface wouldn't see the supplier name. | Added `business_name` to embedded FastMCP `preview_slot` return dict. |
 | 157 | `tools/run_mcp_remote.py` | **Remote `preview_slot` missing price fallback** — JSON-RPC and embedded use `our_price or price`, remote only checked `our_price`. If `our_price` is missing, remote returns 0 while others return the base price. | Added `data.get("price")` fallback. |
 
+### CRITICAL
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 158 | `tools/run_api_server.py` | **Root cause of all 284 Stripe webhook 500s: `session.get()` crashes on StripeObject in SDK v14+** — Railway logs confirmed `AttributeError: get` at line 2689: `session.get("metadata", {})`. In Stripe SDK v14, `StripeObject.__getattr__("get")` tries `self._data["get"]`, raises `KeyError`, then `AttributeError`. This was the actual crash — not `stripe.error.*` import issues. All `session.get()` calls in both expired and completed handlers were affected. Commit `be79d87`. | Replaced all `session.get(key, default)` with `getattr(session, key, default)` which uses Python's native attribute protocol. Also fixed `event.get()` → `event["type"]` bracket access. |
+
 ### Bug Counts
 
 | Source | Count |
 |---|---|
-| Session 30: 2 Stripe bugs, 1 dead domain, 1 pinning, 4 MCP inconsistencies | 8 |
-| **Running total** | **157** |
+| Session 30: 2 Stripe bugs, 1 dead domain, 1 pinning, 4 MCP inconsistencies, 1 root-cause fix | 9 |
+| **Running total** | **158** |
 
 ---
