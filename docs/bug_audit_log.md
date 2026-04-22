@@ -591,11 +591,17 @@ scheduling was redundant.
 |---|---|---|---|
 | 158 | `tools/run_api_server.py` | **Root cause of all 284 Stripe webhook 500s: `session.get()` crashes on StripeObject in SDK v14+** — Railway logs confirmed `AttributeError: get` at line 2689: `session.get("metadata", {})`. In Stripe SDK v14, `StripeObject.__getattr__("get")` tries `self._data["get"]`, raises `KeyError`, then `AttributeError`. This was the actual crash — not `stripe.error.*` import issues. All `session.get()` calls in both expired and completed handlers were affected. Commit `be79d87`. | Replaced all `session.get(key, default)` with `getattr(session, key, default)` which uses Python's native attribute protocol. Also fixed `event.get()` → `event["type"]` bracket access. |
 
+### DATA QUALITY
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 159 | `tools/seeds/octo_suppliers.json` | **Overly broad "E" prefix in `reference_supplier_map` routed 247+ Egypt tours to Bicycle Roma/Rome** — All 52 Trivanzo Holidays products (references like `EG-HRGEAT07`, `EG-CAIEAT01`) matched the single-character `"E"` prefix before reaching the correct `vendor_id_to_supplier_map` fallback. Result: Egypt tours in Hurghada, Luxor, Aswan, Cairo, Alexandria, Marsa Alam, Safaga, Ain Sokhna all appeared as Rome/Bicycle Roma. Discovered via Custom GPT test. | Removed `"E"` prefix. Added `"E-BIKES"` for actual Bicycle Roma e-bike products. Added 9 Trivanzo city-specific prefixes (`EG-HRG` → Hurghada, `EG-LXR` → Luxor, `EG-ASW` → Aswan, etc.) plus `"EG"` catch-all. All 52 products now resolve to correct Egypt cities via Level 1 prefix match. Bicycle Roma's 2 `E-BIKES*` products match `"E-BIKES"` prefix correctly. |
+
 ### Bug Counts
 
 | Source | Count |
 |---|---|
-| Session 30: 2 Stripe bugs, 1 dead domain, 1 pinning, 4 MCP inconsistencies, 1 root-cause fix | 9 |
-| **Running total** | **158** |
+| Session 30 continued: 1 data quality fix (Egypt/Rome miscategorization) | 1 |
+| **Running total** | **159** |
 
 ---

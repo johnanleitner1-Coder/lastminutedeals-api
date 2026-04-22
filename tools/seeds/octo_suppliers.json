@@ -16,7 +16,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -37,7 +37,16 @@
       "OTA":                        {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "MULTI DAY TOURS":            {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
       "REGULAR BIKES APPIA ANTICA": {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
-      "E":                          {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "E-BIKES":                     {"name": "Bicycle Roma",      "city": "Rome",      "country": "IT"},
+      "EG-HRG":                      {"name": "Trivanzo Holidays",  "city": "Hurghada",     "country": "EG"},
+      "EG-CAI":                      {"name": "Trivanzo Holidays",  "city": "Cairo",        "country": "EG"},
+      "EG-SFG":                      {"name": "Trivanzo Holidays",  "city": "Safaga",       "country": "EG"},
+      "EG-RMF":                      {"name": "Trivanzo Holidays",  "city": "Marsa Alam",   "country": "EG"},
+      "EG-ALX":                      {"name": "Trivanzo Holidays",  "city": "Alexandria",   "country": "EG"},
+      "EG-LXR":                      {"name": "Trivanzo Holidays",  "city": "Luxor",        "country": "EG"},
+      "EG-ASW":                      {"name": "Trivanzo Holidays",  "city": "Aswan",        "country": "EG"},
+      "EG-SKH":                      {"name": "Trivanzo Holidays",  "city": "Ain Sokhna",   "country": "EG"},
+      "EG":                          {"name": "Trivanzo Holidays",  "city": "Cairo",        "country": "EG"},
       "#1 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#2 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
       "#3 SINTRA":                  {"name": "O Turista Tours",   "city": "Sintra",    "country": "PT"},
@@ -65,7 +74,10 @@
       "344574P":                     {"name": "Vakare Travel Service",  "city": "Antalya",   "country": "TR"},
       "5608078P":                     {"name": "Tours El Chiquiz",       "city": "Puerto Vallarta", "country": "MX"},
       "WDC":                         {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"},
-      "26722P":                      {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"}
+      "26722P":                      {"name": "All Washington View",    "city": "Washington, D.C.", "country": "US"},
+      "291911P":                     {"name": "Sailing Windermere",    "city": "Windermere",       "country": "GB"},
+      "5583973P":                    {"name": "Perfect Day Tours",    "city": "Luxor",            "country": "EG"},
+      "115167P":                     {"name": "Nefertiti Tours",      "city": "Cairo",            "country": "EG"}
     },
     "product_id_map": {
       "729972":  {"name": "Íshestar Riding Tours", "city": "Selfoss",  "country": "IS"},
@@ -101,7 +113,10 @@
       "126903": {"name": "Tours El Chiquiz",       "city": "Puerto Vallarta",  "country": "MX"},
       "137927": {"name": "Zestro Bizlinks",       "city": "Tokyo",            "country": "JP"},
       "104051": {"name": "Adi Tours - Nuba travel", "city": "Cairo",           "country": "EG"},
-      "17252":  {"name": "The Photo Experience",   "city": "London",          "country": "GB"}
+      "17252":  {"name": "The Photo Experience",   "city": "London",          "country": "GB"},
+      "57545":  {"name": "Sailing Windermere",    "city": "Windermere",      "country": "GB"},
+      "121323": {"name": "Perfect Day Tours",   "city": "Luxor",           "country": "EG"},
+      "101086": {"name": "Nefertiti Tours",      "city": "Cairo",           "country": "EG"}
     }
   }
 ]

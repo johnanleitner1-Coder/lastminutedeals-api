@@ -25,7 +25,7 @@ exampleConfig:
 
 name: Last Minute Deals HQ
 description: >
-  7,000+ live bookable slots across 20 suppliers in 15 countries, sourced from
+  7,000+ live bookable slots across 23 suppliers in 15 countries, sourced from
   production booking systems via the OCTO open standard. Covers tours, activities,
   and photography experiences in 28 cities including Reykjavik, Rome, Cairo, Kyoto,
   London, Marrakech, Puerto Vallarta, and more. Search available slots, create Stripe
@@ -148,3 +148,15 @@ suppliers:
   - name: The Photo Experience
     destinations: [London, United Kingdom]
     experiences: [photography tours, photo walks, city photography experiences]
+
+  - name: Sailing Windermere
+    destinations: [Windermere, Lake District, United Kingdom]
+    experiences: [sailing experiences, lake tours]
+
+  - name: Perfect Day Tours
+    destinations: [Luxor, Egypt]
+    experiences: [hot air balloon rides, temple tours, horse carriage tours, multi-day Egypt adventures]
+
+  - name: Nefertiti Tours
+    destinations: [Cairo, Giza, Egypt]
+    experiences: [pyramids tours, camel rides, ATV desert tours, private guided tours]

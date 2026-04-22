@@ -91,7 +91,7 @@ mcp = FastMCP(
     instructions=(
         "You have access to real last-minute tour and activity inventory sourced live "
         "from production booking systems via the OCTO open standard. "
-        "20 active suppliers: Adi Tours - Nuba travel (Cairo, Egypt — pyramids, desert tours), "
+        "23 active suppliers: Adi Tours - Nuba travel (Cairo, Egypt — pyramids, desert tours), "
         "All Washington View (Washington D.C. — city tours, sightseeing), "
         "Arctic Adventures (Iceland — glacier hikes, snowmobiling, whale watching, aurora, lava tunnels), "
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "
@@ -100,10 +100,13 @@ mcp = FastMCP(
         "Hillborn Experiences (Tanzania — ultra-luxury safaris, Kilimanjaro, Zanzibar), "
         "Ishestar Riding Tours (Iceland — horse riding), "
         "Marvel Egypt Tours (Cairo, Luxor, Aswan — Nile cruises, temples), "
+        "Nefertiti Tours (Cairo, Giza — pyramids, camel rides, ATV desert tours), "
         "O Turista Tours (Lisbon, Porto, Sintra — private tours, day trips), "
+        "Perfect Day Tours (Luxor, Egypt — hot air balloon, temples, horse carriage tours), "
         "Pure Morocco Experience (Marrakech, Sahara — desert tours), "
         "REDRIB Experience (Helsinki, Finland — speed boat tours), "
         "Ramen Factory Kyoto (Japan — cooking classes), "
+        "Sailing Windermere (Windermere, UK — sailing experiences on Lake Windermere), "
         "The Photo Experience (London — photography tours), "
         "TourTransfer Bucharest (Romania — city tours, Dracula castle), "
         "Tours El Chiquiz (Puerto Vallarta, Mexico — tequila tasting, hiking), "
@@ -196,10 +199,11 @@ async def search_slots(
     """
     Search for last-minute available tours and activities.
 
-    Returns real production inventory from 20 suppliers (Adi Tours - Nuba travel, All Washington View,
-    Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences,
-    Íshestar Riding Tours, Marvel Egypt Tours, O Turista Tours, Pure Morocco Experience,
-    REDRIB Experience, Ramen Factory Kyoto, The Photo Experience, TourTransfer Bucharest,
+    Returns real production inventory from 23 suppliers (Adi Tours - Nuba travel, All Washington View,
+    Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions,
+    Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, Nefertiti Tours,
+    O Turista Tours, Perfect Day Tours, Pure Morocco Experience, REDRIB Experience,
+    Ramen Factory Kyoto, Sailing Windermere, The Photo Experience, TourTransfer Bucharest,
     Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks)
     sourced live via the OCTO open booking protocol.
     Slots are sorted by urgency (soonest first).

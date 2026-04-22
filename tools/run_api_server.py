@@ -867,7 +867,7 @@ _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
 _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 
 # Static fallback supplier list — used when Supabase is unreachable.
-# Covers all 20 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+# Covers all 23 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
     {"name": "Trivanzo Holidays",        "destinations": ["Cairo", "Egypt", "Luxor", "Red Sea"],              "platform": "Bokun"},
@@ -889,6 +889,9 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Zestro Bizlinks",         "destinations": ["Japan"],                                               "platform": "Bokun"},
     {"name": "Adi Tours - Nuba travel", "destinations": ["Cairo", "Egypt"],                                      "platform": "Bokun"},
     {"name": "The Photo Experience",   "destinations": ["London", "United Kingdom"],                             "platform": "Bokun"},
+    {"name": "Sailing Windermere",    "destinations": ["Windermere", "Lake District", "United Kingdom"],          "platform": "Bokun"},
+    {"name": "Perfect Day Tours",     "destinations": ["Luxor", "Egypt"],                                         "platform": "Bokun"},
+    {"name": "Nefertiti Tours",       "destinations": ["Cairo", "Giza", "Egypt"],                                 "platform": "Bokun"},
 ]
 
 
@@ -1701,7 +1704,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "18 suppliers, OCTO protocol, instant confirmation",
+            "23 suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,
@@ -2453,10 +2456,10 @@ def book_direct():
         _DIRECT_IN_FLIGHT[_idem_key] = True
 
     # ── Spending limit check ─────────────────────────────────────────────────
-    # Per-wallet limit takes precedence; fall back to the module default ($400).
+    # Per-wallet limit takes precedence; fall back to the module default ($5,000).
     # To remove the cap on a specific wallet: set spending_limit_cents=null via
     # PUT /api/wallets/{id}/spending-limit — that sets it to None, which still
-    # falls back to the module default. To allow >$400, explicitly set a higher value.
+    # falls back to the module default.
     service_name = slot.get("service_name", "Booking")
     spending_limit = wallet.get("spending_limit_cents") or _DEFAULT_AUTONOMOUS_LIMIT_CENTS
     if amount_cents > spending_limit:
@@ -2821,7 +2824,7 @@ _MAX_BOOKING_TIMEOUT_S = 45
 # Default per-transaction spending cap for autonomous wallet bookings.
 # Wallets with an explicit spending_limit_cents override this. Protects against
 # runaway agents or compromised wallet_ids draining large balances in one call.
-_DEFAULT_AUTONOMOUS_LIMIT_CENTS = 100_000  # $1,000.00
+_DEFAULT_AUTONOMOUS_LIMIT_CENTS = 500_000  # $5,000.00
 
 
 def _classify_failure(exc: Exception) -> str:
@@ -5989,10 +5992,13 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search for last-minute available tours and activities. Returns real inventory "
-            "from 20 Bokun suppliers (All Washington View, Arctic Adventures, Bicycle Roma, Boka Bliss, "
-            "EgyExcursions, Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, "
-            "O Turista Tours, Pure Morocco Experience, REDRIB Experience, Ramen Factory Kyoto, "
-            "TourTransfer Bucharest, Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks, Adi Tours - Nuba travel, The Photo Experience) via the OCTO open booking protocol. "
+            "from 23 Bokun suppliers (Adi Tours - Nuba travel, All Washington View, "
+            "Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences, "
+            "Íshestar Riding Tours, Marvel Egypt Tours, Nefertiti Tours, O Turista Tours, "
+            "Perfect Day Tours, Pure Morocco Experience, REDRIB Experience, "
+            "Ramen Factory Kyoto, Sailing Windermere, The Photo Experience, TourTransfer Bucharest, "
+            "Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, "
+            "Zestro Bizlinks) via the OCTO open booking protocol. "
             "Use city/category/hours_ahead/max_price to filter. "
             "Slots are sorted by urgency (soonest first). "
             "Call get_supplier_info first to see all available destinations."
@@ -6434,8 +6440,8 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory sourced live "
             "from production booking systems via the OCTO open standard. "
-            "20 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
-            "Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China. "
+            "23 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
+            "Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, China, and Mexico. "
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
             "2. Present the options to the user and get their selection. "

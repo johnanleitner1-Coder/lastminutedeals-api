@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-21 (v32 — Session 30 continued: Root cause of 284 Stripe webhook 500s confirmed from Railway logs — `session.get()` crashes on StripeObject in SDK v14+ (B-158 FIXED). All `session.get()` replaced with `getattr()`. Previous fixes: dead MCP domain (B-150), stateless_http (B-150), preview_slot + booking page added.)
+**Last updated:** 2026-04-21 (v34 — Added 3 new Egypt vendors: Amazing Global Travel (106938), Perfect Day Tours (121323), Nefertiti Tours (101086). Vendor count 21→24. Updated all supplier counts and MCP instructions. Previous: v33 B-159 FIXED, Sailing Windermere added.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -108,7 +108,7 @@ START
   │    Only processes: enabled=true AND API key set in .env
   │    Currently enabled: bokun_reseller ONLY
   │
-  ├─ For each vendor_id (20 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252]
+  ├─ For each vendor_id (23 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086]
   │    ├─ GET /products  (NO pricing capability header — avoids Bokun hang)
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
@@ -117,7 +117,7 @@ START
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
   │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
-  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 18 vendors mapped)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 23 vendors mapped)
   │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
   │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)
