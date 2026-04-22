@@ -605,3 +605,27 @@ scheduling was redundant.
 | **Running total** | **159** |
 
 ---
+
+## Session 31 Fixes (commit 54fe151)
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 160 | `smithery.yaml`, `run_mcp_remote.py`, `run_api_server.py`, `check_replies.py`, `manage_wallets.py`, `AGENTS.md` | **Cloudflare Error 1000 ("DNS points to prohibited IP") caused 30% Smithery tool call failure rate** — Smithery's infrastructure runs behind Cloudflare. Outbound requests from the Smithery-hosted `run_mcp_remote.py` instance to `web-production-dc74b.up.railway.app` intermittently hit Cloudflare Error 1000, blocking ~30% of search_slots calls. This produced 69.8% uptime on the Smithery dashboard and a complete traffic flatline (0 tool calls) for 3+ days starting Apr 19. Confirmed by 10-call stress test: 4/10 Cloudflare errors before fix, 0/50 after fix. | Replaced all 8 references to `web-production-dc74b.up.railway.app` with `api.lastminutedealshq.com` (custom domain). Also re-published on Smithery with `smithery mcp publish "https://api.lastminutedealshq.com/mcp"` — Smithery now proxies directly to the embedded MCP endpoint, eliminating the `run_mcp_remote.py` intermediate hop entirely. 300/300 calls successful post-fix. |
+
+### MEDIUM
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 161 | Pipeline (aggregate_slots.py) | **New vendors (Perfect Day Tours, Nefertiti Tours) showed 0 slots in Supabase despite 380 slots in octo_slots.json** — Previous session ran fetch_octo_slots.py (which pulled 113 + 267 slots for the new vendors) then jumped directly to sync_to_supabase.py without re-running aggregate_slots.py + compute_pricing.py. The sync read from a stale aggregated_slots.json that predated the new vendors. | Re-ran full pipeline: aggregate_slots.py → compute_pricing.py → sync_to_supabase.py. Both vendors now live: Perfect Day Tours 101 slots (Luxor), Nefertiti Tours 244 slots (Cairo). |
+| 162 | Supabase Storage (bookings) | **88 bookings stuck in `pending_payment` — Stripe `checkout.session.expired` webhooks failed during Apr 18 deployment chaos** — 37 agent-created bookings (all fake contact details) from Apr 16-17 never transitioned to `expired` because 10 Stripe webhook deliveries failed when the server was down (Dockerfile/Nixpacks/502 issues on Apr 19). Additionally, 51 test bookings from stress testing accumulated. | Deleted 51 test bookings. Marked 37 stale bookings as `expired` with `expired_reason: checkout_session_expired_cleanup`. Final state: 51 records (47 expired, 4 cancelled, 0 pending_payment). |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 31: 1 high (Smithery Cloudflare), 2 medium (pipeline skip, stale bookings) | 3 |
+| **Running total** | **162** |
+
+---

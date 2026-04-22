@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-21 (v34 — Added 3 new Egypt vendors: Amazing Global Travel (106938), Perfect Day Tours (121323), Nefertiti Tours (101086). Vendor count 21→24. Updated all supplier counts and MCP instructions. Previous: v33 B-159 FIXED, Sailing Windermere added.)
+**Last updated:** 2026-04-22 (v35 — B-160 FIXED: Smithery Cloudflare Error 1000 causing 30% failure rate, 3-day traffic flatline. Replaced Railway subdomain with custom domain in 6 files. Re-published Smithery to proxy directly to embedded MCP. B-161 FIXED: Pipeline step skip left new vendors with 0 slots. B-162 FIXED: 88 stale pending_payment bookings cleaned up. Amazing Global Travel removed (was duplicate reseller). Vendor count now 23. Previous: v34.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -855,8 +855,10 @@ Agent calls preview_slot(slot_id)
   → User pays → webhook confirms booking with supplier
 ```
 
-**Smithery connection path:** Smithery → `run_mcp_remote.py` (Streamable HTTP transport) → Railway REST API
-  ← Previously used SSE transport (deprecated April 1 2026); caused 20.6% Unavailable on tools/call — FIXED
+**Smithery connection path:** Smithery → `api.lastminutedealshq.com/mcp` (direct proxy to embedded MCP)
+  ← Previously: Smithery → `run_mcp_remote.py` → `web-production-dc74b.up.railway.app` (Railway REST)
+  ← B-160 FIXED: Old Railway subdomain triggered Cloudflare Error 1000 from Smithery infra (~30% failure rate, 3-day flatline)
+  ← Re-published via `smithery mcp publish "https://api.lastminutedealshq.com/mcp"` — eliminates intermediate hop
 **Claude Desktop path:** `GET /sse` → proxied SSE → embedded FastMCP
 
 ---
