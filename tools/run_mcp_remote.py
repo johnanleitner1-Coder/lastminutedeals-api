@@ -43,16 +43,16 @@ HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PORT        = int(os.getenv("PORT", "8080"))
 
 # Shared async HTTP client — connection pool, keep-alive, no blocking.
-# connect=8s: gives Railway time to wake from sleep (cold starts take 10-30s but
-# 8s covers most cases; the retry loop provides two more chances after that).
-_TIMEOUT = httpx.Timeout(15.0, connect=8.0)
+# connect=20s: Railway cold starts take 10-30s. A single generous attempt
+# covers the worst case without needing multiple retries.
+_TIMEOUT = httpx.Timeout(30.0, connect=20.0)
 _client  = httpx.AsyncClient(headers=HDRS, timeout=_TIMEOUT)
 
-# Keep-alive ping — Railway free tier sleeps containers after 15 min idle; a cold
-# start takes 10-30s and exhausts our 3×8s retry window, causing ~25% of search_slots
-# calls to fail. Pinging /health every 10 min keeps the container warm.
+# Keep-alive ping — Railway sleeps containers after 15 min idle. Pinging
+# /health every 8 min keeps the container warm and prevents cold-start failures.
 _WARMUP_TASK: asyncio.Task | None = None
-_WARMUP_INTERVAL_S = 600  # 10 minutes
+_WARMUP_INTERVAL_S = 480  # 8 minutes (well under Railway's 15-min sleep threshold)
+_RAILWAY_WARM = False  # set True after first successful /health ping
 
 
 # Concurrency guard — cap simultaneous outbound API calls to prevent
@@ -61,14 +61,24 @@ _SEMAPHORE = asyncio.Semaphore(10)
 
 
 async def _keep_railway_warm() -> None:
+    global _RAILWAY_WARM
+    # Immediate first ping — warm Railway ASAP on MCP server startup
+    try:
+        async with _SEMAPHORE:
+            await _client.get(f"{BOOKING_API}/health",
+                              timeout=httpx.Timeout(30.0, connect=20.0))
+        _RAILWAY_WARM = True
+    except Exception:
+        pass
     while True:
         await asyncio.sleep(_WARMUP_INTERVAL_S)
         try:
             async with _SEMAPHORE:
                 await _client.get(f"{BOOKING_API}/health",
-                                  timeout=httpx.Timeout(10.0, connect=8.0))
+                                  timeout=httpx.Timeout(15.0, connect=10.0))
+            _RAILWAY_WARM = True
         except Exception:
-            pass  # Warm-up ping; ignore failures — main retry logic covers transients
+            _RAILWAY_WARM = False
 
 # ── Slot cache ────────────────────────────────────────────────────────────────
 # Fresh TTL: 300s (5 min). Inventory is refreshed every 4h — 5 min is safe.
@@ -130,14 +140,15 @@ mcp = FastMCP(
 )
 
 
-async def _api_get(path: str, params: dict = None, retries: int = 3) -> dict | list:
+async def _api_get(path: str, params: dict = None, retries: int = 2) -> dict | list:
     """
     Async GET with retry on transient failures. Never blocks the event loop.
 
-    3 retries with 1.5s backoff — handles Railway cold starts (10-30s wake time)
-    across the retry window without blocking long enough to time out the MCP client.
+    2 retries with exponential backoff (3s, 8s). Each attempt has a generous 30s
+    timeout (20s connect) to absorb Railway cold starts in a single round trip.
     """
     last_exc: Exception = RuntimeError("no attempts made")
+    backoffs = [3.0, 8.0]
     for attempt in range(retries):
         try:
             async with _SEMAPHORE:
@@ -147,13 +158,13 @@ async def _api_get(path: str, params: dict = None, retries: int = 3) -> dict | l
         except (httpx.TimeoutException, httpx.ConnectError) as e:
             last_exc = e
             if attempt < retries - 1:
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(backoffs[attempt])
         except httpx.HTTPStatusError as e:
             if e.response.status_code < 500:
                 raise   # 4xx — don't retry
             last_exc = e
             if attempt < retries - 1:
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(backoffs[attempt])
     raise last_exc
 
 

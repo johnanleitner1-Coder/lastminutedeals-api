@@ -6825,11 +6825,10 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
     if name == "search_slots":
         # Call Supabase directly — avoids HTTP loopback which can deadlock
         # gunicorn workers when the handler thread blocks waiting for itself.
-        # No limit on results returned — agents must be able to see all matching
-        # inventory. Performance is handled by the 5-min cache + 30-min stale
-        # fallback + startup pre-warm (see _warm_mcp_slots_cache). The expensive
-        # full-inventory fetch happens in the background at startup, not during
-        # live agent requests.
+        # Capped at 200 results per live request — keeps response within a
+        # single Supabase page (<2s) so we never time out on multi-page
+        # pagination. The background pre-warm (_warm_mcp_slots_cache) still
+        # fetches full inventory for the default-params cache entry.
         hours_ahead = float(arguments.get("hours_ahead") or 168)
         category    = str(arguments.get("category") or "")
         city        = str(arguments.get("city") or "")
@@ -6844,7 +6843,7 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
         try:
             slots = _load_slots_from_supabase(
                 hours_ahead=hours_ahead, category=category,
-                city=city, budget=budget,
+                city=city, budget=budget, limit=1000,
             )
             result = [_sanitize_slot(s) for s in slots]
             _MCP_SLOTS_CACHE[cache_key] = {
@@ -7115,7 +7114,7 @@ def _start_mcp_thread():
             slot_id, service_name, business_name, location_city, start_time,
             hours_until_start, our_price, currency, spots_open.
         """
-        p = {"hours_ahead": hours_ahead, "limit": 10000}
+        p = {"hours_ahead": hours_ahead, "limit": 1000}
         if city: p["city"] = city
         if category: p["category"] = category
         if max_price > 0: p["max_price"] = max_price
