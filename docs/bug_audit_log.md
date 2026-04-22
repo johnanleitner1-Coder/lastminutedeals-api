@@ -629,3 +629,26 @@ scheduling was redundant.
 | **Running total** | **162** |
 
 ---
+
+## Session 32 Fixes (commits 49efba2, 853336a)
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 163 | `run_api_server.py` | **search_slots 67.2% Smithery uptime — MCP cache-miss queries paginated all 7,400+ slots (8 pages × 10s each ≈ 50s), exceeding Smithery tool call timeout.** On cache miss (after 5-min TTL expiry or Railway restart), the embedded MCP handler called `_load_slots_from_supabase()` with no limit (default 10,000), triggering multi-page Supabase pagination. Background pre-warm caches full inventory at startup, but filtered queries (city/category) and post-restart cold requests missed the warm cache. | Capped MCP search_slots queries to `limit=1000` (single Supabase page, <2s). Pre-warm and internal callers (execute/best, execute/guaranteed) unchanged at 10,000. Both embedded FastMCP and JSON-RPC `/mcp` paths fixed. |
+
+### MEDIUM
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 164 | `run_mcp_remote.py` | **Glama/Claude Desktop cold-start resilience** — 8s connect timeout insufficient for Railway cold starts (10-30s). Fixed 1.5s retry backoff too aggressive, warmup interval (10 min) too close to Railway's 15-min sleep threshold. | Connect timeout 8s→20s, total timeout 15s→30s, warmup interval 10m→8m, exponential backoff (3s, 8s), immediate first ping on startup. |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 32: 1 high (search_slots pagination timeout), 1 medium (remote MCP resilience) | 2 |
+| **Running total** | **164** |
+
+---

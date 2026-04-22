@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-22 (v38 — Added Google Search Console verification route, dynamic sitemap.xml, and robots.txt. Previous: v37 — SEO tour pages, book_from_itinerary endpoint and MCP tool.)
+**Last updated:** 2026-04-22 (v39 — Fixed search_slots uptime: capped MCP queries to 1000 rows (single Supabase page) to eliminate multi-page pagination timeouts. Improved run_mcp_remote.py resilience (connect timeout 8s→20s, ping 10m→8m, exponential backoff). Previous: v38 — GSC verification, sitemap.xml, robots.txt.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---

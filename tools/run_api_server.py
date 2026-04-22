@@ -1479,6 +1479,49 @@ def glama_well_known():
         "maintainers": [{"email": "johnanleitner1@gmail.com"}]
     })
 
+
+@app.route("/.well-known/mcp/server-card.json", methods=["GET"])
+def mcp_server_card():
+    return jsonify({
+        "$schema": "https://modelcontextprotocol.io/schemas/server-card/v1.0",
+        "version": "1.0",
+        "serverInfo": {
+            "name": "Last Minute Deals HQ",
+            "version": "1.0.0",
+            "description": (
+                "Book last-minute tours and activities worldwide. "
+                "7,000+ live slots from 23 suppliers across 15 countries."
+            ),
+            "homepage": "https://lastminutedealshq.com",
+        },
+        "transport": {
+            "type": "streamable-http",
+            "url": "https://api.lastminutedealshq.com/mcp",
+        },
+        "capabilities": {
+            "tools": True,
+            "prompts": True,
+            "resources": False,
+        },
+        "configSchema": {
+            "type": "object",
+            "properties": {
+                "lmd_api_key": {
+                    "type": "string",
+                    "description": (
+                        "API key for making bookings. Optional — search and "
+                        "preview work without a key. Get one free at "
+                        "POST https://api.lastminutedealshq.com/api/keys/register"
+                    ),
+                    "x-from": "header:X-API-Key",
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    })
+
+
 @app.route("/health", methods=["GET"])
 def health():
     slot_count = 0
