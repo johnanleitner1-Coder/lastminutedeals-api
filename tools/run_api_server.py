@@ -3615,6 +3615,49 @@ def _format_slot_card(slot: dict) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Google Search Console verification + SEO helpers
+# ---------------------------------------------------------------------------
+
+@app.route("/google1146a4e71b31f0ee.html", methods=["GET"])
+def google_verification():
+    return "google-site-verification: google1146a4e71b31f0ee.html", 200, {"Content-Type": "text/html"}
+
+
+@app.route("/sitemap.xml", methods=["GET"])
+def sitemap_xml():
+    """Dynamic sitemap listing all tour destination pages + booking pages."""
+    base = "https://api.lastminutedealshq.com"
+    urls = [
+        (f"{base}/tours", "daily", "1.0"),
+    ]
+    for slug in _TOUR_DESTINATIONS:
+        urls.append((f"{base}/tours/{slug}", "daily", "0.8"))
+    xml_parts = ['<?xml version="1.0" encoding="UTF-8"?>',
+                 '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, freq, prio in urls:
+        xml_parts.append(
+            f"<url><loc>{loc}</loc>"
+            f"<changefreq>{freq}</changefreq>"
+            f"<priority>{prio}</priority></url>"
+        )
+    xml_parts.append("</urlset>")
+    return "\n".join(xml_parts), 200, {"Content-Type": "application/xml"}
+
+
+@app.route("/robots.txt", methods=["GET"])
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /mcp\n"
+        "\n"
+        "Sitemap: https://api.lastminutedealshq.com/sitemap.xml\n"
+    )
+    return body, 200, {"Content-Type": "text/plain"}
+
+
 _TOURS_INDEX_CACHE: dict = {}  # {"html": str, "expires": float}
 _TOURS_INDEX_CACHE_TTL = 600  # 10 minutes
 

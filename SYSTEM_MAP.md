@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-22 (v37 — Added SEO tour landing pages (GET /tours, GET /tours/{destination}) with live inventory, JSON-LD structured data, and internal linking across 15 destinations. Added POST /api/book_from_itinerary endpoint for itinerary-to-booking conversion. Added book_from_itinerary MCP tool to both embedded and remote MCP servers. Added 10-min cache on tours index. Previous: v36 — TDQS optimization.)
+**Last updated:** 2026-04-22 (v38 — Added Google Search Console verification route, dynamic sitemap.xml, and robots.txt. Previous: v37 — SEO tour pages, book_from_itinerary endpoint and MCP tool.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -76,6 +76,11 @@
 │  GET /tours                  — destination index (15 destinations)  │
 │  GET /tours/{slug}           — destination page (live inventory)    │
 │  POST /api/book_from_itinerary — itinerary → booking link matcher  │
+│                                                                     │
+│  SEO infrastructure:                                                │
+│  GET /sitemap.xml              — dynamic sitemap (all tour pages)   │
+│  GET /robots.txt               — crawler directives + sitemap ref   │
+│  GET /google1146a4e71b31f0ee.html — Search Console verification    │
 │                                                                     │
 │  Cancellation entry points:                                         │
 │  DELETE /bookings/{id}       — API cancel (Stripe + OCTO + retry)  │
