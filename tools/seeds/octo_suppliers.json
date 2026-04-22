@@ -16,7 +16,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086, 32610, 133616, 117927],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -116,7 +116,10 @@
       "17252":  {"name": "The Photo Experience",   "city": "London",          "country": "GB"},
       "57545":  {"name": "Sailing Windermere",    "city": "Windermere",      "country": "GB"},
       "121323": {"name": "Perfect Day Tours",   "city": "Luxor",           "country": "EG"},
-      "101086": {"name": "Nefertiti Tours",      "city": "Cairo",           "country": "EG"}
+      "101086": {"name": "Nefertiti Tours",      "city": "Cairo",           "country": "EG"},
+      "32610":  {"name": "Blue Dolphin Sailing", "city": "Guanacaste",      "country": "CR"},
+      "133616": {"name": "EGYPT GATE",           "city": "Cairo",           "country": "EG"},
+      "117927": {"name": "Imperio tours",       "city": "Rome",            "country": "IT"}
     }
   }
 ]

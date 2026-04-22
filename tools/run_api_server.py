@@ -892,6 +892,9 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Sailing Windermere",    "destinations": ["Windermere", "Lake District", "United Kingdom"],          "platform": "Bokun"},
     {"name": "Perfect Day Tours",     "destinations": ["Luxor", "Egypt"],                                         "platform": "Bokun"},
     {"name": "Nefertiti Tours",       "destinations": ["Cairo", "Giza", "Egypt"],                                 "platform": "Bokun"},
+    {"name": "Blue Dolphin Sailing", "destinations": ["Guanacaste", "Costa Rica"],                               "platform": "Bokun"},
+    {"name": "EGYPT GATE",           "destinations": ["Cairo", "Egypt"],                                          "platform": "Bokun"},
+    {"name": "Imperio tours",       "destinations": ["Rome", "Italy"],                                            "platform": "Bokun"},
 ]
 
 
@@ -1003,6 +1006,13 @@ _TOUR_DESTINATIONS = {
         "meta_desc": "Book photography tours in London, sailing on Lake Windermere, and more across the UK. Instant confirmation.",
         "intro": "From photography walking tours through London to sailing on the Lake District's Windermere, the UK offers unique experiences departing soon with instant confirmation.",
         "highlights": ["Photography tours", "Sailing", "London", "Lake District"],
+    },
+    "costa-rica": {
+        "name": "Costa Rica", "query": "Costa Rica",
+        "title": "Last-Minute Costa Rica Sailing & Ocean Adventures",
+        "meta_desc": "Book sailing tours and ocean adventures in Guanacaste, Costa Rica. Sunset sails, snorkeling, and coastal cruises. Instant confirmation.",
+        "intro": "Costa Rica's Pacific coast is paradise for ocean lovers. Sail the warm waters of Guanacaste with sunset cruises, snorkeling excursions, and private charters — all with instant confirmation.",
+        "highlights": ["Sailing tours", "Sunset cruises", "Snorkeling", "Guanacaste"],
     },
     "romania": {
         "name": "Romania", "query": "Romania",
@@ -1499,7 +1509,7 @@ def mcp_server_card():
             "version": "1.0.0",
             "description": (
                 "Book last-minute tours and activities worldwide. "
-                f"7,000+ live slots from {_supplier_count()} suppliers across 15 countries."
+                f"7,000+ live slots from {_supplier_count()} suppliers across 16 countries."
             ),
             "homepage": "https://lastminutedealshq.com",
         },
@@ -3474,7 +3484,7 @@ _TOURS_INDEX_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Last-Minute Tours & Experiences Worldwide — Last Minute Deals HQ</title>
-<meta name="description" content="Book last-minute tours and activities in 15+ countries. Glacier hikes in Iceland, pyramid tours in Egypt, e-bike tours in Rome, and more. Instant confirmation from local suppliers.">
+<meta name="description" content="Book last-minute tours and activities in 16 countries. Glacier hikes in Iceland, pyramid tours in Egypt, e-bike tours in Rome, and more. Instant confirmation from local suppliers.">
 <link rel="canonical" href="https://api.lastminutedealshq.com/tours">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -3497,7 +3507,7 @@ h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
 <div class="header"><a href="/" style="color:#fff;text-decoration:none">LAST MINUTE DEALS <span>HQ</span></a></div>
 <div class="container">
 <h1>Last-Minute Tours & Experiences Worldwide</h1>
-<p class="subtitle">Book instantly-confirmed tours and activities from {supplier_count} local suppliers in 15+ countries. All inventory is live — if you see it, you can book it.</p>
+<p class="subtitle">Book instantly-confirmed tours and activities from {supplier_count} local suppliers in 16 countries. All inventory is live — if you see it, you can book it.</p>
 <div class="grid">
 {destination_cards}
 </div>
@@ -3572,6 +3582,7 @@ _COUNTRY_ISO = {
     "tanzania": "TZ", "morocco": "MA", "japan": "JP", "turkey": "TR",
     "montenegro": "ME", "finland": "FI", "china": "CN", "mexico": "MX",
     "united kingdom": "GB", "romania": "RO", "united states": "US",
+    "costa rica": "CR",
 }
 
 
@@ -6633,7 +6644,7 @@ _MCP_TOOLS = [
             "Search available last-minute tours, activities, and experiences worldwide. "
             "Queries live production inventory from {supplier_count} suppliers across Iceland, Italy, Egypt, "
             "Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK, "
-            "China, and Mexico via the OCTO booking standard. Results sorted by urgency "
+            "China, Mexico, and Costa Rica via the OCTO booking standard. Results sorted by urgency "
             "(soonest first). Call this first when a user asks about tours. Follow up with "
             "preview_slot for a booking link or book_slot to book directly."
         ),

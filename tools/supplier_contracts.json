@@ -267,6 +267,57 @@
       "contract_status": "confirmed",
       "contract_date": "2026-04-17",
       "notes": "Accepted 17 Apr 2026. Puerto Vallarta tours: hiking, tequila tasting, nightlife, botanical gardens, day trips. 23% commission on experiences."
+    },
+
+    "Blue Dolphin Sailing": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 32610,
+      "city": "Guanacaste",
+      "country": "CR",
+      "products": 2,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "notes": "Accepted 22 Apr 2026. Costa Rica sailing experiences. 20% commission across all types."
+    },
+
+    "EGYPT GATE": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 133616,
+      "city": "Cairo",
+      "country": "EG",
+      "products": 3,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "notes": "Accepted 22 Apr 2026. Egypt tours and experiences. 20% commission across all types."
+    },
+
+    "Imperio tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.10,
+      "commission_by_type": {
+        "experiences": 0.10,
+        "extras": 0.10,
+        "pick_up": 0.10
+      },
+      "bokun_vendor_id": 117927,
+      "city": "Rome",
+      "country": "IT",
+      "products": 5,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "notes": "Accepted 22 Apr 2026. Rome-based — Fiat 500 tours, golf cart tours, food tours. 10% commission across all types."
     }
   }
 }

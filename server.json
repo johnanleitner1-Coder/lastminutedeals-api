@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.lastminutedealshq/last-minute-tours",
   "title": "Last Minute Tours & Activities",
-  "description": "Search and book last-minute tours and activities in 28 cities from 23 suppliers.",
+  "description": "Search and book last-minute tours and activities in 29 cities from 26 suppliers.",
   "repository": {
     "url": "https://github.com/janleitner/agentic-workflows",
     "source": "github"

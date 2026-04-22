@@ -2,8 +2,8 @@ openapi: 3.1.0
 info:
   title: Last Minute Deals HQ
   description: >
-    Search and book last-minute tours, activities, and experiences in 28 cities
-    across 15 countries. Live inventory from 23 suppliers — glacier hikes in Iceland,
+    Search and book last-minute tours, activities, and experiences in 29 cities
+    across 16 countries. Live inventory from 26 suppliers — glacier hikes in Iceland,
     e-bike tours in Rome, cooking classes in Kyoto, photography sessions in London,
     desert tours in Morocco, and more. Inventory refreshed every 4 hours.
   version: 1.0.0

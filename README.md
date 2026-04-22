@@ -3,7 +3,7 @@
 [![Smithery](https://smithery.ai/badge/@johnanleitner1/Last_Minute_Deals_HQ)](https://smithery.ai/server/johnanleitner1/Last_Minute_Deals_HQ)
 [![lastminutedeals-api MCP server](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api/badges/score.svg)](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api)
 
-MCP server with real-time last-minute tour and activity inventory. 7,000+ live bookable slots across 23 suppliers in 15 countries and 28 cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
+MCP server with real-time last-minute tour and activity inventory. 7,000+ live bookable slots across 26 suppliers in 16 countries and 29 cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
 
 Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers are confirmed automatically.
 
@@ -150,6 +150,12 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 | Zestro Bizlinks | Japan | Experiences |
 | Adi Tours - Nuba travel | Cairo, Egypt | Pyramids, cultural tours, Nile excursions, desert tours, day trips |
 | The Photo Experience | London, United Kingdom | Photography tours, photo walks, city photography experiences |
+| Sailing Windermere | Windermere, Lake District, United Kingdom | Sailing, lake cruises |
+| Perfect Day Tours | Luxor, Egypt | Temple tours, Valley of the Kings |
+| Nefertiti Tours | Cairo, Giza, Egypt | Pyramids, cultural tours |
+| Blue Dolphin Sailing | Guanacaste, Costa Rica | Sailing tours, sunset cruises, snorkeling |
+| EGYPT GATE | Cairo, Egypt | Tours and experiences |
+| Imperio tours | Rome, Italy | Fiat 500 tours, golf cart tours, food tours |
 
 ## Categories
 
@@ -207,7 +213,7 @@ book_slot(
 
 ```
 Every 4 hours:
-  fetch_octo_slots.py   →  Pull availability from 23 suppliers via OCTO API
+  fetch_octo_slots.py   →  Pull availability from 26 suppliers via OCTO API
   aggregate_slots.py    →  Deduplicate, filter, sort by urgency
   compute_pricing.py    →  Dynamic commission-based pricing
   sync_to_supabase.py   →  Upsert to production database
