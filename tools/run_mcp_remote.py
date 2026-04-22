@@ -28,14 +28,25 @@ claude mcp add lastminutedeals --url https://api.lastminutedealshq.com/mcp
 """
 
 import asyncio
+import json
 import os
 import time
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
+
+# Build supplier count from octo_suppliers.json — single source of truth
+_SEEDS_PATH = Path(__file__).parent / "seeds" / "octo_suppliers.json"
+try:
+    _octo_cfg = json.loads(_SEEDS_PATH.read_text(encoding="utf-8"))
+    _SUPPLIER_MAP = _octo_cfg[0].get("vendor_id_to_supplier_map", {})
+    _SUPPLIER_COUNT = len(set(v["name"] for v in _SUPPLIER_MAP.values()))
+except Exception:
+    _SUPPLIER_COUNT = 23  # fallback
 
 BOOKING_API = (os.getenv("BOOKING_API_URL") or "https://api.lastminutedealshq.com").rstrip("/")
 API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
@@ -101,7 +112,7 @@ mcp = FastMCP(
     instructions=(
         "You have access to real last-minute tour and activity inventory sourced live "
         "from production booking systems via the OCTO open standard. "
-        "23 active suppliers: Adi Tours - Nuba travel (Cairo, Egypt — pyramids, desert tours), "
+        f"{_SUPPLIER_COUNT} active suppliers: Adi Tours - Nuba travel (Cairo, Egypt — pyramids, desert tours), "
         "All Washington View (Washington D.C. — city tours, sightseeing), "
         "Arctic Adventures (Iceland — glacier hikes, snowmobiling, whale watching, aurora, lava tunnels), "
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "

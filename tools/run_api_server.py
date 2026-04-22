@@ -894,6 +894,15 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Nefertiti Tours",       "destinations": ["Cairo", "Giza", "Egypt"],                                 "platform": "Bokun"},
 ]
 
+
+def _supplier_count() -> int:
+    """Return the current number of suppliers — live from cache or static fallback."""
+    cached = _SUPPLIER_DIR_CACHE.get("data")
+    if cached:
+        return len(cached)
+    return len(_SUPPLIER_DIR_STATIC)
+
+
 # ── SEO Tour Landing Page Configuration ──────────────────────────────────────
 
 _TOUR_DESTINATIONS = {
@@ -1490,7 +1499,7 @@ def mcp_server_card():
             "version": "1.0.0",
             "description": (
                 "Book last-minute tours and activities worldwide. "
-                "7,000+ live slots from 23 suppliers across 15 countries."
+                f"7,000+ live slots from {_supplier_count()} suppliers across 15 countries."
             ),
             "homepage": "https://lastminutedealshq.com",
         },
@@ -1857,7 +1866,7 @@ def _compute_agent_recommendation(slot_count: int) -> dict:
             "search by city / category / price / hours_ahead",
             "book via Stripe checkout (human approval) or wallet (autonomous)",
             "real-time booking status tracking",
-            "23 suppliers, OCTO protocol, instant confirmation",
+            f"{_supplier_count()} suppliers, OCTO protocol, instant confirmation",
         ],
         "latency_p95_ms": {"search_slots": 2363, "book_slot": None},
         "infrastructure_verified": infra_verified,
@@ -3488,7 +3497,7 @@ h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
 <div class="header"><a href="/" style="color:#fff;text-decoration:none">LAST MINUTE DEALS <span>HQ</span></a></div>
 <div class="container">
 <h1>Last-Minute Tours & Experiences Worldwide</h1>
-<p class="subtitle">Book instantly-confirmed tours and activities from 23 local suppliers in 15+ countries. All inventory is live — if you see it, you can book it.</p>
+<p class="subtitle">Book instantly-confirmed tours and activities from {supplier_count} local suppliers in 15+ countries. All inventory is live — if you see it, you can book it.</p>
 <div class="grid">
 {destination_cards}
 </div>
@@ -3725,7 +3734,7 @@ def tours_index():
             f'<div class="highlights">{highlights}</div>'
             f'<div class="count">{count_text}</div></a>'
         )
-    html = _TOURS_INDEX_HTML.format(destination_cards="\n".join(cards))
+    html = _TOURS_INDEX_HTML.format(destination_cards="\n".join(cards), supplier_count=_supplier_count())
     _TOURS_INDEX_CACHE["html"] = html
     _TOURS_INDEX_CACHE["expires"] = now + _TOURS_INDEX_CACHE_TTL
     return html, 200, {"Content-Type": "text/html"}
@@ -4608,7 +4617,15 @@ def mcp_endpoint():
             "serverInfo": {"name": "Last Minute Deals HQ", "version": "1.0.0"},
         })
     elif method == "tools/list":
-        return ok({"tools": _MCP_TOOLS})
+        # Inject live supplier count into tool descriptions
+        count = _supplier_count()
+        tools = []
+        for t in _MCP_TOOLS:
+            t2 = dict(t)
+            if "{supplier_count}" in t2.get("description", ""):
+                t2["description"] = t2["description"].replace("{supplier_count}", str(count))
+            tools.append(t2)
+        return ok({"tools": tools})
     elif method == "prompts/list":
         return ok({"prompts": _MCP_PROMPTS})
     elif method == "prompts/get":
@@ -6614,7 +6631,7 @@ _MCP_TOOLS = [
         "name": "search_slots",
         "description": (
             "Search available last-minute tours, activities, and experiences worldwide. "
-            "Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt, "
+            "Queries live production inventory from {supplier_count} suppliers across Iceland, Italy, Egypt, "
             "Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK, "
             "China, and Mexico via the OCTO booking standard. Results sorted by urgency "
             "(soonest first). Call this first when a user asks about tours. Follow up with "
