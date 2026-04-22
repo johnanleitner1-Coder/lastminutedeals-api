@@ -6471,10 +6471,31 @@ def _start_mcp_thread():
     @mcp.tool()
     def search_slots(city: str = "", category: str = "", hours_ahead: float = 168.0,
                      max_price: float = 0.0) -> list[dict]:
-        """Search last-minute tours and activities. Returns all available inventory
-        sorted by urgency (soonest first). Use city/category/hours_ahead/max_price
-        to narrow results. Args: city (partial match, e.g. "Reykjavik"),
-        category (e.g. "experiences"), hours_ahead (default 168 = 1 week), max_price (0=no limit)."""
+        """
+        Search available last-minute tours, activities, and experiences worldwide.
+
+        Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt,
+        Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK,
+        China, and Mexico. Results sorted by urgency (soonest departures first).
+
+        When to use: Call this first when a user asks about tours or activities. Follow up
+        with preview_slot(slot_id) for a shareable booking link, or book_slot to book directly.
+
+        Args:
+            city:        Filter by city or country (partial match, case-insensitive).
+                         Examples: "Reykjavik", "Rome", "Iceland", "Egypt".
+                         Leave empty for all destinations.
+            category:    Filter by type — use "experiences" for tours/activities.
+                         Leave empty for all categories.
+            hours_ahead: Only return slots starting within this many hours.
+                         Default 168 (1 week). Use 24 for same-day.
+            max_price:   Maximum price in USD. 0 = no price filter.
+
+        Returns:
+            List of slot objects sorted by hours_until_start (soonest first). Each contains:
+            slot_id, service_name, business_name, location_city, start_time,
+            hours_until_start, our_price, currency, spots_open.
+        """
         p = {"hours_ahead": hours_ahead, "limit": 10000}
         if city: p["city"] = city
         if category: p["category"] = category
@@ -6559,7 +6580,20 @@ def _start_mcp_thread():
 
     @mcp.tool()
     def get_booking_status(booking_id: str) -> dict:
-        """Check booking status by booking_id. Returns status, confirmation number, service details."""
+        """
+        Check the current status of a booking by its booking_id.
+
+        When to use: Call after book_slot to track payment and confirmation progress.
+        In approval mode, poll every 30-60 seconds after sharing the checkout link to
+        detect when the customer completes payment.
+
+        Args:
+            booking_id: The booking_id returned by book_slot (format: bk_...).
+
+        Returns:
+            Booking record with status, confirmation_number, and service details.
+            Status lifecycle: pending_payment → fulfilling → booked (or failed/cancelled).
+        """
         try:
             r = _mcp_req.get(f"{BOOKING_API}/bookings/{booking_id}", headers=_HDRS, timeout=15)
             r.raise_for_status()
@@ -6571,8 +6605,16 @@ def _start_mcp_thread():
 
     @mcp.tool()
     def get_supplier_info() -> dict:
-        """Returns live supplier network info — destinations derived from current Supabase inventory.
-        Call before search_slots to understand what regions and activity types are available."""
+        """
+        Get a directory of all suppliers, destinations, and activity types in the network.
+
+        When to use: Call before search_slots to discover which regions and experience
+        types are available, or to answer "where can I book?" questions.
+
+        Returns:
+            Dictionary with: suppliers (list of {name, destinations, categories}),
+            protocol, and payment info.
+        """
         return {
             "suppliers": _get_live_supplier_directory(),
             "protocol": "OCTO via Bokun — direct supplier API, production inventory only",
@@ -6581,16 +6623,24 @@ def _start_mcp_thread():
 
     @mcp.tool()
     def preview_slot(slot_id: str) -> dict:
-        """Get a shareable booking page URL for a slot. Returns a link the user can click
-        to see details and book themselves — they enter their own name, email, phone and
-        pay via Stripe. Use this instead of book_slot when the user is a human browsing
-        with an AI assistant. No need to collect customer details yourself.
+        """
+        Get a shareable booking page URL for a slot.
+
+        Returns a link the user can open in their browser to view full details
+        (service name, date/time, price, location) and complete the booking
+        themselves — they enter their own name, email, and phone on the page
+        and pay via Stripe.
+
+        When to use: Use this instead of book_slot when the user is a human
+        browsing with an AI assistant. No need to collect customer details
+        yourself — the booking page handles everything.
 
         Args:
             slot_id: Slot ID from search_slots results.
 
         Returns:
-            booking_page_url, service name, price, start time, and location.
+            booking_page_url, service_name, business_name, price, start_time,
+            location_city, currency.
         """
         try:
             r = _mcp_req.get(f"{BOOKING_API}/slots/{slot_id}/quote", headers=_HDRS, timeout=10)

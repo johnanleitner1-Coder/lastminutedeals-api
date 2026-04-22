@@ -197,31 +197,34 @@ async def search_slots(
     limit: int = 50,
 ) -> list[dict]:
     """
-    Search for last-minute available tours and activities.
+    Search available last-minute tours, activities, and experiences worldwide.
 
-    Returns real production inventory from 23 suppliers (Adi Tours - Nuba travel, All Washington View,
-    Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions,
-    Hillborn Experiences, Íshestar Riding Tours, Marvel Egypt Tours, Nefertiti Tours,
-    O Turista Tours, Perfect Day Tours, Pure Morocco Experience, REDRIB Experience,
-    Ramen Factory Kyoto, Sailing Windermere, The Photo Experience, TourTransfer Bucharest,
-    Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, Zestro Bizlinks)
-    sourced live via the OCTO open booking protocol.
-    Slots are sorted by urgency (soonest first).
+    Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt,
+    Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK,
+    China, and Mexico — sourced via the OCTO open booking standard. Results are sorted
+    by urgency (soonest departures first).
+
+    When to use: Call this first when a user asks about tours, activities, or experiences.
+    Follow up with preview_slot(slot_id) to get a shareable booking link, or book_slot
+    to book directly with customer details.
 
     Args:
-        city:        City or country filter, partial match (e.g. "Reykjavik", "Rome", "Iceland").
-                     Leave empty to search all locations.
-        category:    Category filter. Use "experiences" for tours/activities.
+        city:        Filter by city or country (partial match, case-insensitive).
+                     Examples: "Reykjavik", "Rome", "Iceland", "Egypt".
+                     Leave empty to search all destinations.
+        category:    Filter by type — use "experiences" for tours/activities.
                      Leave empty for all categories.
-        hours_ahead: Return slots starting within this many hours (default: 168).
-        max_price:   Maximum price in USD. Set to 0 to return all prices.
-        limit:       Max results to return (default 50). Results are sorted by urgency
-                     so the most time-sensitive slots come first. Increase for broader
-                     browsing (e.g. limit=500). Use city/category filters to narrow
-                     results instead of raising the limit when possible.
+        hours_ahead: Only return slots starting within this many hours.
+                     Default 168 (1 week). Use 24 for same-day, 48 for next two days.
+        max_price:   Maximum price in USD. 0 = no price filter.
+        limit:       Max results (default 50). Use city/category filters to narrow
+                     results rather than raising the limit.
 
     Returns:
-        List of available slot dicts sorted by hours_until_start (soonest first).
+        List of slot objects sorted by hours_until_start (soonest first). Each slot
+        contains: slot_id, service_name, business_name, location_city, start_time,
+        hours_until_start, our_price, currency, spots_open, confidence.
+        Returns a message object if no slots match the filters.
     """
     # Start keep-alive task on first invocation — prevents Railway container sleep
     # (cold starts exhaust the retry window and cause tool failures).
@@ -348,18 +351,23 @@ async def book_slot(
 @mcp.tool()
 async def get_booking_status(booking_id: str) -> dict:
     """
-    Check the status of a booking.
+    Check the current status of a booking by its booking_id.
+
+    When to use: Call after book_slot to track payment and confirmation progress.
+    In approval mode, poll every 30-60 seconds after sharing the checkout link to
+    detect when the customer completes payment. Status transitions from
+    pending_payment → fulfilling → booked (or failed).
 
     Args:
-        booking_id: The booking_id returned by book_slot.
+        booking_id: The booking_id returned by book_slot (format: bk_...).
 
     Returns:
         Booking record with status, confirmation_number, service details, and checkout_url.
-        Status values:
-          pending_payment — awaiting customer checkout
-          fulfilling      — payment received, confirming with supplier (up to 45s)
+        Status lifecycle:
+          pending_payment — checkout link sent, awaiting customer payment
+          fulfilling      — payment received, confirming with supplier (typically 5-45s)
           booked          — confirmed by supplier; confirmation_number is set
-          failed          — fulfillment failed; payment hold cancelled
+          failed          — supplier confirmation failed; payment hold released automatically
           cancelled       — booking cancelled and refunded
     """
     try:
@@ -414,10 +422,15 @@ async def preview_slot(slot_id: str) -> dict:
 @mcp.tool()
 async def get_supplier_info() -> dict:
     """
-    Returns information about the supplier network and available inventory.
+    Get a directory of all suppliers, destinations, and activity types in the network.
 
-    Use this to understand what destinations and experience types are available
-    before calling search_slots.
+    When to use: Call before search_slots to discover which regions and experience
+    types are available, or to answer "where can I book?" questions. Also returns
+    the current live inventory count.
+
+    Returns:
+        Dictionary with: suppliers (list of {name, destinations, categories}),
+        live_slot_count (current inventory size), protocol, payment info.
     """
     now = time.time()
     cached_supplier = _SUPPLIER_INFO_CACHE.get("live_slot_count")
@@ -586,6 +599,27 @@ async def get_supplier_info() -> dict:
                 "name": "The Photo Experience",
                 "destinations": ["London", "United Kingdom"],
                 "categories": ["experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Nefertiti Tours",
+                "destinations": ["Cairo", "Giza", "Egypt"],
+                "categories": ["pyramids", "camel rides", "ATV desert tours", "cultural tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Perfect Day Tours",
+                "destinations": ["Luxor", "Egypt"],
+                "categories": ["hot air balloon", "temple tours", "horse carriage tours", "Nile experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Sailing Windermere",
+                "destinations": ["Windermere", "Lake District", "United Kingdom"],
+                "categories": ["sailing experiences", "lake tours", "private charters"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },
