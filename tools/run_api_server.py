@@ -894,6 +894,116 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Nefertiti Tours",       "destinations": ["Cairo", "Giza", "Egypt"],                                 "platform": "Bokun"},
 ]
 
+# ── SEO Tour Landing Page Configuration ──────────────────────────────────────
+
+_TOUR_DESTINATIONS = {
+    "iceland": {
+        "name": "Iceland", "query": "Iceland",
+        "title": "Last-Minute Iceland Tours & Adventures",
+        "meta_desc": "Book glacier hikes, northern lights tours, ice caves, snowmobiling, horse riding, and whale watching in Iceland. Departing soon, instant confirmation.",
+        "intro": "Iceland offers some of the world's most dramatic adventures — from glacier hikes and ice cave explorations to northern lights tours and whale watching. Our local Icelandic suppliers offer instantly-confirmed tours departing within the next few days.",
+        "highlights": ["Glacier hikes", "Ice caves", "Northern lights", "Snowmobiling", "Horse riding", "Whale watching"],
+    },
+    "egypt": {
+        "name": "Egypt", "query": "Egypt",
+        "title": "Last-Minute Egypt Tours & Experiences",
+        "meta_desc": "Book pyramid tours, Nile cruises, hot air balloons over Luxor, camel rides, and desert adventures in Egypt. Instant confirmation.",
+        "intro": "From the pyramids of Giza to hot air balloon rides over Luxor's Valley of the Kings, Egypt's ancient wonders are even more incredible when booked last-minute. Six local suppliers offer hundreds of instantly-confirmed experiences.",
+        "highlights": ["Pyramid tours", "Nile cruises", "Hot air balloons", "Camel rides", "Temple tours", "Desert adventures"],
+    },
+    "rome": {
+        "name": "Rome", "query": "Rome",
+        "title": "Last-Minute Rome E-Bike Tours & Activities",
+        "meta_desc": "Book e-bike tours, food tours, and cycling adventures in Rome. Explore the Appian Way, Castelli Romani, and more. Instant confirmation.",
+        "intro": "Explore Rome beyond the tourist crowds on an e-bike. Ride through ancient streets, along the Appian Way, or out to the Castelli Romani hill towns. Our local cycling specialists offer instantly-confirmed tours departing soon.",
+        "highlights": ["E-bike tours", "Food tours", "Appian Way", "Castelli Romani", "City cycling"],
+    },
+    "portugal": {
+        "name": "Portugal", "query": "Portugal",
+        "title": "Last-Minute Portugal Tours & Day Trips",
+        "meta_desc": "Book private tours in Lisbon, Porto, and Sintra. Wine experiences, cultural tours, and day trips. Instant confirmation.",
+        "intro": "Portugal's coastal cities and fairy-tale palaces are best experienced with a local guide. Private tours in Lisbon, Porto day trips, and Sintra castle visits — all with instant confirmation.",
+        "highlights": ["Private tours", "Lisbon", "Porto", "Sintra", "Wine experiences"],
+    },
+    "tanzania": {
+        "name": "Tanzania", "query": "Tanzania",
+        "title": "Last-Minute Tanzania Safaris & Adventures",
+        "meta_desc": "Book luxury safaris in the Serengeti, Kilimanjaro climbs, and Zanzibar retreats. Ultra-luxury operators, instant confirmation.",
+        "intro": "Tanzania offers the ultimate African adventure — Serengeti wildlife safaris, Kilimanjaro summit treks, and Zanzibar beach retreats. Our ultra-luxury operator provides world-class experiences with instant confirmation.",
+        "highlights": ["Private safaris", "Serengeti", "Kilimanjaro", "Zanzibar", "Wildlife"],
+    },
+    "morocco": {
+        "name": "Morocco", "query": "Morocco",
+        "title": "Last-Minute Morocco Desert Tours & Adventures",
+        "meta_desc": "Book Sahara desert tours, multi-day adventures, and cultural experiences from Marrakech. Instant confirmation.",
+        "intro": "From the vibrant souks of Marrakech to the vast Sahara Desert, Morocco offers unforgettable adventures. Multi-day desert tours and cultural experiences with instant confirmation.",
+        "highlights": ["Desert tours", "Sahara", "Marrakech", "Cultural experiences"],
+    },
+    "japan": {
+        "name": "Japan", "query": "Japan",
+        "title": "Last-Minute Japan Cooking Classes & Experiences",
+        "meta_desc": "Book ramen cooking classes in Kyoto and cultural experiences across Japan. Hands-on workshops, instant confirmation.",
+        "intro": "Japan's culinary traditions come alive through hands-on experiences. Learn to make authentic ramen in a Kyoto workshop or explore Japanese culture with instantly-confirmed classes.",
+        "highlights": ["Cooking classes", "Ramen workshops", "Kyoto", "Cultural experiences"],
+    },
+    "turkey": {
+        "name": "Turkey", "query": "Turkey",
+        "title": "Last-Minute Turkey Boat Tours & Adventures",
+        "meta_desc": "Book boat tours, jeep safaris, and coastal excursions in Antalya. Mediterranean adventures, instant confirmation.",
+        "intro": "Turkey's stunning Mediterranean coast offers adventure on land and sea. Boat tours along turquoise coastlines, jeep safaris through mountain villages — all with instant confirmation from Antalya.",
+        "highlights": ["Boat tours", "Jeep safaris", "Antalya", "Coastal excursions"],
+    },
+    "montenegro": {
+        "name": "Montenegro", "query": "Montenegro",
+        "title": "Last-Minute Montenegro Boat Tours & Coastal Experiences",
+        "meta_desc": "Book boat tours, sea cave explorations, and Bay of Kotor experiences in Montenegro. Instant confirmation.",
+        "intro": "Montenegro's dramatic Bay of Kotor and hidden sea caves offer unforgettable coastal adventures. Explore by boat with instantly-confirmed tours departing soon.",
+        "highlights": ["Boat tours", "Sea caves", "Bay of Kotor", "Coastal adventures"],
+    },
+    "finland": {
+        "name": "Finland", "query": "Finland",
+        "title": "Last-Minute Finland Speed Boat Tours",
+        "meta_desc": "Book speed boat tours and archipelago experiences in Helsinki. Instant confirmation.",
+        "intro": "Experience Helsinki from the water with exhilarating speed boat tours through Finland's stunning archipelago. Instant confirmation, departing soon.",
+        "highlights": ["Speed boat tours", "Archipelago", "Helsinki"],
+    },
+    "china": {
+        "name": "China", "query": "China",
+        "title": "Last-Minute China Tours & Cultural Journeys",
+        "meta_desc": "Book multi-day tours, Silk Road adventures, and cultural experiences across China. Instant confirmation.",
+        "intro": "China's vast landscapes and ancient history come alive through guided tours — from Shanghai to Xi'an's terracotta warriors. Multi-day cultural journeys with instant confirmation.",
+        "highlights": ["Multi-day tours", "Silk Road", "Cultural experiences", "Food tours"],
+    },
+    "washington-dc": {
+        "name": "Washington, D.C.", "query": "Washington",
+        "title": "Last-Minute Washington D.C. Tours & Sightseeing",
+        "meta_desc": "Book guided city tours, monument visits, and sightseeing in Washington D.C. Instant confirmation.",
+        "intro": "See the nation's capital with expert-guided tours of monuments, memorials, and iconic landmarks. Panoramic views and history brought to life, departing soon.",
+        "highlights": ["City tours", "Monuments", "Sightseeing"],
+    },
+    "mexico": {
+        "name": "Mexico", "query": "Mexico",
+        "title": "Last-Minute Mexico Tours & Excursions",
+        "meta_desc": "Book tequila tastings, hiking, and cultural excursions in Puerto Vallarta. Instant confirmation.",
+        "intro": "Mexico's Pacific coast offers adventure and culture — from tequila tastings in the mountains to guided excursions along the shore. Book with instant confirmation from Puerto Vallarta.",
+        "highlights": ["Tequila tasting", "Hiking", "Cultural excursions", "Puerto Vallarta"],
+    },
+    "uk": {
+        "name": "United Kingdom", "query": "United Kingdom",
+        "title": "Last-Minute UK Tours & Experiences",
+        "meta_desc": "Book photography tours in London, sailing on Lake Windermere, and more across the UK. Instant confirmation.",
+        "intro": "From photography walking tours through London to sailing on the Lake District's Windermere, the UK offers unique experiences departing soon with instant confirmation.",
+        "highlights": ["Photography tours", "Sailing", "London", "Lake District"],
+    },
+    "romania": {
+        "name": "Romania", "query": "Romania",
+        "title": "Last-Minute Romania Tours & Castle Visits",
+        "meta_desc": "Book city tours, Dracula castle visits, and day trips in Bucharest. Instant confirmation.",
+        "intro": "Romania's Gothic castles and vibrant capital await. Visit the legendary Dracula castle in Transylvania or explore Bucharest with expert guides, all with instant confirmation.",
+        "highlights": ["City tours", "Dracula castle", "Bucharest", "Day trips"],
+    },
+}
+
 
 def _get_live_supplier_directory() -> list[dict]:
     """
@@ -3302,6 +3412,401 @@ def privacy_policy():
 <h2>Contact</h2>
 <p>Last Minute Deals HQ LLC — johnanleitner1@gmail.com</p>
 </body></html>"""
+
+
+# ── SEO Tour Landing Pages ────────────────────────────────────────────────────
+
+_TOURS_INDEX_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Last-Minute Tours & Experiences Worldwide — Last Minute Deals HQ</title>
+<meta name="description" content="Book last-minute tours and activities in 15+ countries. Glacier hikes in Iceland, pyramid tours in Egypt, e-bike tours in Rome, and more. Instant confirmation from local suppliers.">
+<link rel="canonical" href="https://api.lastminutedealshq.com/tours">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh;display:flex;flex-direction:column}}
+.header{{background:#1a1a2e;color:#fff;padding:16px 24px;text-align:center;font-size:14px;letter-spacing:.5px}}
+.header span{{color:#e94560}}
+.container{{max-width:900px;margin:32px auto;padding:0 16px;flex:1}}
+h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
+.subtitle{{font-size:16px;color:#555;margin-bottom:32px;line-height:1.5}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}}
+.dest-card{{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:24px;transition:box-shadow .2s;text-decoration:none;color:inherit;display:block}}
+.dest-card:hover{{box-shadow:0 4px 16px rgba(0,0,0,.12)}}
+.dest-card h2{{font-size:18px;color:#1a1a2e;margin-bottom:8px}}
+.dest-card .highlights{{font-size:13px;color:#666;margin-bottom:12px;line-height:1.4}}
+.dest-card .count{{font-size:14px;color:#e94560;font-weight:600}}
+.footer{{text-align:center;padding:24px;font-size:12px;color:#999}}
+</style>
+</head>
+<body>
+<div class="header"><a href="/" style="color:#fff;text-decoration:none">LAST MINUTE DEALS <span>HQ</span></a></div>
+<div class="container">
+<h1>Last-Minute Tours & Experiences Worldwide</h1>
+<p class="subtitle">Book instantly-confirmed tours and activities from 23 local suppliers in 15+ countries. All inventory is live — if you see it, you can book it.</p>
+<div class="grid">
+{destination_cards}
+</div>
+</div>
+<div class="footer">Powered by Last Minute Deals HQ &middot; Secure payments by Stripe</div>
+</body>
+</html>"""
+
+_TOURS_DEST_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — Last Minute Deals HQ</title>
+<meta name="description" content="{meta_desc}">
+<link rel="canonical" href="https://api.lastminutedealshq.com/tours/{slug}">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh;display:flex;flex-direction:column}}
+.header{{background:#1a1a2e;color:#fff;padding:16px 24px;text-align:center;font-size:14px;letter-spacing:.5px}}
+.header span{{color:#e94560}}
+.container{{max-width:900px;margin:32px auto;padding:0 16px;flex:1}}
+h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
+.intro{{font-size:15px;color:#555;margin-bottom:8px;line-height:1.6}}
+.highlights{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}}
+.tag{{background:#eef;color:#1a1a2e;padding:4px 12px;border-radius:20px;font-size:13px}}
+.slot-count{{font-size:14px;color:#666;margin-bottom:16px}}
+.slots{{display:grid;gap:16px;margin-bottom:32px}}
+.slot-card{{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}}
+.slot-info{{flex:1;min-width:200px}}
+.slot-info h3{{font-size:16px;margin-bottom:4px;color:#1a1a2e}}
+.slot-info .supplier{{font-size:13px;color:#888;margin-bottom:6px}}
+.slot-info .meta{{font-size:14px;color:#555}}
+.slot-action{{text-align:right}}
+.slot-price{{font-size:20px;font-weight:700;color:#e94560;margin-bottom:6px}}
+.slot-price .currency{{font-size:14px;font-weight:400}}
+.book-btn{{display:inline-block;padding:10px 20px;background:#e94560;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;transition:background .2s}}
+.book-btn:hover{{background:#d63851}}
+.empty{{text-align:center;padding:48px 24px;color:#666}}
+.back{{display:inline-block;margin-bottom:20px;color:#e94560;text-decoration:none;font-size:14px}}
+.back:hover{{text-decoration:underline}}
+.other-dests{{margin-top:32px;padding-top:24px;border-top:1px solid #ddd}}
+.other-dests h2{{font-size:18px;margin-bottom:12px;color:#1a1a2e}}
+.other-links{{display:flex;flex-wrap:wrap;gap:8px}}
+.other-links a{{color:#e94560;text-decoration:none;padding:4px 12px;border:1px solid #e94560;border-radius:20px;font-size:13px;transition:all .2s}}
+.other-links a:hover{{background:#e94560;color:#fff}}
+.footer{{text-align:center;padding:24px;font-size:12px;color:#999}}
+</style>
+{structured_data}
+</head>
+<body>
+<div class="header"><a href="/" style="color:#fff;text-decoration:none">LAST MINUTE DEALS <span>HQ</span></a></div>
+<div class="container">
+<a href="/tours" class="back">&larr; All destinations</a>
+<h1>{heading}</h1>
+<p class="intro">{intro}</p>
+<div class="highlights">{highlight_tags}</div>
+<p class="slot-count">{slot_count_text}</p>
+<div class="slots">
+{slot_cards}
+</div>
+{other_destinations}
+</div>
+<div class="footer">Powered by Last Minute Deals HQ &middot; Secure payments by Stripe</div>
+</body>
+</html>"""
+
+
+def _fetch_tour_slots(query: str, limit: int = 50) -> list[dict]:
+    """Fetch slots matching a destination query (searches both city and country)."""
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not (sb_url and sb_secret):
+        return []
+    try:
+        hdrs = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        horizon = (datetime.now(timezone.utc) + timedelta(hours=168)).isoformat()
+        resp = requests.get(
+            f"{sb_url}/rest/v1/slots",
+            headers=hdrs,
+            params=[
+                ("order", "start_time.asc"),
+                ("start_time", f"gt.{now_iso}"),
+                ("start_time", f"lte.{horizon}"),
+                ("or", f"(location_city.ilike.%{query}%,location_country.ilike.%{query}%)"),
+                ("limit", limit),
+            ],
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        rows = resp.json()
+        result = []
+        for row in rows:
+            if row.get("raw"):
+                try:
+                    result.append(_sanitize_slot(json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"]))
+                    continue
+                except Exception:
+                    pass
+            result.append(_sanitize_slot(row))
+        return result
+    except Exception:
+        return []
+
+
+def _format_slot_card(slot: dict) -> str:
+    """Render a single slot as an HTML card for the tour landing page."""
+    from html import escape
+    name = escape(slot.get("service_name", "Experience")[:100])
+    supplier = escape(slot.get("business_name", "")[:80])
+    start_iso = slot.get("start_time", "")
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        formatted = dt.strftime("%b %d, %Y &middot; %I:%M %p UTC")
+    except Exception:
+        formatted = escape(start_iso[:16].replace("T", " ")) if start_iso else "TBD"
+    price = float(slot.get("our_price") or slot.get("price") or 0)
+    currency = (slot.get("currency") or "USD").upper()
+    sid = escape(slot.get("slot_id", ""))
+    city = escape(slot.get("location_city", ""))
+    dur = slot.get("duration_minutes")
+    dur_text = ""
+    if dur:
+        h, m = divmod(int(dur), 60)
+        dur_text = f" &middot; {h}h {m}m" if h else f" &middot; {m} min"
+    return (
+        f'<div class="slot-card">'
+        f'<div class="slot-info"><h3>{name}</h3>'
+        f'<div class="supplier">{supplier}</div>'
+        f'<div class="meta">{formatted}{dur_text}</div></div>'
+        f'<div class="slot-action">'
+        f'<div class="slot-price"><span class="currency">{currency}</span> {price:,.2f}</div>'
+        f'<a href="/book/{sid}" class="book-btn">View &amp; Book</a></div></div>'
+    )
+
+
+_TOURS_INDEX_CACHE: dict = {}  # {"html": str, "expires": float}
+_TOURS_INDEX_CACHE_TTL = 600  # 10 minutes
+
+
+@app.route("/tours", methods=["GET"])
+def tours_index():
+    """SEO index page listing all tour destinations with live slot counts."""
+    now = time.time()
+    cached = _TOURS_INDEX_CACHE.get("html")
+    if cached and _TOURS_INDEX_CACHE.get("expires", 0) > now:
+        return cached, 200, {"Content-Type": "text/html"}
+
+    cards = []
+    for slug, dest in _TOUR_DESTINATIONS.items():
+        slots = _fetch_tour_slots(dest["query"], limit=200)
+        count = len(slots)
+        highlights = ", ".join(dest["highlights"][:4])
+        count_text = f"{count} tours available now" if count else "Check back soon"
+        cards.append(
+            f'<a href="/tours/{slug}" class="dest-card">'
+            f'<h2>{dest["name"]}</h2>'
+            f'<div class="highlights">{highlights}</div>'
+            f'<div class="count">{count_text}</div></a>'
+        )
+    html = _TOURS_INDEX_HTML.format(destination_cards="\n".join(cards))
+    _TOURS_INDEX_CACHE["html"] = html
+    _TOURS_INDEX_CACHE["expires"] = now + _TOURS_INDEX_CACHE_TTL
+    return html, 200, {"Content-Type": "text/html"}
+
+
+@app.route("/tours/<slug>", methods=["GET"])
+def tours_destination(slug):
+    """SEO destination page showing live inventory with booking links."""
+    from html import escape
+    dest = _TOUR_DESTINATIONS.get(slug)
+    if dest:
+        query = dest["query"]
+        title = dest["title"]
+        meta_desc = dest["meta_desc"]
+        heading = title
+        intro = dest["intro"]
+        highlights = dest["highlights"]
+    else:
+        # Dynamic fallback for unlisted destinations
+        query = slug.replace("-", " ").title()
+        title = f"Last-Minute {query} Tours & Experiences"
+        meta_desc = f"Book last-minute tours and activities in {query}. Instant confirmation from local suppliers."
+        heading = title
+        intro = f"Discover available tours and activities in {query} with instant confirmation from local suppliers."
+        highlights = ["Tours", "Activities", "Experiences"]
+
+    slots = _fetch_tour_slots(query, limit=50)
+    highlight_tags = "".join(f'<span class="tag">{escape(h)}</span>' for h in highlights)
+    slot_count_text = f"{len(slots)} experience{'s' if len(slots) != 1 else ''} available now" if slots else ""
+
+    if slots:
+        slot_cards = "\n".join(_format_slot_card(s) for s in slots)
+    else:
+        slot_cards = '<div class="empty"><h2>No tours available right now</h2><p>Check back soon — inventory refreshes every 4 hours.</p></div>'
+
+    # Other destination links for internal linking
+    other = []
+    for s, d in _TOUR_DESTINATIONS.items():
+        if s != slug:
+            other.append(f'<a href="/tours/{s}">{d["name"]}</a>')
+    other_html = (
+        f'<div class="other-dests"><h2>Explore other destinations</h2>'
+        f'<div class="other-links">{"".join(other)}</div></div>'
+    )
+
+    # JSON-LD structured data for SEO
+    structured = ""
+    if slots:
+        items = []
+        for s in slots[:10]:
+            items.append(json.dumps({
+                "@type": "TouristTrip",
+                "name": s.get("service_name", ""),
+                "touristType": "Adventure",
+                "provider": {"@type": "Organization", "name": s.get("business_name", "")},
+                "offers": {
+                    "@type": "Offer",
+                    "price": str(s.get("our_price") or s.get("price") or 0),
+                    "priceCurrency": s.get("currency", "USD"),
+                    "availability": "https://schema.org/InStock",
+                    "url": f"https://api.lastminutedealshq.com/book/{s.get('slot_id', '')}",
+                },
+            }))
+        structured = (
+            '<script type="application/ld+json">'
+            + json.dumps({"@context": "https://schema.org", "@type": "ItemList",
+                          "name": title, "itemListElement": [json.loads(i) for i in items]})
+            + '</script>'
+        )
+
+    html = _TOURS_DEST_HTML.format(
+        title=escape(title), meta_desc=escape(meta_desc), slug=escape(slug),
+        heading=escape(heading), intro=escape(intro),
+        highlight_tags=highlight_tags, slot_count_text=slot_count_text,
+        slot_cards=slot_cards, other_destinations=other_html,
+        structured_data=structured,
+    )
+    return html, 200, {"Content-Type": "text/html"}
+
+
+# ── Book from Itinerary Endpoint ──────────────────────────────────────────────
+
+# Common words to skip during fuzzy matching
+_STOP_WORDS = frozenset(
+    "the a an in at on to of for and or with from by is are was were "
+    "this that it its my our your day days trip tour visit go see do "
+    "get take have been will can could would should".split()
+)
+
+
+def _fuzzy_match_slots(line: str, slots: list[dict], top_n: int = 3) -> list[dict]:
+    """Score slots against an itinerary line using keyword overlap."""
+    words = {w.lower() for w in line.split() if len(w) > 2 and w.lower() not in _STOP_WORDS}
+    if not words:
+        return []
+    scored = []
+    for s in slots:
+        name_words = {w.lower() for w in (s.get("service_name") or "").split() if len(w) > 2}
+        overlap = len(words & name_words)
+        if overlap > 0:
+            scored.append((overlap, s))
+    scored.sort(key=lambda x: -x[0])
+    return [s for _, s in scored[:top_n]]
+
+
+@app.route("/api/book_from_itinerary", methods=["POST"])
+def book_from_itinerary():
+    """
+    Accept raw itinerary text and return booking links for matching inventory.
+
+    Extracts destination mentions and activity keywords, matches against live
+    inventory, and returns structured results with booking page URLs.
+    """
+    data = request.get_json(silent=True) or {}
+    text = (data.get("itinerary") or data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Provide 'itinerary' or 'text' field with your itinerary."}), 400
+
+    # Build a lookup of known destination keywords → query strings
+    dest_keywords: dict[str, str] = {}
+    for dest in _TOUR_DESTINATIONS.values():
+        dest_keywords[dest["name"].lower()] = dest["query"]
+        dest_keywords[dest["query"].lower()] = dest["query"]
+    # Add specific cities from supplier directory
+    for sup in _SUPPLIER_DIR_STATIC:
+        for d in sup["destinations"]:
+            dest_keywords[d.lower()] = d
+
+    # Detect destinations mentioned in the text
+    text_lower = text.lower()
+    detected_queries: list[str] = []
+    seen: set[str] = set()
+    for keyword, query in sorted(dest_keywords.items(), key=lambda x: -len(x[0])):
+        if keyword in text_lower and query not in seen:
+            detected_queries.append(query)
+            seen.add(query)
+
+    if not detected_queries:
+        return jsonify({
+            "results": [],
+            "matched_count": 0,
+            "total_items": 0,
+            "note": "No recognized destinations found in itinerary. Try mentioning a city or country name.",
+            "available_destinations": sorted(set(d["name"] for d in _TOUR_DESTINATIONS.values())),
+        })
+
+    # Fetch inventory for detected destinations
+    all_slots: list[dict] = []
+    for q in detected_queries[:5]:
+        all_slots.extend(_fetch_tour_slots(q, limit=100))
+    # Deduplicate by slot_id
+    slot_map = {s["slot_id"]: s for s in all_slots if s.get("slot_id")}
+    unique_slots = list(slot_map.values())
+
+    # Parse itinerary into lines/items
+    import re
+    lines = [l.strip() for l in re.split(r'[\n,;]|(?:^|\n)\s*[-*\d.]+\s*', text) if l.strip()]
+    # Filter out lines that are just destination names
+    items = [l for l in lines if len(l) > 3 and l.lower() not in dest_keywords]
+    if not items:
+        items = lines[:10]
+
+    host = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
+    results = []
+    matched_count = 0
+
+    for item in items:
+        matches = _fuzzy_match_slots(item, unique_slots)
+        if matches:
+            matched_count += 1
+            results.append({
+                "itinerary_item": item,
+                "matched": True,
+                "slots": [{
+                    "slot_id": s.get("slot_id", ""),
+                    "service_name": s.get("service_name", ""),
+                    "business_name": s.get("business_name", ""),
+                    "start_time": s.get("start_time", ""),
+                    "price": float(s.get("our_price") or s.get("price") or 0),
+                    "currency": s.get("currency", "USD"),
+                    "booking_url": f"{host}/book/{s.get('slot_id', '')}",
+                } for s in matches],
+            })
+        else:
+            results.append({"itinerary_item": item, "matched": False, "slots": []})
+
+    return jsonify({
+        "results": results,
+        "matched_count": matched_count,
+        "total_items": len(items),
+        "destinations_detected": detected_queries,
+        "note": (
+            f"{matched_count} of {len(items)} itinerary items matched available inventory. "
+            "Click booking links to view details and reserve."
+            if matched_count else
+            "No matching activities found in current inventory. Try different activity names or check back later."
+        ),
+    })
 
 
 @app.route("/book/<slot_id>", methods=["GET"])
@@ -5991,17 +6496,12 @@ _MCP_TOOLS = [
     {
         "name": "search_slots",
         "description": (
-            "Search for last-minute available tours and activities. Returns real inventory "
-            "from 23 Bokun suppliers (Adi Tours - Nuba travel, All Washington View, "
-            "Arctic Adventures, Bicycle Roma, Boka Bliss, EgyExcursions, Hillborn Experiences, "
-            "Íshestar Riding Tours, Marvel Egypt Tours, Nefertiti Tours, O Turista Tours, "
-            "Perfect Day Tours, Pure Morocco Experience, REDRIB Experience, "
-            "Ramen Factory Kyoto, Sailing Windermere, The Photo Experience, TourTransfer Bucharest, "
-            "Tours El Chiquiz, Trivanzo Holidays, TUTU VIEW Ltd, Vakare Travel Service, "
-            "Zestro Bizlinks) via the OCTO open booking protocol. "
-            "Use city/category/hours_ahead/max_price to filter. "
-            "Slots are sorted by urgency (soonest first). "
-            "Call get_supplier_info first to see all available destinations."
+            "Search available last-minute tours, activities, and experiences worldwide. "
+            "Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt, "
+            "Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK, "
+            "China, and Mexico via the OCTO booking standard. Results sorted by urgency "
+            "(soonest first). Call this first when a user asks about tours. Follow up with "
+            "preview_slot for a booking link or book_slot to book directly."
         ),
         "annotations": {
             "readOnlyHint": True,
@@ -6108,6 +6608,37 @@ _MCP_TOOLS = [
                 "slot_id": {"type": "string", "description": "Slot ID from search_slots results."},
             },
             "required": ["slot_id"],
+        },
+    },
+    {
+        "name": "book_from_itinerary",
+        "description": (
+            "Convert a travel itinerary into real bookings. Accepts raw itinerary text "
+            "(natural language, bullet points, or structured), extracts destinations and "
+            "activity mentions, and matches them against live inventory. Returns booking "
+            "page URLs for each matched activity. Use this when a user has an itinerary "
+            "and wants to book the activities they can. Not all items will match — the "
+            "response shows which matched and which didn't."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "itinerary": {
+                    "type": "string",
+                    "description": (
+                        "Raw itinerary text. Can be natural language, bullet points, or structured. "
+                        "Must mention at least one destination (city or country name). "
+                        "Example: '3 days in Iceland: glacier hike, northern lights tour, horse riding'"
+                    ),
+                },
+            },
+            "required": ["itinerary"],
         },
     },
 ]
@@ -6308,6 +6839,20 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
             "currency": slot.get("currency", "USD"),
             "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
         }
+
+    elif name == "book_from_itinerary":
+        text = arguments.get("itinerary") or arguments.get("text") or ""
+        if not text.strip():
+            return {"error": "itinerary text is required."}
+        try:
+            r = requests.post(
+                f"{base}/api/book_from_itinerary",
+                headers=hdrs, json={"itinerary": text}, timeout=15,
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
 
     else:
         return {"error": f"Unknown tool: {name}"}
@@ -6661,6 +7206,37 @@ def _start_mcp_thread():
             "currency": slot.get("currency", "USD"),
             "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
         }
+
+    @mcp.tool()
+    def book_from_itinerary(itinerary: str) -> dict:
+        """
+        Convert a travel itinerary into real bookings.
+
+        Accepts raw itinerary text (natural language, bullet points, or structured),
+        extracts destination and activity mentions, and matches them against live
+        inventory. Returns booking page URLs for each matched activity.
+
+        When to use: Call this when a user has a travel plan and wants to book
+        the activities they can. Not all items will match — the response shows
+        which matched and which didn't.
+
+        Args:
+            itinerary: Raw itinerary text mentioning destinations and activities.
+                       Example: "3 days in Iceland: glacier hike, northern lights, horse riding"
+
+        Returns:
+            results (list of matched/unmatched items with booking URLs),
+            matched_count, total_items, destinations_detected.
+        """
+        try:
+            r = _mcp_req.post(
+                f"{BOOKING_API}/api/book_from_itinerary",
+                headers=_HDRS, json={"itinerary": itinerary}, timeout=15,
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
 
     def _run():
         uvicorn.run(mcp.sse_app(), host="127.0.0.1", port=MCP_INTERNAL_PORT, log_level="warning")

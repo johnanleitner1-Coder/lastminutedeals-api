@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-22 (v36 — Optimized all MCP tool descriptions for Glama TDQS scoring: rewrote docstrings across both MCP servers targeting 6 TDQS dimensions, removed 200-word supplier list bloat from search_slots, added "When to use" cross-references and return schemas, added polling guidance to get_booking_status, added 3 missing suppliers to remote MCP get_supplier_info. Previous: v35 — B-160/161/162 FIXED.)
+**Last updated:** 2026-04-22 (v37 — Added SEO tour landing pages (GET /tours, GET /tours/{destination}) with live inventory, JSON-LD structured data, and internal linking across 15 destinations. Added POST /api/book_from_itinerary endpoint for itinerary-to-booking conversion. Added book_from_itinerary MCP tool to both embedded and remote MCP servers. Added 10-min cache on tours index. Previous: v36 — TDQS optimization.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -71,6 +71,11 @@
 │  Human booking page:                                                │
 │  GET /book/{slot_id}         — HTML booking page (slot details+form)│
 │  POST /book/{slot_id}/checkout — form POST → Stripe redirect       │
+│                                                                     │
+│  SEO tour pages:                                                    │
+│  GET /tours                  — destination index (15 destinations)  │
+│  GET /tours/{slug}           — destination page (live inventory)    │
+│  POST /api/book_from_itinerary — itinerary → booking link matcher  │
 │                                                                     │
 │  Cancellation entry points:                                         │
 │  DELETE /bookings/{id}       — API cancel (Stripe + OCTO + retry)  │

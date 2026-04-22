@@ -633,6 +633,34 @@ async def get_supplier_info() -> dict:
     }
 
 
+@mcp.tool()
+async def book_from_itinerary(itinerary: str) -> dict:
+    """
+    Convert a travel itinerary into real bookings.
+
+    Accepts raw itinerary text (natural language, bullet points, or structured),
+    extracts destination and activity mentions, and matches them against live
+    inventory. Returns booking page URLs for each matched activity.
+
+    When to use: Call this when a user has an itinerary or travel plan and wants
+    to book the activities they can. Not all items will match — the response
+    shows which matched and which didn't.
+
+    Args:
+        itinerary: Raw itinerary text. Must mention at least one destination
+                   (city or country name).
+                   Example: "3 days in Iceland: glacier hike, northern lights, horse riding"
+
+    Returns:
+        results (list of matched/unmatched items with booking URLs),
+        matched_count, total_items, destinations_detected.
+    """
+    try:
+        return await _api_post("/api/book_from_itinerary", {"itinerary": itinerary})
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @mcp.prompt()
 def find_experiences(city: str, hours_ahead: str = "72") -> str:
     """
