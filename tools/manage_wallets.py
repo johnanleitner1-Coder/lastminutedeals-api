@@ -301,7 +301,7 @@ def create_topup_session(wallet_id: str, amount_cents: int) -> str:
         raise RuntimeError("STRIPE_SECRET_KEY not configured")
 
     landing_url = os.getenv("LANDING_PAGE_URL", "https://lastminutedealshq.com").rstrip("/")
-    api_base    = os.getenv("BOOKING_SERVER_HOST", "https://web-production-dc74b.up.railway.app").rstrip("/")
+    api_base    = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
 
     # Ensure Stripe customer exists for this wallet.
     cid = wlt.get("stripe_customer_id", "")

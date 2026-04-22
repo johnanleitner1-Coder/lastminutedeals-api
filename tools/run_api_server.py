@@ -3936,12 +3936,12 @@ def mcp_endpoint():
                 "properties": {
                     "lmd_api_key": {
                         "type": "string",
-                        "description": "API key for making bookings. Get yours free at https://web-production-dc74b.up.railway.app/api/keys/register (POST, no body needed).",
+                        "description": "API key for making bookings. Get yours free at https://api.lastminutedealshq.com/api/keys/register (POST, no body needed).",
                     },
                     "booking_api_url": {
                         "type": "string",
                         "description": "Booking API base URL. Leave blank to use the default production server.",
-                        "default": "https://web-production-dc74b.up.railway.app",
+                        "default": "https://api.lastminutedealshq.com",
                     },
                 },
                 "required": [],

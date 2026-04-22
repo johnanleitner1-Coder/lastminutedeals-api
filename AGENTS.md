@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Agent API
 
-**Base URL:** `https://web-production-dc74b.up.railway.app`
+**Base URL:** `https://api.lastminutedealshq.com`
 **Landing page:** `https://lastminutedealshq.com`
 
 You are talking to a last-minute booking API. It has live inventory of available slots across wellness, experiences, events, and beauty — all starting within 72 hours. You can search inventory, get a price quote, and execute a booking end-to-end. Payment is handled for you.
@@ -405,7 +405,7 @@ Example:
 ```python
 import requests
 
-BASE = "https://web-production-dc74b.up.railway.app"
+BASE = "https://api.lastminutedealshq.com"
 
 # 1. Get API key (once)
 key = requests.post(f"{BASE}/api/keys/register",

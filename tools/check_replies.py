@@ -24,7 +24,7 @@ except ImportError:
     print("ERROR: requests not installed.")
     sys.exit(1)
 
-API_BASE = os.getenv("BOOKING_API_URL", "https://web-production-dc74b.up.railway.app")
+API_BASE = os.getenv("BOOKING_API_URL", "https://api.lastminutedealshq.com")
 API_KEY  = os.getenv("LMD_WEBSITE_API_KEY", "")
 
 

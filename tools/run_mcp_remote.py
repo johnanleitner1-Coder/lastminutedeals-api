@@ -22,7 +22,7 @@ Add to %APPDATA%\\Claude\\claude_desktop_config.json:
 claude mcp add lastminutedeals --url https://api.lastminutedealshq.com/mcp
 
 ── Environment variables ────────────────────────────────────────────────────
-  BOOKING_API_URL        — Railway API base URL (e.g. https://web-production-dc74b.up.railway.app)
+  BOOKING_API_URL        — Railway API base URL (e.g. https://api.lastminutedealshq.com)
   LMD_WEBSITE_API_KEY    — Internal API key for the Railway booking API
   PORT                   — Server port (Railway sets this automatically)
 """
@@ -37,7 +37,7 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-BOOKING_API = (os.getenv("BOOKING_API_URL") or "https://web-production-dc74b.up.railway.app").rstrip("/")
+BOOKING_API = (os.getenv("BOOKING_API_URL") or "https://api.lastminutedealshq.com").rstrip("/")
 API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
 HDRS        = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PORT        = int(os.getenv("PORT", "8080"))
@@ -398,7 +398,7 @@ async def preview_slot(slot_id: str) -> dict:
         data = None
     if not data or not data.get("available"):
         return {"error": "Slot not found or no longer available."}
-    host = BOOKING_API.replace("web-production-dc74b.up.railway.app", "api.lastminutedealshq.com")
+    host = BOOKING_API.replace("web-production-dc74b.up.railway.app", "api.lastminutedealshq.com")  # no-op when BOOKING_API already uses custom domain
     return {
         "booking_page_url": f"{host}/book/{slot_id}",
         "service_name": data.get("service_name", ""),
