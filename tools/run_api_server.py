@@ -3514,8 +3514,17 @@ h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
 </html>"""
 
 
+# Country name → ISO code mapping for Supabase queries (location_country stores ISO codes)
+_COUNTRY_ISO = {
+    "iceland": "IS", "egypt": "EG", "italy": "IT", "portugal": "PT",
+    "tanzania": "TZ", "morocco": "MA", "japan": "JP", "turkey": "TR",
+    "montenegro": "ME", "finland": "FI", "china": "CN", "mexico": "MX",
+    "united kingdom": "GB", "romania": "RO", "united states": "US",
+}
+
+
 def _fetch_tour_slots(query: str, limit: int = 50) -> list[dict]:
-    """Fetch slots matching a destination query (searches both city and country)."""
+    """Fetch slots matching a destination query (searches city name and country ISO code)."""
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if not (sb_url and sb_secret):
@@ -3524,6 +3533,28 @@ def _fetch_tour_slots(query: str, limit: int = 50) -> list[dict]:
         hdrs = {"apikey": sb_secret, "Authorization": f"Bearer {sb_secret}"}
         now_iso = datetime.now(timezone.utc).isoformat()
         horizon = (datetime.now(timezone.utc) + timedelta(hours=168)).isoformat()
+
+        # Build OR filter: match city name OR country ISO code
+        # location_country stores 2-letter ISO codes (IS, EG, etc.), not full names
+        or_parts = [f"location_city.ilike.%{query}%"]
+        iso = _COUNTRY_ISO.get(query.lower())
+        if iso:
+            or_parts.append(f"location_country.eq.{iso}")
+        else:
+            or_parts.append(f"location_country.ilike.%{query}%")
+        # Also search known cities for this destination
+        dest_cfg = None
+        for d in _TOUR_DESTINATIONS.values():
+            if d["query"].lower() == query.lower():
+                dest_cfg = d
+                break
+        if dest_cfg:
+            for sup in _SUPPLIER_DIR_STATIC:
+                for dest_name in sup["destinations"]:
+                    if dest_name.lower() != query.lower() and query.lower() in [dn.lower() for dn in sup["destinations"]]:
+                        or_parts.append(f"location_city.ilike.%{dest_name}%")
+
+        or_filter = f"({','.join(or_parts)})"
         resp = requests.get(
             f"{sb_url}/rest/v1/slots",
             headers=hdrs,
@@ -3531,7 +3562,7 @@ def _fetch_tour_slots(query: str, limit: int = 50) -> list[dict]:
                 ("order", "start_time.asc"),
                 ("start_time", f"gt.{now_iso}"),
                 ("start_time", f"lte.{horizon}"),
-                ("or", f"(location_city.ilike.%{query}%,location_country.ilike.%{query}%)"),
+                ("or", or_filter),
                 ("limit", limit),
             ],
             timeout=10,
