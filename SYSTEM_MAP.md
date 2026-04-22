@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-22 (v35 — B-160 FIXED: Smithery Cloudflare Error 1000 causing 30% failure rate, 3-day traffic flatline. Replaced Railway subdomain with custom domain in 6 files. Re-published Smithery to proxy directly to embedded MCP. B-161 FIXED: Pipeline step skip left new vendors with 0 slots. B-162 FIXED: 88 stale pending_payment bookings cleaned up. Amazing Global Travel removed (was duplicate reseller). Vendor count now 23. Previous: v34.)
+**Last updated:** 2026-04-22 (v36 — Optimized all MCP tool descriptions for Glama TDQS scoring: rewrote docstrings across both MCP servers targeting 6 TDQS dimensions, removed 200-word supplier list bloat from search_slots, added "When to use" cross-references and return schemas, added polling guidance to get_booking_status, added 3 missing suppliers to remote MCP get_supplier_info. Previous: v35 — B-160/161/162 FIXED.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
