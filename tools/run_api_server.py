@@ -7647,7 +7647,7 @@ def _gyg_product_exists(product_id: str) -> bool:
             f"{sb_url}/rest/v1/slots",
             headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
             params=[("booking_url", f'like.%"product_id": "{product_id}"%'),
-                    ("limit", 1), ("select", "id")],
+                    ("limit", 1), ("select", "slot_id")],
             timeout=5,
         )
         return r.status_code == 200 and len(r.json()) > 0
@@ -7973,6 +7973,13 @@ def gyg_reserve():
         req_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
     except ValueError:
         return _gyg_err("VALIDATION_FAILURE", "Invalid dateTime format")
+
+    # Check if the requested date is excluded (GYG "not available" dates)
+    excluded = _GYG_EXCLUDED_DATES.get(product_id, set())
+    if excluded:
+        local_date = req_dt.strftime("%Y-%m-%d")
+        if local_date in excluded:
+            return _gyg_err("NO_AVAILABILITY", "No availability on this date")
 
     # Search ±2h window to handle timezone offsets between GYG and our UTC storage
     slots = _gyg_slots_by_product(
