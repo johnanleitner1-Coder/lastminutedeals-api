@@ -7534,18 +7534,36 @@ def _gyg_auth(f):
     """HTTP Basic Auth check for GYG inbound requests."""
     @_wraps(f)
     def _wrapped(*args, **kwargs):
+        # Capture every inbound GYG request for debugging (before auth check)
+        _GYG_DEBUG["last_auth"] = {
+            "path": request.path,
+            "method": request.method,
+            "user_agent": request.headers.get("User-Agent", ""),
+            "has_auth_header": "Authorization" in request.headers,
+            "auth_username": getattr(request.authorization, "username", None) if request.authorization else None,
+            "expected_username": _GYG_INBOUND_USER,
+            "creds_configured": bool(_GYG_INBOUND_USER and _GYG_INBOUND_PASS),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        print(f"[GYG-AUTH] {request.method} {request.path} "
+              f"ua={request.headers.get('User-Agent', '?')[:40]} "
+              f"auth_user={getattr(request.authorization, 'username', None) if request.authorization else 'NONE'}")
         if not _GYG_INBOUND_USER or not _GYG_INBOUND_PASS:
+            _GYG_DEBUG["last_auth"]["result"] = "NO_CONFIG"
             return jsonify({"errorCode": "INTERNAL_SYSTEM_FAILURE",
                             "errorMessage": "GYG credentials not configured"}), 500
         auth = request.authorization
         if not auth or not auth.username or not auth.password:
+            _GYG_DEBUG["last_auth"]["result"] = "NO_CREDENTIALS_SENT"
             return (jsonify({"errorCode": "AUTHORIZATION_FAILURE",
                             "errorMessage": "Authentication required"}),
                     401,
                     {"WWW-Authenticate": 'Basic realm="GYG Supplier API"'})
         if auth.username != _GYG_INBOUND_USER or auth.password != _GYG_INBOUND_PASS:
+            _GYG_DEBUG["last_auth"]["result"] = f"MISMATCH user={auth.username}"
             return jsonify({"errorCode": "AUTHORIZATION_FAILURE",
                            "errorMessage": "Invalid credentials"}), 401
+        _GYG_DEBUG["last_auth"]["result"] = "OK"
         return f(*args, **kwargs)
     return _wrapped
 
