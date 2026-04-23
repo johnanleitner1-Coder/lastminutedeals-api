@@ -318,6 +318,57 @@
       "contract_status": "confirmed",
       "contract_date": "2026-04-22",
       "notes": "Accepted 22 Apr 2026. Rome-based — Fiat 500 tours, golf cart tours, food tours. 10% commission across all types."
+    },
+
+    "VIDABOA": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 39712,
+      "city": "Porto",
+      "country": "PT",
+      "products": 9,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-23",
+      "notes": "Accepted 23 Apr 2026. Porto/Douro Valley — wine tours, private tours. 20% commission across all types."
+    },
+
+    "Gallo Tour": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 107408,
+      "city": "Rome",
+      "country": "IT",
+      "products": 5,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "notes": "Accepted 22 Apr 2026. Rome — golf cart tours. 20% commission across all types."
+    },
+
+    "Food Activity Japan": {
+      "pricing_model": "commission",
+      "commission_pct": 0.10,
+      "commission_by_type": {
+        "experiences": 0.10,
+        "extras": 0.10,
+        "pick_up": 0.10
+      },
+      "bokun_vendor_id": 102335,
+      "city": "Osaka",
+      "country": "JP",
+      "products": 6,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "notes": "Accepted 22 Apr 2026. Osaka — matcha making, food experiences. 10% commission across all types."
     }
   }
 }

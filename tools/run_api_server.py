@@ -895,6 +895,9 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "Blue Dolphin Sailing", "destinations": ["Guanacaste", "Costa Rica"],                               "platform": "Bokun"},
     {"name": "EGYPT GATE",           "destinations": ["Cairo", "Egypt"],                                          "platform": "Bokun"},
     {"name": "Imperio tours",       "destinations": ["Rome", "Italy"],                                            "platform": "Bokun"},
+    {"name": "VIDABOA",              "destinations": ["Porto", "Douro Valley", "Portugal"],                         "platform": "Bokun"},
+    {"name": "Gallo Tour",           "destinations": ["Rome", "Italy"],                                            "platform": "Bokun"},
+    {"name": "Food Activity Japan",  "destinations": ["Osaka", "Japan"],                                           "platform": "Bokun"},
 ]
 
 
