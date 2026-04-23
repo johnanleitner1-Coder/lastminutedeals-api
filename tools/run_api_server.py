@@ -7766,6 +7766,11 @@ def gyg_get_availabilities():
         start = s.get("start_time", "")
         if not start:
             continue
+        # GYG requires offset notation (±HH:MM), not "Z"
+        if start.endswith("Z"):
+            start = start[:-1] + "+00:00"
+        if "T" not in start:
+            start = f"{start}T00:00:00+00:00"
         currency = (s.get("currency") or "USD").upper()
         price_c  = _gyg_price_cents(s.get("our_price") or s.get("price") or 0, currency)
         spots = 10
@@ -7775,7 +7780,7 @@ def gyg_get_availabilities():
             pass
 
         entry = {
-            "dateTime":  start if "T" in start else f"{start}T00:00:00+00:00",
+            "dateTime":  start,
             "productId": product_id,
             "vacancies": min(max(spots, 0), 5000),
         }
