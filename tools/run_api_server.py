@@ -7738,6 +7738,7 @@ def _gyg_price_cents(price_val, currency: str) -> int:
 
 # ── GET /gyg/1/get-availabilities/ ───────────────────────────────────────────
 
+@app.route("/1/get-availabilities/", methods=["GET"])
 @app.route("/gyg/1/get-availabilities/", methods=["GET"])
 @_gyg_auth
 def gyg_get_availabilities():
@@ -7829,6 +7830,7 @@ def gyg_debug():
 
 # ── POST /gyg/1/reserve/ ─────────────────────────────────────────────────────
 
+@app.route("/1/reserve/", methods=["POST"])
 @app.route("/gyg/1/reserve/", methods=["POST"])
 @_gyg_auth
 def gyg_reserve():
@@ -7935,6 +7937,7 @@ def gyg_reserve():
 
 # ── POST /gyg/1/cancel-reservation/ ──────────────────────────────────────────
 
+@app.route("/1/cancel-reservation/", methods=["POST"])
 @app.route("/gyg/1/cancel-reservation/", methods=["POST"])
 @_gyg_auth
 def gyg_cancel_reservation():
@@ -7962,6 +7965,7 @@ def gyg_cancel_reservation():
 
 # ── POST /gyg/1/book/ ────────────────────────────────────────────────────────
 
+@app.route("/1/book/", methods=["POST"])
 @app.route("/gyg/1/book/", methods=["POST"])
 @_gyg_auth
 def gyg_book():
@@ -8042,6 +8046,7 @@ def gyg_book():
 
 # ── POST /gyg/1/cancel-booking/ ──────────────────────────────────────────────
 
+@app.route("/1/cancel-booking/", methods=["POST"])
 @app.route("/gyg/1/cancel-booking/", methods=["POST"])
 @_gyg_auth
 def gyg_cancel_booking():
@@ -8077,6 +8082,7 @@ def gyg_cancel_booking():
 
 # ── POST /gyg/1/notify/ ──────────────────────────────────────────────────────
 
+@app.route("/1/notify/", methods=["POST"])
 @app.route("/gyg/1/notify/", methods=["POST"])
 @_gyg_auth
 def gyg_notify():
