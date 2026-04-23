@@ -7536,6 +7536,21 @@ _GYG_INBOUND_PASS = os.getenv("GYG_INBOUND_PASSWORD", "").strip()
 # traffic regardless of this flag.
 _GYG_TEST_MODE = os.getenv("GYG_TEST_MODE", "").strip().lower() in ("true", "1", "yes")
 
+# ── GYG Excluded Dates ────────────────────────────────────────────────────────
+# Dates to exclude from get-availabilities responses, per product.
+# Must match the "not available" dates configured in GYG's portal.
+# Format: "product_id:YYYY-MM-DD,YYYY-MM-DD;product_id:YYYY-MM-DD,YYYY-MM-DD"
+# Example: GYG_EXCLUDED_DATES=969081:2026-04-26,2026-04-27
+_GYG_EXCLUDED_DATES: dict[str, set[str]] = {}
+_gyg_excl_raw = os.getenv("GYG_EXCLUDED_DATES", "").strip()
+if _gyg_excl_raw:
+    for part in _gyg_excl_raw.split(";"):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        pid, dates_str = part.split(":", 1)
+        _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
+
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
     """Detect test traveler data — permanent safety net against fake bookings."""
@@ -7843,6 +7858,25 @@ def gyg_get_availabilities():
     # If no slots found for this date range, check if product exists at all
     if not slots and not _gyg_product_exists(product_id):
         return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
+
+    # Filter out dates marked as "not available" in GYG portal config
+    excluded = _GYG_EXCLUDED_DATES.get(product_id, set())
+    if excluded:
+        # Use the request timezone to determine local date for each slot
+        req_tz = from_parsed.tzinfo
+        filtered = []
+        for s in slots:
+            st = s.get("start_time", "")
+            if not st:
+                continue
+            try:
+                slot_dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                local_date = slot_dt.astimezone(req_tz).strftime("%Y-%m-%d")
+                if local_date not in excluded:
+                    filtered.append(s)
+            except (ValueError, TypeError):
+                filtered.append(s)
+        slots = filtered
 
     avails = []
     for s in slots:
