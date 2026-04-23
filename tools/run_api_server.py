@@ -7529,6 +7529,31 @@ _GYG_DEBUG: dict = {}          # last request/response capture for debugging
 _GYG_INBOUND_USER = os.getenv("GYG_INBOUND_USERNAME", "").strip()
 _GYG_INBOUND_PASS = os.getenv("GYG_INBOUND_PASSWORD", "").strip()
 
+# ── GYG Test Mode ─────────────────────────────────────────────────────────────
+# When GYG_TEST_MODE=true, reserve/book endpoints return mock responses without
+# calling real OCTO APIs. Enable this BEFORE running GYG's self-testing tool.
+# Additional safety: traveler names containing "test" are always treated as test
+# traffic regardless of this flag.
+_GYG_TEST_MODE = os.getenv("GYG_TEST_MODE", "").strip().lower() in ("true", "1", "yes")
+
+
+def _gyg_is_test_traveler(travelers: list) -> bool:
+    """Detect test traveler data — permanent safety net against fake bookings."""
+    _TEST_PATTERNS = {"test", "dummy", "fake", "sample", "example", "qa"}
+    for t in travelers:
+        first = (t.get("firstName") or "").strip().lower()
+        last  = (t.get("lastName") or "").strip().lower()
+        email = (t.get("email") or "").strip().lower()
+        # Check name parts against test patterns
+        for part in (first, last):
+            if part in _TEST_PATTERNS:
+                return True
+        # Check email domain/prefix
+        if email and ("@test." in email or email.startswith("test@")
+                      or "@example." in email or "+test" in email):
+            return True
+    return False
+
 
 def _gyg_auth(f):
     """HTTP Basic Auth check for GYG inbound requests."""
@@ -7958,15 +7983,35 @@ def gyg_reserve():
     except (ValueError, TypeError):
         pass
 
+    ref = f"LMDGYG-{uuid.uuid4().hex[:12].upper()}"
+    exp = datetime.now(timezone.utc) + timedelta(minutes=60)
+
+    # ── Test mode: return mock reservation without calling real OCTO API ──
+    if _GYG_TEST_MODE:
+        mock_uuid = f"test-{uuid.uuid4().hex[:16]}"
+        _GYG_RESERVATIONS[ref] = {
+            "octo_uuid":   mock_uuid,
+            "slot_id":     match.get("slot_id", ""),
+            "booking_url": match["booking_url"],
+            "gyg_ref":     gyg_ref,
+            "product_id":  product_id,
+            "date_time":   date_time,
+            "qty":         qty,
+            "expires_at":  exp.isoformat(),
+            "is_test":     True,
+        }
+        print(f"[GYG-TEST] Mock reserve: {ref} (test mode, no OCTO call)")
+        return jsonify({"data": {
+            "reservationReference":  ref,
+            "reservationExpiration": exp.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+        }}), 200
+
     # Execute OCTO reservation (hold only — no confirm yet)
     octo_uuid, err = _gyg_octo_reserve(match, qty)
     if err:
         code = "NO_AVAILABILITY" if err == "NO_AVAILABILITY" else "INTERNAL_SYSTEM_FAILURE"
         msg  = "Slot no longer available on supplier" if err == "NO_AVAILABILITY" else err
         return _gyg_err(code, msg)
-
-    ref = f"LMDGYG-{uuid.uuid4().hex[:12].upper()}"
-    exp = datetime.now(timezone.utc) + timedelta(minutes=60)
 
     _GYG_RESERVATIONS[ref] = {
         "octo_uuid":   octo_uuid,
@@ -7977,6 +8022,7 @@ def gyg_reserve():
         "date_time":   date_time,
         "qty":         qty,
         "expires_at":  exp.isoformat(),
+        "is_test":     False,
     }
     print(f"[GYG] Reserved: {ref} -> OCTO {octo_uuid} "
           f"slot={match.get('slot_id', '')} qty={qty}")
@@ -8004,6 +8050,10 @@ def gyg_cancel_reservation():
     res = _GYG_RESERVATIONS.pop(ref, None)
     if not res:
         return _gyg_err("INVALID_RESERVATION", f"Unknown reservation: {ref}")
+
+    if res.get("is_test"):
+        print(f"[GYG-TEST] Mock reservation cancelled: {ref}")
+        return jsonify({"data": {}}), 200
 
     burl = json.loads(res["booking_url"])
     ok, err = _gyg_octo_cancel(res["octo_uuid"], burl)
@@ -8044,12 +8094,10 @@ def gyg_book():
     if not res:
         return _gyg_err("INVALID_RESERVATION", f"Unknown reservation: {res_ref}")
 
-    # Confirm the held OCTO reservation with traveler contact details
-    burl = json.loads(res["booking_url"])
-    booking_data, err = _gyg_octo_confirm(res["octo_uuid"], burl, travelers[0])
-    if err:
-        _GYG_RESERVATIONS.pop(res_ref, None)
-        return _gyg_err("INTERNAL_SYSTEM_FAILURE", err)
+    # ── Test detection: test mode OR test traveler OR reservation flagged as test ──
+    is_test = _GYG_TEST_MODE or res.get("is_test") or _gyg_is_test_traveler(travelers)
+    if is_test and not res.get("is_test"):
+        print(f"[GYG-TEST] Test traveler detected in book request — blocking OCTO confirm")
 
     # Generate booking reference (max 25 alphanumeric chars per GYG spec)
     bk_ref = f"LMD{uuid.uuid4().hex[:10].upper()}"
@@ -8072,6 +8120,32 @@ def gyg_book():
             "ticketCodeType": "TEXT",
         })
 
+    if is_test:
+        # ── Test mode: return mock booking without calling real OCTO API ──
+        _GYG_BOOKINGS[bk_ref] = {
+            "octo_uuid":    res["octo_uuid"],
+            "slot_id":      res.get("slot_id", ""),
+            "booking_url":  res["booking_url"],
+            "gyg_ref":      gyg_ref,
+            "product_id":   product_id,
+            "date_time":    res.get("date_time", ""),
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            "is_test":      True,
+        }
+        _GYG_RESERVATIONS.pop(res_ref, None)
+        print(f"[GYG-TEST] Mock book: {bk_ref} (no OCTO confirm)")
+        return jsonify({"data": {
+            "bookingReference": bk_ref,
+            "tickets":          tickets,
+        }}), 200
+
+    # Confirm the held OCTO reservation with traveler contact details
+    burl = json.loads(res["booking_url"])
+    booking_data, err = _gyg_octo_confirm(res["octo_uuid"], burl, travelers[0])
+    if err:
+        _GYG_RESERVATIONS.pop(res_ref, None)
+        return _gyg_err("INTERNAL_SYSTEM_FAILURE", err)
+
     # Persist booking mapping
     octo_uuid = (booking_data.get("uuid") or booking_data.get("id")
                  or res["octo_uuid"])
@@ -8083,6 +8157,7 @@ def gyg_book():
         "product_id":   product_id,
         "date_time":    res.get("date_time", ""),
         "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        "is_test":      False,
     }
     _GYG_RESERVATIONS.pop(res_ref, None)
 
@@ -8121,6 +8196,11 @@ def gyg_cancel_booking():
             return _gyg_err("BOOKING_IN_PAST", "Booking date has already passed")
     except (ValueError, KeyError):
         pass
+
+    if bk.get("is_test"):
+        _GYG_BOOKINGS.pop(bk_ref, None)
+        print(f"[GYG-TEST] Mock booking cancelled: {bk_ref}")
+        return jsonify({"data": {}}), 200
 
     burl = json.loads(bk["booking_url"])
     ok, err = _gyg_octo_cancel(bk["octo_uuid"], burl)
