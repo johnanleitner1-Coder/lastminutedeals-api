@@ -7596,6 +7596,25 @@ def _gyg_cleanup_expired():
         _GYG_BOOKINGS.pop(ref, None)
 
 
+def _gyg_product_exists(product_id: str) -> bool:
+    """Check if any slot exists for this product_id (no date filter)."""
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_key = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_key:
+        return False
+    try:
+        r = requests.get(
+            f"{sb_url}/rest/v1/slots",
+            headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+            params=[("booking_url", f'like.%"product_id": "{product_id}"%'),
+                    ("limit", 1), ("select", "id")],
+            timeout=5,
+        )
+        return r.status_code == 200 and len(r.json()) > 0
+    except Exception:
+        return False
+
+
 def _gyg_slots_by_product(product_id: str, from_iso: str, to_iso: str) -> list[dict]:
     """Query Supabase for slots whose booking_url contains a given OCTO product_id."""
     sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -7796,6 +7815,10 @@ def gyg_get_availabilities():
         to_parsed.astimezone(timezone.utc).isoformat(),
     )
 
+    # If no slots found for this date range, check if product exists at all
+    if not slots and not _gyg_product_exists(product_id):
+        return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
+
     avails = []
     for s in slots:
         start = s.get("start_time", "")
@@ -7868,6 +7891,14 @@ def gyg_reserve():
     if not date_time or not items:
         return _gyg_err("VALIDATION_FAILURE", "Missing dateTime or bookingItems")
 
+    # Validate ticket categories — we only support categories present in our pricing
+    _SUPPORTED_CATEGORIES = {"ADULT"}
+    for it in items:
+        cat = it.get("category", "")
+        if cat and cat not in _SUPPORTED_CATEGORIES:
+            return _gyg_err("INVALID_TICKET_CATEGORY",
+                            f"Unsupported category: {cat}")
+
     # Total pax (GROUP category: count × groupSize)
     qty = 0
     for it in items:
@@ -7890,6 +7921,9 @@ def gyg_reserve():
         (req_dt + timedelta(hours=2)).isoformat(),
     )
     if not slots:
+        # Distinguish invalid product from no availability
+        if not _gyg_product_exists(product_id):
+            return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
         return _gyg_err("NO_AVAILABILITY", "No availability found")
 
     # Match by minute (Time Point products)
@@ -7919,7 +7953,7 @@ def gyg_reserve():
     try:
         avail_spots = int(match.get("spots_open", 999))
         if avail_spots < qty:
-            return _gyg_err("NO_AVAILABILITY",
+            return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
                             f"Only {avail_spots} spots available, {qty} requested")
     except (ValueError, TypeError):
         pass
