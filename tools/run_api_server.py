@@ -3798,24 +3798,65 @@ def tours_destination(slug):
     structured = ""
     if slots:
         items = []
-        for s in slots[:10]:
-            items.append(json.dumps({
-                "@type": "TouristTrip",
+        for idx, s in enumerate(slots[:10], 1):
+            price_val = s.get("our_price") or s.get("price") or 0
+            currency_val = (s.get("currency") or "USD").upper()
+            city = s.get("location_city", "")
+            country = s.get("location_country", "")
+            start = s.get("start_time", "")
+            end = s.get("end_time", "")
+            dur = s.get("duration_minutes")
+            sid = s.get("slot_id", "")
+            cat = s.get("category", "experiences")
+            # Build Event item (Google Things to Do prefers Event)
+            item = {
+                "@type": "Event",
                 "name": s.get("service_name", ""),
-                "touristType": "Adventure",
-                "provider": {"@type": "Organization", "name": s.get("business_name", "")},
+                "description": f"{s.get('service_name', '')} by {s.get('business_name', '')} in {city}",
+                "organizer": {"@type": "Organization", "name": s.get("business_name", "")},
+                "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+                "eventStatus": "https://schema.org/EventScheduled",
                 "offers": {
                     "@type": "Offer",
-                    "price": str(s.get("our_price") or s.get("price") or 0),
-                    "priceCurrency": s.get("currency", "USD"),
+                    "price": str(price_val),
+                    "priceCurrency": currency_val,
                     "availability": "https://schema.org/InStock",
-                    "url": f"https://api.lastminutedealshq.com/book/{s.get('slot_id', '')}",
+                    "validFrom": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    "url": f"https://api.lastminutedealshq.com/book/{sid}",
                 },
-            }))
+            }
+            if start:
+                item["startDate"] = start
+            if end:
+                item["endDate"] = end
+            elif dur and start:
+                try:
+                    dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    item["endDate"] = (dt + timedelta(minutes=int(dur))).isoformat()
+                except Exception:
+                    pass
+            if dur:
+                h, m = divmod(int(dur), 60)
+                item["duration"] = f"PT{h}H{m}M" if h else f"PT{m}M"
+            if city:
+                loc = {"@type": "Place", "name": city, "address": {"@type": "PostalAddress", "addressLocality": city}}
+                if country:
+                    loc["address"]["addressCountry"] = country
+                item["location"] = loc
+            items.append(item)
+        ld_json = {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "name": title,
+            "numberOfItems": len(items),
+            "itemListElement": [
+                {"@type": "ListItem", "position": i + 1, "item": item}
+                for i, item in enumerate(items)
+            ],
+        }
         structured = (
             '<script type="application/ld+json">'
-            + json.dumps({"@context": "https://schema.org", "@type": "ItemList",
-                          "name": title, "itemListElement": [json.loads(i) for i in items]})
+            + json.dumps(ld_json)
             + '</script>'
         )
 
@@ -4001,6 +4042,44 @@ def booking_page(slot_id):
     if error_msg:
         error_block = f'<div class="error">{error_msg}</div>'
 
+    # Build JSON-LD structured data for booking page
+    ld_event = {
+        "@context": "https://schema.org",
+        "@type": "Event",
+        "name": slot.get("service_name", "Experience")[:100],
+        "description": f"{slot.get('service_name', '')} by {slot.get('business_name', '')} in {city}",
+        "organizer": {"@type": "Organization", "name": slot.get("business_name", "")},
+        "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+        "eventStatus": "https://schema.org/EventScheduled",
+        "offers": {
+            "@type": "Offer",
+            "price": str(price),
+            "priceCurrency": currency,
+            "availability": "https://schema.org/InStock",
+            "validFrom": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "url": f"https://api.lastminutedealshq.com/book/{slot_id}",
+        },
+    }
+    if start_iso:
+        ld_event["startDate"] = start_iso
+    end_iso = slot.get("end_time", "")
+    if end_iso:
+        ld_event["endDate"] = end_iso
+    elif duration_min and start_iso:
+        try:
+            ld_event["endDate"] = (datetime.fromisoformat(start_iso.replace("Z", "+00:00")) + timedelta(minutes=int(duration_min))).isoformat()
+        except Exception:
+            pass
+    if duration_min:
+        h, m = divmod(int(duration_min), 60)
+        ld_event["duration"] = f"PT{h}H{m}M" if h else f"PT{m}M"
+    if city:
+        ld_loc = {"@type": "Place", "name": city, "address": {"@type": "PostalAddress", "addressLocality": city}}
+        if country:
+            ld_loc["address"]["addressCountry"] = country
+        ld_event["location"] = ld_loc
+    booking_ld = '<script type="application/ld+json">' + json.dumps(ld_event) + '</script>'
+
     html = _BOOKING_PAGE_HTML.format(
         service_name=slot.get("service_name", "Experience")[:100],
         business_name=slot.get("business_name", "")[:80],
@@ -4014,6 +4093,8 @@ def booking_page(slot_id):
         qty_options=qty_options,
         error_block=error_block,
     )
+    # Inject structured data before </head>
+    html = html.replace("</head>", booking_ld + "</head>", 1)
     return html, 200, {"Content-Type": "text/html"}
 
 

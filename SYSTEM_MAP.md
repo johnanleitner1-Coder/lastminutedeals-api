@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-22 (v39 — Fixed search_slots uptime: capped MCP queries to 1000 rows (single Supabase page) to eliminate multi-page pagination timeouts. Improved run_mcp_remote.py resilience (connect timeout 8s→20s, ping 10m→8m, exponential backoff). Previous: v38 — GSC verification, sitemap.xml, robots.txt.)
+**Last updated:** 2026-04-23 (v40 — Added rich JSON-LD Event structured data to SEO tour pages and booking pages for Google Things to Do eligibility. Previous: v39 — Fixed search_slots uptime: capped MCP queries to 1000 rows (single Supabase page) to eliminate multi-page pagination timeouts. Improved run_mcp_remote.py resilience (connect timeout 8s→20s, ping 10m→8m, exponential backoff). Previous: v38 — GSC verification, sitemap.xml, robots.txt.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -80,6 +80,8 @@
 │  SEO infrastructure:                                                │
 │  GET /sitemap.xml              — dynamic sitemap (all tour pages)   │
 │  GET /robots.txt               — crawler directives + sitemap ref   │
+│  JSON-LD structured data       — Event schema on /tours/{slug}     │
+│                                  and /book/{slot_id} pages          │
 │  GET /google1146a4e71b31f0ee.html — Search Console verification    │
 │                                                                     │
 │  Cancellation entry points:                                         │
