@@ -7506,6 +7506,563 @@ def _mcp_messages_proxy():
     return jsonify(resp.json()), resp.status_code
 
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  GetYourGuide Supplier API  (all routes under /gyg/1/)                     ║
+# ║  Called by GYG to query availability and execute bookings on our system.    ║
+# ║  Auth: HTTP Basic Auth (GYG_INBOUND_USERNAME / GYG_INBOUND_PASSWORD)       ║
+# ║  Spec: https://integrator.getyourguide.com/documentation/supplier_endpoints║
+# ║                                                                            ║
+# ║  Flow: GYG calls get-availabilities → reserve → book (with traveler info)  ║
+# ║  We translate to OCTO: POST /reservations (hold) → POST /confirm           ║
+# ║  Cancellations use OCTO DELETE /bookings/{uuid}                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+from functools import wraps as _wraps
+
+# In-memory stores: reservations are short-lived (≤60 min), bookings persist
+# until cancelled. On server restart, pending GYG reservations expire naturally
+# on GYG's side; cancel-booking for an unknown ref returns INVALID_BOOKING.
+_GYG_RESERVATIONS: dict = {}   # reservationRef -> {octo_uuid, slot_id, booking_url, ...}
+_GYG_BOOKINGS: dict = {}       # bookingRef     -> {octo_uuid, slot_id, booking_url, ...}
+
+_GYG_INBOUND_USER = os.getenv("GYG_INBOUND_USERNAME", "").strip()
+_GYG_INBOUND_PASS = os.getenv("GYG_INBOUND_PASSWORD", "").strip()
+
+
+def _gyg_auth(f):
+    """HTTP Basic Auth check for GYG inbound requests."""
+    @_wraps(f)
+    def _wrapped(*args, **kwargs):
+        if not _GYG_INBOUND_USER or not _GYG_INBOUND_PASS:
+            return jsonify({"errorCode": "INTERNAL_SYSTEM_FAILURE",
+                            "errorMessage": "GYG credentials not configured"}), 500
+        auth = request.authorization
+        if not auth or not auth.username or not auth.password:
+            return (jsonify({"errorCode": "AUTHORIZATION_FAILURE",
+                            "errorMessage": "Authentication required"}),
+                    401,
+                    {"WWW-Authenticate": 'Basic realm="GYG Supplier API"'})
+        if auth.username != _GYG_INBOUND_USER or auth.password != _GYG_INBOUND_PASS:
+            return jsonify({"errorCode": "AUTHORIZATION_FAILURE",
+                           "errorMessage": "Invalid credentials"}), 401
+        return f(*args, **kwargs)
+    return _wrapped
+
+
+def _gyg_err(code: str, msg: str, **extra):
+    """GYG-formatted error (HTTP 200 per spec — errors live in the JSON body)."""
+    body = {"errorCode": code, "errorMessage": msg}
+    body.update(extra)
+    return jsonify(body), 200
+
+
+def _gyg_cleanup_expired():
+    """Evict expired reservations and past-date bookings to prevent unbounded growth."""
+    now = datetime.now(timezone.utc)
+    expired_res = [r for r, d in _GYG_RESERVATIONS.items()
+                   if datetime.fromisoformat(d["expires_at"]) < now]
+    for r in expired_res:
+        _GYG_RESERVATIONS.pop(r, None)
+    # Evict bookings whose activity date is >48h in the past (no longer cancellable)
+    cutoff = now - timedelta(hours=48)
+    expired_bk = []
+    for ref, bk in _GYG_BOOKINGS.items():
+        try:
+            bk_dt = datetime.fromisoformat(bk["date_time"].replace("Z", "+00:00"))
+            if bk_dt < cutoff:
+                expired_bk.append(ref)
+        except (ValueError, KeyError):
+            pass
+    for ref in expired_bk:
+        _GYG_BOOKINGS.pop(ref, None)
+
+
+def _gyg_slots_by_product(product_id: str, from_iso: str, to_iso: str) -> list[dict]:
+    """Query Supabase for slots whose booking_url contains a given OCTO product_id."""
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_key = os.getenv("SUPABASE_SECRET_KEY", "")
+    if not sb_url or not sb_key:
+        return []
+    hdrs = {"apikey": sb_key, "Authorization": f"Bearer {sb_key}"}
+    params = [
+        ("booking_url", f'like.%"product_id": "{product_id}"%'),
+        ("start_time", f"gte.{from_iso}"),
+        ("start_time", f"lte.{to_iso}"),
+        ("order", "start_time.asc"),
+        ("limit", 1000),
+    ]
+    try:
+        r = requests.get(f"{sb_url}/rest/v1/slots", headers=hdrs,
+                         params=params, timeout=10)
+        if r.status_code != 200:
+            print(f"[GYG] Supabase query failed: {r.status_code}")
+            return []
+    except Exception as e:
+        print(f"[GYG] Supabase error: {e}")
+        return []
+
+    out = []
+    for row in r.json():
+        slot = row
+        if row.get("raw"):
+            try:
+                slot = json.loads(row["raw"]) if isinstance(row["raw"], str) else row["raw"]
+            except Exception:
+                pass
+        # Verify product_id actually matches (guard against substring false positives)
+        burl_str = slot.get("booking_url", "")
+        if not isinstance(burl_str, str) or not burl_str.startswith("{"):
+            continue
+        try:
+            if json.loads(burl_str).get("product_id") != product_id:
+                continue
+        except Exception:
+            continue
+        out.append(slot)
+    return out
+
+
+def _gyg_octo_headers(burl: dict) -> dict:
+    """Build OCTO API headers from parsed booking_url JSON."""
+    api_key = os.getenv(burl["api_key_env"], "").strip()
+    return {"Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json", "Accept": "application/json"}
+
+
+def _gyg_octo_reserve(slot: dict, qty: int):
+    """OCTO POST /reservations only (no confirm). Returns (uuid, err_msg | None)."""
+    burl = json.loads(slot["booking_url"])
+    base = burl["base_url"].rstrip("/")
+    hdrs = _gyg_octo_headers(burl)
+    payload = {
+        "productId":      burl["product_id"],
+        "optionId":       burl["option_id"],
+        "availabilityId": burl["availability_id"],
+        "unitItems":      [{"unitId": burl["unit_id"]} for _ in range(qty)],
+    }
+    try:
+        r = requests.post(f"{base}/reservations", headers=hdrs,
+                          json=payload, timeout=30)
+    except Exception as e:
+        return "", f"OCTO network error: {e}"
+    # Fallback: some suppliers only support POST /bookings
+    if r.status_code in (400, 404, 405):
+        try:
+            r = requests.post(f"{base}/bookings", headers=hdrs,
+                              json=payload, timeout=30)
+        except Exception as e:
+            return "", f"OCTO fallback network error: {e}"
+    if r.status_code == 409:
+        return "", "NO_AVAILABILITY"
+    if not r.ok:
+        return "", f"OCTO reserve failed ({r.status_code}): {r.text[:200]}"
+    data = r.json()
+    octo_uuid = data.get("uuid") or data.get("id")
+    if not octo_uuid:
+        return "", f"No UUID in OCTO response: {r.text[:200]}"
+    print(f"[GYG] OCTO reservation created: {octo_uuid}")
+    return octo_uuid, None
+
+
+def _gyg_octo_confirm(octo_uuid: str, burl: dict, traveler: dict):
+    """OCTO POST /bookings/{uuid}/confirm. Returns (booking_json, err_msg | None)."""
+    base = burl["base_url"].rstrip("/")
+    hdrs = _gyg_octo_headers(burl)
+    # Derive country from phone number prefix if available, else default US
+    phone = traveler.get("phoneNumber", "")
+    country = "US"
+    if phone.startswith("+44"):
+        country = "GB"
+    elif phone.startswith("+49"):
+        country = "DE"
+    elif phone.startswith("+33"):
+        country = "FR"
+    elif phone.startswith("+39"):
+        country = "IT"
+    elif phone.startswith("+34"):
+        country = "ES"
+    elif phone.startswith("+81"):
+        country = "JP"
+    elif phone.startswith("+"):
+        country = "US"  # fallback for other international numbers
+    contact = {
+        "fullName":     f"{traveler.get('firstName', '')} {traveler.get('lastName', '')}".strip(),
+        "emailAddress": traveler.get("email", ""),
+        "phoneNumber":  phone,
+        "country":      country,
+        "locales":      ["en"],
+    }
+    try:
+        r = requests.post(f"{base}/bookings/{octo_uuid}/confirm",
+                          headers=hdrs, json={"contact": contact}, timeout=30)
+    except Exception as e:
+        _gyg_octo_cancel(octo_uuid, burl)
+        return None, f"OCTO confirm network error: {e}"
+    if not r.ok:
+        _gyg_octo_cancel(octo_uuid, burl)
+        return None, f"OCTO confirm failed ({r.status_code}): {r.text[:200]}"
+    print(f"[GYG] OCTO booking confirmed: {octo_uuid}")
+    return r.json(), None
+
+
+def _gyg_octo_cancel(octo_uuid: str, burl: dict):
+    """OCTO DELETE /bookings/{uuid}. Returns (success, err_msg | None)."""
+    base = burl["base_url"].rstrip("/")
+    hdrs = _gyg_octo_headers(burl)
+    try:
+        r = requests.delete(f"{base}/bookings/{octo_uuid}",
+                            headers=hdrs, timeout=15)
+        if r.ok or r.status_code == 404:
+            print(f"[GYG] OCTO cancelled: {octo_uuid}")
+            return True, None
+        return False, f"OCTO cancel failed ({r.status_code}): {r.text[:200]}"
+    except Exception as e:
+        return False, f"OCTO cancel network error: {e}"
+
+
+# GYG prices use smallest currency unit (cents); these currencies have no decimals
+_GYG_NO_DECIMAL = frozenset({"JPY", "KRW", "VND", "CLP"})
+
+
+def _gyg_price_cents(price_val, currency: str) -> int:
+    """Convert our price (full units, e.g. 25.00) to GYG cents (e.g. 2500)."""
+    try:
+        p = float(price_val)
+    except (ValueError, TypeError):
+        return 0
+    if currency.upper() in _GYG_NO_DECIMAL:
+        return int(round(p))
+    return int(round(p * 100))
+
+
+# ── GET /gyg/1/get-availabilities/ ───────────────────────────────────────────
+
+@app.route("/gyg/1/get-availabilities/", methods=["GET"])
+@_gyg_auth
+def gyg_get_availabilities():
+    product_id = request.args.get("productId", "").strip()
+    from_dt    = request.args.get("fromDateTime", "").strip()
+    to_dt      = request.args.get("toDateTime", "").strip()
+
+    if not product_id:
+        return _gyg_err("VALIDATION_FAILURE", "Missing productId")
+    if not from_dt or not to_dt:
+        return _gyg_err("VALIDATION_FAILURE", "Missing fromDateTime or toDateTime")
+
+    try:
+        from_parsed = datetime.fromisoformat(from_dt.replace("Z", "+00:00"))
+        to_parsed   = datetime.fromisoformat(to_dt.replace("Z", "+00:00"))
+    except ValueError:
+        return _gyg_err("VALIDATION_FAILURE", "Invalid date format — use ISO 8601")
+
+    slots = _gyg_slots_by_product(
+        product_id,
+        from_parsed.astimezone(timezone.utc).isoformat(),
+        to_parsed.astimezone(timezone.utc).isoformat(),
+    )
+
+    avails = []
+    for s in slots:
+        start = s.get("start_time", "")
+        if not start:
+            continue
+        currency = (s.get("currency") or "USD").upper()
+        price_c  = _gyg_price_cents(s.get("our_price") or s.get("price") or 0, currency)
+        spots = 10
+        try:
+            spots = int(s.get("spots_open", 10))
+        except (ValueError, TypeError):
+            pass
+
+        entry = {
+            "dateTime":  start if "T" in start else f"{start}T00:00:00+00:00",
+            "productId": product_id,
+            "vacancies": min(max(spots, 0), 5000),
+        }
+        if price_c > 0:
+            entry["currency"] = currency
+            entry["pricesByCategory"] = {
+                "retailPrices": [{"category": "ADULT", "price": price_c}]
+            }
+        avails.append(entry)
+
+    return jsonify({"data": {"availabilities": avails}}), 200
+
+
+# ── POST /gyg/1/reserve/ ─────────────────────────────────────────────────────
+
+@app.route("/gyg/1/reserve/", methods=["POST"])
+@_gyg_auth
+def gyg_reserve():
+    _gyg_cleanup_expired()
+    body = request.get_json(silent=True)
+    if not body or "data" not in body:
+        return _gyg_err("VALIDATION_FAILURE", "Missing request body")
+
+    d          = body["data"]
+    product_id = (d.get("productId") or "").strip()
+    date_time  = (d.get("dateTime") or "").strip()
+    items      = d.get("bookingItems") or []
+    gyg_ref    = (d.get("gygBookingReference") or "").strip()
+
+    if not product_id:
+        return _gyg_err("INVALID_PRODUCT", "Missing productId")
+    if not date_time or not items:
+        return _gyg_err("VALIDATION_FAILURE", "Missing dateTime or bookingItems")
+
+    # Total pax (GROUP category: count × groupSize)
+    qty = 0
+    for it in items:
+        c = it.get("count", 0)
+        if it.get("category") == "GROUP":
+            qty += c * it.get("groupSize", 1)
+        else:
+            qty += c
+    qty = max(1, qty)
+
+    try:
+        req_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+    except ValueError:
+        return _gyg_err("VALIDATION_FAILURE", "Invalid dateTime format")
+
+    # Search ±2h window to handle timezone offsets between GYG and our UTC storage
+    slots = _gyg_slots_by_product(
+        product_id,
+        (req_dt - timedelta(hours=2)).isoformat(),
+        (req_dt + timedelta(hours=2)).isoformat(),
+    )
+    if not slots:
+        return _gyg_err("NO_AVAILABILITY", "No availability found")
+
+    # Match by minute (Time Point products)
+    req_key = req_dt.strftime("%Y-%m-%dT%H:%M")
+    match = None
+    for s in slots:
+        try:
+            sdt = datetime.fromisoformat(s["start_time"].replace("Z", "+00:00"))
+            if sdt.strftime("%Y-%m-%dT%H:%M") == req_key:
+                match = s
+                break
+        except (ValueError, KeyError):
+            continue
+
+    # Fallback: date-only match (Time Period products where time is T00:00:00)
+    if not match:
+        req_date = req_dt.strftime("%Y-%m-%d")
+        for s in slots:
+            if (s.get("start_time") or "")[:10] == req_date:
+                match = s
+                break
+
+    if not match:
+        return _gyg_err("NO_AVAILABILITY", "No slot matches the requested dateTime")
+
+    # Capacity check
+    try:
+        avail_spots = int(match.get("spots_open", 999))
+        if avail_spots < qty:
+            return _gyg_err("NO_AVAILABILITY",
+                            f"Only {avail_spots} spots available, {qty} requested")
+    except (ValueError, TypeError):
+        pass
+
+    # Execute OCTO reservation (hold only — no confirm yet)
+    octo_uuid, err = _gyg_octo_reserve(match, qty)
+    if err:
+        code = "NO_AVAILABILITY" if err == "NO_AVAILABILITY" else "INTERNAL_SYSTEM_FAILURE"
+        msg  = "Slot no longer available on supplier" if err == "NO_AVAILABILITY" else err
+        return _gyg_err(code, msg)
+
+    ref = f"LMDGYG-{uuid.uuid4().hex[:12].upper()}"
+    exp = datetime.now(timezone.utc) + timedelta(minutes=60)
+
+    _GYG_RESERVATIONS[ref] = {
+        "octo_uuid":   octo_uuid,
+        "slot_id":     match.get("slot_id", ""),
+        "booking_url": match["booking_url"],
+        "gyg_ref":     gyg_ref,
+        "product_id":  product_id,
+        "date_time":   date_time,
+        "qty":         qty,
+        "expires_at":  exp.isoformat(),
+    }
+    print(f"[GYG] Reserved: {ref} -> OCTO {octo_uuid} "
+          f"slot={match.get('slot_id', '')} qty={qty}")
+
+    return jsonify({"data": {
+        "reservationReference":  ref,
+        "reservationExpiration": exp.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+    }}), 200
+
+
+# ── POST /gyg/1/cancel-reservation/ ──────────────────────────────────────────
+
+@app.route("/gyg/1/cancel-reservation/", methods=["POST"])
+@_gyg_auth
+def gyg_cancel_reservation():
+    body = request.get_json(silent=True)
+    if not body or "data" not in body:
+        return _gyg_err("VALIDATION_FAILURE", "Missing request body")
+
+    ref = (body["data"].get("reservationReference") or "").strip()
+    if not ref:
+        return _gyg_err("VALIDATION_FAILURE", "Missing reservationReference")
+
+    res = _GYG_RESERVATIONS.pop(ref, None)
+    if not res:
+        return _gyg_err("INVALID_RESERVATION", f"Unknown reservation: {ref}")
+
+    burl = json.loads(res["booking_url"])
+    ok, err = _gyg_octo_cancel(res["octo_uuid"], burl)
+    if not ok:
+        print(f"[GYG] OCTO cancel warning for {ref}: {err}")
+        # Still return success — reservation will expire on OCTO side
+
+    print(f"[GYG] Reservation cancelled: {ref}")
+    return jsonify({"data": {}}), 200
+
+
+# ── POST /gyg/1/book/ ────────────────────────────────────────────────────────
+
+@app.route("/gyg/1/book/", methods=["POST"])
+@_gyg_auth
+def gyg_book():
+    _gyg_cleanup_expired()
+    body = request.get_json(silent=True)
+    if not body or "data" not in body:
+        return _gyg_err("VALIDATION_FAILURE", "Missing request body")
+
+    d          = body["data"]
+    res_ref    = (d.get("reservationReference") or "").strip()
+    product_id = (d.get("productId") or "").strip()
+    gyg_ref    = (d.get("gygBookingReference") or "").strip()
+    items      = d.get("bookingItems") or []
+    travelers  = d.get("travelers") or []
+
+    if not res_ref:
+        return _gyg_err("VALIDATION_FAILURE", "Missing reservationReference")
+    if not product_id:
+        return _gyg_err("INVALID_PRODUCT", "Missing productId")
+    if not travelers:
+        return _gyg_err("VALIDATION_FAILURE", "Missing travelers")
+
+    res = _GYG_RESERVATIONS.get(res_ref)
+    if not res:
+        return _gyg_err("INVALID_RESERVATION", f"Unknown reservation: {res_ref}")
+
+    # Confirm the held OCTO reservation with traveler contact details
+    burl = json.loads(res["booking_url"])
+    booking_data, err = _gyg_octo_confirm(res["octo_uuid"], burl, travelers[0])
+    if err:
+        _GYG_RESERVATIONS.pop(res_ref, None)
+        return _gyg_err("INTERNAL_SYSTEM_FAILURE", err)
+
+    # Generate booking reference (max 25 alphanumeric chars per GYG spec)
+    bk_ref = f"LMD{uuid.uuid4().hex[:10].upper()}"
+
+    # Build tickets — one per participant per category
+    tickets = []
+    for it in items:
+        cat   = it.get("category", "ADULT")
+        count = it.get("count", 1)
+        for i in range(count):
+            tickets.append({
+                "category":       cat,
+                "ticketCode":     f"{bk_ref}-{cat[0]}{i + 1}",
+                "ticketCodeType": "TEXT",
+            })
+    if not tickets:
+        tickets.append({
+            "category": "COLLECTIVE",
+            "ticketCode": bk_ref,
+            "ticketCodeType": "TEXT",
+        })
+
+    # Persist booking mapping
+    octo_uuid = (booking_data.get("uuid") or booking_data.get("id")
+                 or res["octo_uuid"])
+    _GYG_BOOKINGS[bk_ref] = {
+        "octo_uuid":    octo_uuid,
+        "slot_id":      res.get("slot_id", ""),
+        "booking_url":  res["booking_url"],
+        "gyg_ref":      gyg_ref,
+        "product_id":   product_id,
+        "date_time":    res.get("date_time", ""),
+        "confirmed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _GYG_RESERVATIONS.pop(res_ref, None)
+
+    sup_ref = (booking_data.get("supplierReference")
+               or booking_data.get("reference") or "")
+    print(f"[GYG] Booked: {bk_ref} -> OCTO {octo_uuid} sup_ref={sup_ref}")
+
+    return jsonify({"data": {
+        "bookingReference": bk_ref,
+        "tickets":          tickets,
+    }}), 200
+
+
+# ── POST /gyg/1/cancel-booking/ ──────────────────────────────────────────────
+
+@app.route("/gyg/1/cancel-booking/", methods=["POST"])
+@_gyg_auth
+def gyg_cancel_booking():
+    body = request.get_json(silent=True)
+    if not body or "data" not in body:
+        return _gyg_err("VALIDATION_FAILURE", "Missing request body")
+
+    bk_ref = (body["data"].get("bookingReference") or "").strip()
+    if not bk_ref:
+        return _gyg_err("VALIDATION_FAILURE", "Missing bookingReference")
+
+    bk = _GYG_BOOKINGS.get(bk_ref)
+    if not bk:
+        return _gyg_err("INVALID_BOOKING", f"Unknown booking: {bk_ref}")
+
+    # Reject cancellation if the activity date has passed
+    try:
+        bk_dt = datetime.fromisoformat(bk["date_time"].replace("Z", "+00:00"))
+        if bk_dt < datetime.now(timezone.utc):
+            return _gyg_err("BOOKING_IN_PAST", "Booking date has already passed")
+    except (ValueError, KeyError):
+        pass
+
+    burl = json.loads(bk["booking_url"])
+    ok, err = _gyg_octo_cancel(bk["octo_uuid"], burl)
+    if not ok:
+        return _gyg_err("INTERNAL_SYSTEM_FAILURE", f"Cancel failed: {err}")
+
+    _GYG_BOOKINGS.pop(bk_ref, None)
+    print(f"[GYG] Booking cancelled: {bk_ref}")
+    return jsonify({"data": {}}), 200
+
+
+# ── POST /gyg/1/notify/ ──────────────────────────────────────────────────────
+
+@app.route("/gyg/1/notify/", methods=["POST"])
+@_gyg_auth
+def gyg_notify():
+    body = request.get_json(silent=True)
+    if not body or "data" not in body:
+        return jsonify({"data": {}}), 200
+
+    d     = body["data"]
+    ntype = d.get("notificationType", "")
+    desc  = d.get("description", "")
+    pdet  = d.get("productDetails", {})
+    pid   = pdet.get("productId", "")
+
+    print(f"[GYG] Notification: type={ntype} product={pid} — {desc}")
+
+    if ntype == "PRODUCT_DEACTIVATION":
+        ndet = d.get("notificationDetails", {})
+        print(f"[GYG] PRODUCT DEACTIVATED: {pid} "
+              f"reason={ndet.get('errorType', '')} "
+              f"request={ndet.get('failedRequestType', '')}")
+
+    return jsonify({"data": {}}), 200
+
+
 def _warm_mcp_slots_cache() -> None:
     """
     Pre-warm the MCP search_slots cache at startup in a background thread.

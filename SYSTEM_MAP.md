@@ -84,6 +84,16 @@
 │                                  and /book/{slot_id} pages          │
 │  GET /google1146a4e71b31f0ee.html — Search Console verification    │
 │                                                                     │
+│  GetYourGuide Supplier API (inbound — GYG calls us):               │
+│  GET  /gyg/1/get-availabilities/ — slot availability by productId  │
+│  POST /gyg/1/reserve/            — OCTO hold (no confirm yet)      │
+│  POST /gyg/1/cancel-reservation/ — release OCTO hold               │
+│  POST /gyg/1/book/               — confirm OCTO hold + tickets     │
+│  POST /gyg/1/cancel-booking/     — cancel confirmed OCTO booking   │
+│  POST /gyg/1/notify/             — GYG product deactivation alerts │
+│  Auth: HTTP Basic (GYG_INBOUND_USERNAME / GYG_INBOUND_PASSWORD)    │
+│  Product mapping: GYG productId = OCTO product_id from booking_url │
+│                                                                     │
 │  Cancellation entry points:                                         │
 │  DELETE /bookings/{id}       — API cancel (Stripe + OCTO + retry)  │
 │  GET/POST /cancel/{id}       — customer self-serve cancel page      │
@@ -872,6 +882,50 @@ Agent calls preview_slot(slot_id)
   ← B-160 FIXED: Old Railway subdomain triggered Cloudflare Error 1000 from Smithery infra (~30% failure rate, 3-day flatline)
   ← Re-published via `smithery mcp publish "https://api.lastminutedealshq.com/mcp"` — eliminates intermediate hop
 **Claude Desktop path:** `GET /sse` → proxied SSE → embedded FastMCP
+
+---
+
+## 11a. GetYourGuide Supplier API Integration
+
+**Entry points:** All under `/gyg/1/` prefix on `run_api_server.py`
+**Auth:** HTTP Basic Auth (GYG_INBOUND_USERNAME / GYG_INBOUND_PASSWORD from .env)
+**Status:** Built (2026-04-23) — awaiting GYG testing configuration submission
+
+**Product mapping:** GYG `productId` = OCTO `product_id` from our `booking_url` JSON field in Supabase slots.
+
+**Booking flow (GYG → our server → OCTO supplier):**
+```
+GYG calls get-availabilities(productId, dateRange)
+  → We query Supabase slots by product_id substring match in booking_url
+  → Return availabilities with dateTime, vacancies, prices (in cents)
+
+GYG calls reserve(productId, dateTime, bookingItems)
+  → We find matching slot, call OCTO POST /reservations (hold only)
+  → Store mapping: reservationRef → {octo_uuid, slot_id, booking_url}
+  → Return reservationReference + 60-min expiration
+
+GYG calls book(reservationReference, travelers, bookingItems)
+  → We look up reservation, call OCTO POST /bookings/{uuid}/confirm
+  → Generate TEXT tickets (one per pax per category)
+  → Store booking mapping: bookingRef → {octo_uuid, ...}
+  → Return bookingReference + tickets array
+
+GYG calls cancel-booking(bookingReference)
+  → We look up booking, call OCTO DELETE /bookings/{uuid}
+  → Return success (or BOOKING_IN_PAST if activity date passed)
+```
+
+**Reservation/booking stores:** In-memory dicts (`_GYG_RESERVATIONS`, `_GYG_BOOKINGS`). Reservations expire after 60 min. On server restart, GYG-side expiration handles cleanup.
+
+**All 4 booking types supported:**
+- Time Point Individual (specific time, individual categories)
+- Time Point Group (specific time, GROUP category with groupSize)
+- Time Period Individual (date-only, time=T00:00:00)
+- Time Period Group (date-only + GROUP)
+
+**GYG credentials in .env:**
+- `GYG_API_USERNAME` / `GYG_API_PASSWORD` — for us calling GYG endpoints
+- `GYG_INBOUND_USERNAME` / `GYG_INBOUND_PASSWORD` — for GYG calling our endpoints
 
 ---
 
