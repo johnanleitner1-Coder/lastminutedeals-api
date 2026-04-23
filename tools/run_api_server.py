@@ -7524,6 +7524,7 @@ from functools import wraps as _wraps
 # on GYG's side; cancel-booking for an unknown ref returns INVALID_BOOKING.
 _GYG_RESERVATIONS: dict = {}   # reservationRef -> {octo_uuid, slot_id, booking_url, ...}
 _GYG_BOOKINGS: dict = {}       # bookingRef     -> {octo_uuid, slot_id, booking_url, ...}
+_GYG_DEBUG: dict = {}          # last request/response capture for debugging
 
 _GYG_INBOUND_USER = os.getenv("GYG_INBOUND_USERNAME", "").strip()
 _GYG_INBOUND_PASS = os.getenv("GYG_INBOUND_PASSWORD", "").strip()
@@ -7740,20 +7741,35 @@ def _gyg_price_cents(price_val, currency: str) -> int:
 @app.route("/gyg/1/get-availabilities/", methods=["GET"])
 @_gyg_auth
 def gyg_get_availabilities():
+    import time as _time
+    _t0 = _time.monotonic()
     product_id = request.args.get("productId", "").strip()
     from_dt    = request.args.get("fromDateTime", "").strip()
     to_dt      = request.args.get("toDateTime", "").strip()
 
+    _GYG_DEBUG["last_avail_request"] = {
+        "url": request.url,
+        "args": dict(request.args),
+        "headers": {k: v for k, v in request.headers if k.lower() != "authorization"},
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
     if not product_id:
-        return _gyg_err("VALIDATION_FAILURE", "Missing productId")
+        resp = _gyg_err("VALIDATION_FAILURE", "Missing productId")
+        _GYG_DEBUG["last_avail_response"] = {"error": "Missing productId"}
+        return resp
     if not from_dt or not to_dt:
-        return _gyg_err("VALIDATION_FAILURE", "Missing fromDateTime or toDateTime")
+        resp = _gyg_err("VALIDATION_FAILURE", "Missing fromDateTime or toDateTime")
+        _GYG_DEBUG["last_avail_response"] = {"error": "Missing dates"}
+        return resp
 
     try:
         from_parsed = datetime.fromisoformat(from_dt.replace("Z", "+00:00"))
         to_parsed   = datetime.fromisoformat(to_dt.replace("Z", "+00:00"))
     except ValueError:
-        return _gyg_err("VALIDATION_FAILURE", "Invalid date format — use ISO 8601")
+        resp = _gyg_err("VALIDATION_FAILURE", "Invalid date format — use ISO 8601")
+        _GYG_DEBUG["last_avail_response"] = {"error": "Bad date format", "from": from_dt, "to": to_dt}
+        return resp
 
     slots = _gyg_slots_by_product(
         product_id,
@@ -7791,7 +7807,24 @@ def gyg_get_availabilities():
             }
         avails.append(entry)
 
+    elapsed_ms = int((_time.monotonic() - _t0) * 1000)
+    _GYG_DEBUG["last_avail_response"] = {
+        "slot_count": len(slots),
+        "avail_count": len(avails),
+        "elapsed_ms": elapsed_ms,
+        "sample": avails[:2] if avails else [],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    print(f"[GYG] get-availabilities: product={product_id} from={from_dt} to={to_dt} "
+          f"slots={len(slots)} avails={len(avails)} {elapsed_ms}ms")
+
     return jsonify({"data": {"availabilities": avails}}), 200
+
+
+@app.route("/gyg/debug", methods=["GET"])
+def gyg_debug():
+    """Return last GYG request/response for debugging. No auth required."""
+    return jsonify(_GYG_DEBUG), 200
 
 
 # ── POST /gyg/1/reserve/ ─────────────────────────────────────────────────────
