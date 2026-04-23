@@ -7800,8 +7800,8 @@ def _gyg_price_cents(price_val, currency: str) -> int:
 
 # ── GET /gyg/1/get-availabilities/ ───────────────────────────────────────────
 
-@app.route("/1/get-availabilities/", methods=["GET"])
-@app.route("/gyg/1/get-availabilities/", methods=["GET"])
+@app.route("/1/get-availabilities", methods=["GET"], strict_slashes=False)
+@app.route("/gyg/1/get-availabilities", methods=["GET"], strict_slashes=False)
 @_gyg_auth
 def gyg_get_availabilities():
     import time as _time
@@ -7896,8 +7896,8 @@ def gyg_debug():
 
 # ── POST /gyg/1/reserve/ ─────────────────────────────────────────────────────
 
-@app.route("/1/reserve/", methods=["POST"])
-@app.route("/gyg/1/reserve/", methods=["POST"])
+@app.route("/1/reserve", methods=["POST"], strict_slashes=False)
+@app.route("/gyg/1/reserve", methods=["POST"], strict_slashes=False)
 @_gyg_auth
 def gyg_reserve():
     _gyg_cleanup_expired()
@@ -7922,7 +7922,8 @@ def gyg_reserve():
         cat = it.get("category", "")
         if cat and cat not in _SUPPORTED_CATEGORIES:
             return _gyg_err("INVALID_TICKET_CATEGORY",
-                            f"Unsupported category: {cat}")
+                            f"Unsupported category: {cat}",
+                            ticketCategory=cat)
 
     # Total pax (GROUP category: count × groupSize)
     qty = 0
@@ -7979,7 +7980,8 @@ def gyg_reserve():
         avail_spots = int(match.get("spots_open", 999))
         if avail_spots < qty:
             return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
-                            f"Only {avail_spots} spots available, {qty} requested")
+                            f"Only {avail_spots} spots available, {qty} requested",
+                            participantsConfiguration={"min": 1, "max": avail_spots})
     except (ValueError, TypeError):
         pass
 
@@ -8035,8 +8037,8 @@ def gyg_reserve():
 
 # ── POST /gyg/1/cancel-reservation/ ──────────────────────────────────────────
 
-@app.route("/1/cancel-reservation/", methods=["POST"])
-@app.route("/gyg/1/cancel-reservation/", methods=["POST"])
+@app.route("/1/cancel-reservation", methods=["POST"], strict_slashes=False)
+@app.route("/gyg/1/cancel-reservation", methods=["POST"], strict_slashes=False)
 @_gyg_auth
 def gyg_cancel_reservation():
     body = request.get_json(silent=True)
@@ -8067,8 +8069,8 @@ def gyg_cancel_reservation():
 
 # ── POST /gyg/1/book/ ────────────────────────────────────────────────────────
 
-@app.route("/1/book/", methods=["POST"])
-@app.route("/gyg/1/book/", methods=["POST"])
+@app.route("/1/book", methods=["POST"], strict_slashes=False)
+@app.route("/gyg/1/book", methods=["POST"], strict_slashes=False)
 @_gyg_auth
 def gyg_book():
     _gyg_cleanup_expired()
@@ -8173,8 +8175,8 @@ def gyg_book():
 
 # ── POST /gyg/1/cancel-booking/ ──────────────────────────────────────────────
 
-@app.route("/1/cancel-booking/", methods=["POST"])
-@app.route("/gyg/1/cancel-booking/", methods=["POST"])
+@app.route("/1/cancel-booking", methods=["POST"], strict_slashes=False)
+@app.route("/gyg/1/cancel-booking", methods=["POST"], strict_slashes=False)
 @_gyg_auth
 def gyg_cancel_booking():
     body = request.get_json(silent=True)
@@ -8214,8 +8216,8 @@ def gyg_cancel_booking():
 
 # ── POST /gyg/1/notify/ ──────────────────────────────────────────────────────
 
-@app.route("/1/notify/", methods=["POST"])
-@app.route("/gyg/1/notify/", methods=["POST"])
+@app.route("/1/notify", methods=["POST"], strict_slashes=False)
+@app.route("/gyg/1/notify", methods=["POST"], strict_slashes=False)
 @_gyg_auth
 def gyg_notify():
     body = request.get_json(silent=True)
