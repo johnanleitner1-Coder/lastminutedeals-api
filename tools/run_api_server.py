@@ -7765,36 +7765,25 @@ if _gyg_excl_raw:
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
 # ── GYG Product Pricing Model ────────────────────────────────────────────────
-# Determines valid ticket categories, availability price format, and group
-# size limits per product.
-# Format: "product_id:model[:max_group_size];..."
-#   model = "individual" (default) or "group"
-#   max_group_size = optional int, only relevant for group products
-# Example: GYG_PRODUCT_PRICING=969081:group:6
-_GYG_PRODUCT_PRICING: dict[str, str] = {}
+# Products support both ADULT (individual) and GROUP categories simultaneously.
+# GYG_MAX_GROUP_SIZE sets the max participants per group booking.
+# Format: "product_id:max_group_size;..."
+# Example: GYG_MAX_GROUP_SIZE=969081:4
 _GYG_MAX_GROUP_SIZE: dict[str, int] = {}
-_gyg_pricing_raw = os.getenv("GYG_PRODUCT_PRICING", "").strip()
-if _gyg_pricing_raw:
-    for part in _gyg_pricing_raw.split(";"):
+_gyg_gs_raw = os.getenv("GYG_MAX_GROUP_SIZE", "").strip()
+if _gyg_gs_raw:
+    for part in _gyg_gs_raw.split(";"):
         part = part.strip()
         if ":" not in part:
             continue
-        fields = part.split(":")
-        pid = fields[0].strip()
-        _GYG_PRODUCT_PRICING[pid] = fields[1].strip().lower() if len(fields) > 1 else "individual"
-        if len(fields) > 2:
-            try:
-                _GYG_MAX_GROUP_SIZE[pid] = int(fields[2].strip())
-            except ValueError:
-                pass
+        pid, val = part.split(":", 1)
+        try:
+            _GYG_MAX_GROUP_SIZE[pid.strip()] = int(val.strip())
+        except ValueError:
+            pass
 
-
-def _gyg_valid_categories(product_id: str) -> set[str]:
-    """Return the set of valid ticket categories for a product's pricing model."""
-    model = _GYG_PRODUCT_PRICING.get(product_id, "individual")
-    if model == "group":
-        return {"GROUP"}
-    return {"ADULT"}
+# Valid ticket categories — all GYG products accept ADULT and GROUP
+_GYG_VALID_CATEGORIES = {"ADULT", "GROUP"}
 
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
@@ -8148,15 +8137,12 @@ def gyg_get_availabilities():
         }
         if price_c > 0:
             entry["currency"] = currency
-            _cat = "GROUP" if _GYG_PRODUCT_PRICING.get(product_id) == "group" else "ADULT"
-            _price_entry: dict = {"category": _cat, "price": price_c}
-            if _cat == "GROUP":
-                _max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
-                if _max_gs:
-                    _price_entry["groupSize"] = {"min": 1, "max": _max_gs}
-            entry["pricesByCategory"] = {
-                "retailPrices": [_price_entry]
-            }
+            _retail = [{"category": "ADULT", "price": price_c}]
+            _max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
+            if _max_gs:
+                _retail.append({"category": "GROUP", "price": price_c,
+                                "groupSize": {"min": 1, "max": _max_gs}})
+            entry["pricesByCategory"] = {"retailPrices": _retail}
         avails.append(entry)
 
     elapsed_ms = int((_time.monotonic() - _t0) * 1000)
@@ -8204,11 +8190,11 @@ def gyg_reserve():
     # Check product existence before validating categories — unknown products
     # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY.
     # Skip the Supabase query for products in our pricing config (already known).
-    if product_id not in _GYG_PRODUCT_PRICING and not _gyg_product_exists(product_id):
+    if product_id not in _GYG_MAX_GROUP_SIZE and not _gyg_product_exists(product_id):
         return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
 
-    # Validate ticket categories — we only support categories present in our pricing
-    _SUPPORTED_CATEGORIES = _gyg_valid_categories(product_id)
+    # Validate ticket categories — ADULT and GROUP are supported
+    _SUPPORTED_CATEGORIES = _GYG_VALID_CATEGORIES
     for it in items:
         cat = it.get("category", "")
         if cat and cat not in _SUPPORTED_CATEGORIES:
