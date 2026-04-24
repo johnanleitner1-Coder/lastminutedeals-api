@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-24 (v41 — Added 3 new suppliers: European Voyages (679 products, 27 countries, 15% commission), CruiserCar Palermo (5 products, Italy, 20%), Nile Navigators (23 products, Egypt, 25%). Total: 32 suppliers, 47 countries, 100+ cities. Added GYG Supplier API with test mode safeguard (24/24 tests passing). Previous: v40 — JSON-LD Event structured data for Google Things to Do.)
+**Last updated:** 2026-04-24 (v42 — GYG per-product config (replaces system-wide toggles), 48-hour cancellation policy across all cancel endpoints/booking page/emails. Previous: v41 — Added 3 new suppliers, GYG Supplier API with all 4 test types passing 24/24.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -889,17 +889,30 @@ Agent calls preview_slot(slot_id)
 
 **Entry points:** All under `/gyg/1/` prefix on `run_api_server.py`
 **Auth:** HTTP Basic Auth (GYG_INBOUND_USERNAME / GYG_INBOUND_PASSWORD from .env)
-**Status:** Built (2026-04-23) — awaiting GYG testing configuration submission
+**Status:** All 4 GYG test types PASSED (24/24 each). Production config submitted (2026-04-24). GYG_TEST_MODE=true — flip to false when ready for real bookings.
 
-**Product mapping:** GYG `productId` = OCTO `product_id` from our `booking_url` JSON field in Supabase slots.
+**Per-product configuration:** `GYG_PRODUCTS` env var, format: `product_id:pricing:max:avail_type;...`
+- pricing: "individual" or "group" (mutually exclusive per product)
+- max: max participants per booking
+- avail_type: "period" (daily openingTimes) or "point" (per-slot dateTimes)
+- Default (unconfigured products): individual, max=50, period
+- Current: `GYG_PRODUCTS=969081:group:4:period`
+
+**Product mapping:** GYG `productId` = OCTO `product_id` from our `booking_url` JSON field in Supabase slots. Products in `_GYG_PRODUCTS` dict skip the Supabase existence query (performance optimization).
 
 **Booking flow (GYG → our server → OCTO supplier):**
 ```
 GYG calls get-availabilities(productId, dateRange)
   → We query Supabase slots by product_id substring match in booking_url
+  → Per-product config determines format:
+    - avail_type=point: one entry per slot with specific dateTime
+    - avail_type=period: daily aggregates with T00:00:00 + openingTimes
+  → Pricing categories from cfg: group=GROUP+groupSize, individual=ADULT
   → Return availabilities with dateTime, vacancies, prices (in cents)
 
 GYG calls reserve(productId, dateTime, bookingItems)
+  → Validate categories against per-product config (group→GROUP only, individual→ADULT/CHILD/etc.)
+  → Validate participant count against per-product max
   → We find matching slot, call OCTO POST /reservations (hold only)
   → Store mapping: reservationRef → {octo_uuid, slot_id, booking_url}
   → Return reservationReference + 60-min expiration
@@ -911,21 +924,36 @@ GYG calls book(reservationReference, travelers, bookingItems)
   → Return bookingReference + tickets array
 
 GYG calls cancel-booking(bookingReference)
+  → Test-mode bookings always cancellable (bypasses 48h policy)
+  → 48-hour cancellation policy: rejects if event is within 48h
   → We look up booking, call OCTO DELETE /bookings/{uuid}
-  → Return success (or BOOKING_IN_PAST if activity date passed)
+  → Return success (or BOOKING_IN_PAST / CANCELLATION_NOT_POSSIBLE)
 ```
 
 **Reservation/booking stores:** In-memory dicts (`_GYG_RESERVATIONS`, `_GYG_BOOKINGS`). Reservations expire after 60 min. On server restart, GYG-side expiration handles cleanup.
 
-**All 4 booking types supported:**
+**All 4 booking types supported (all 24/24 tests passed 2026-04-24):**
 - Time Point Individual (specific time, individual categories)
 - Time Point Group (specific time, GROUP category with groupSize)
 - Time Period Individual (date-only, time=T00:00:00)
 - Time Period Group (date-only + GROUP)
 
+**48-hour cancellation policy (system-wide):**
+- GYG cancel-booking: rejects with CANCELLATION_NOT_POSSIBLE if event < 48h away
+- Self-serve /cancel/{id}: shows "Cancellation not available" page
+- DELETE /bookings/{id}: returns 403
+- Booking page /book/{slot_id}: policy stated before checkout
+- Confirmation email: policy stated in cancel instructions
+- Past events (already happened): policy does NOT block — only future events within 48h
+
 **GYG credentials in .env:**
 - `GYG_API_USERNAME` / `GYG_API_PASSWORD` — for us calling GYG endpoints
 - `GYG_INBOUND_USERNAME` / `GYG_INBOUND_PASSWORD` — for GYG calling our endpoints
+
+**Remaining GYG work:**
+- Build supplier allowlist filter (only 13 of 32 suppliers should be exposed — see project memory)
+- Flip GYG_TEST_MODE to false when ready for real bookings
+- Remove old env vars: GYG_PRICING_MODEL, GYG_PARTICIPANT_MAX (replaced by GYG_PRODUCTS)
 
 ---
 

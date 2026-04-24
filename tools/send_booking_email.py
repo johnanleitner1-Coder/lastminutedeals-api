@@ -740,7 +740,7 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
                         <td>
                           <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
                             <strong>Need to cancel?</strong>
-                            {"<a href='" + cancel_url + "' style='color:" + BRAND_BLUE_DK + ";'>Cancel this booking</a> — you'll receive a full refund." if cancel_url else "Reply to this email as soon as possible and we'll do our best to help."}
+                            {"<a href='" + cancel_url + "' style='color:" + BRAND_BLUE_DK + ";'>Cancel this booking</a> — you'll receive a full refund. Cancellations must be made at least 48 hours before the activity." if cancel_url else "Reply to this email as soon as possible and we'll do our best to help."}
                           </p>
                         </td>
                       </tr>
@@ -785,7 +785,8 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
         ------------
         • Arrive 5–10 minutes early to check in.
         • Bring a valid ID and this email (phone is fine).
-        • Need to cancel? {"Cancel here: " + cancel_url if cancel_url else "Reply to this email ASAP."}
+        • Need to cancel? {"Cancel here: " + cancel_url + " (must be 48+ hours before activity)" if cancel_url else "Reply to this email ASAP."}
+        • Cancellation policy: Refunds are not available within 48 hours of the scheduled activity.
 
         ADD TO CALENDAR
         ---------------

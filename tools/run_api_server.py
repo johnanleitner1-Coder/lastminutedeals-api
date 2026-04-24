@@ -3611,7 +3611,7 @@ form h2{{font-size:16px;margin-bottom:16px;color:#333}}
 </div>
 <button type="submit" class="btn" id="bookBtn">Book Now — Pay Securely</button>
 </form>
-<div class="note">You'll be redirected to Stripe for secure payment. Your card is only charged after the booking is confirmed with the supplier.</div>
+<div class="note">You'll be redirected to Stripe for secure payment. Your card is only charged after the booking is confirmed with the supplier.<br>Cancellation policy: Free cancellation up to 48 hours before the activity. No refunds within 48 hours of the event.</div>
 </div>
 </div>
 <div class="footer">Powered by Last Minute Deals HQ &middot; Secure payments by Stripe</div>
@@ -5856,6 +5856,18 @@ def cancel_booking(booking_id: str):
         return jsonify({"success": True, "booking_id": booking_id, "status": "cancelled",
                         "message": "Booking was already cancelled"}), 200
 
+    # 48-hour cancellation policy: no refunds within 48h of a future event
+    try:
+        _evt_time = record.get("start_time", "")
+        if _evt_time:
+            _evt_dt = datetime.fromisoformat(_evt_time.replace("Z", "+00:00"))
+            _now = datetime.now(timezone.utc)
+            if _evt_dt > _now and _evt_dt - _now < timedelta(hours=48):
+                return jsonify({"success": False, "error": "Cancellations are not permitted "
+                                "within 48 hours of the activity"}), 403
+    except (ValueError, TypeError):
+        pass
+
     platform       = record.get("platform", "")
     confirmation   = record.get("confirmation", "")
     payment_intent = record.get("payment_intent_id", "")
@@ -6230,6 +6242,32 @@ def self_serve_cancel(booking_id: str):
     # can reference it even when the booking was already cancelled on arrival (C-2).
     refund_issued = False
 
+    # 48-hour cancellation policy: no refunds within 48h of a future event
+    _within_48h = False
+    if not already_done:
+        try:
+            _evt_time = record.get("start_time", "")
+            if _evt_time:
+                _evt_dt = datetime.fromisoformat(_evt_time.replace("Z", "+00:00"))
+                _now = datetime.now(timezone.utc)
+                if _evt_dt > _now and _evt_dt - _now < timedelta(hours=48):
+                    _within_48h = True
+        except (ValueError, TypeError):
+            pass
+
+    if _within_48h and not already_done:
+        return f"""<!DOCTYPE html><html><head><title>Cancellation Not Available</title></head>
+        <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+        <h2 style="color:#0f172a;">Cancellation not available</h2>
+        <p style="color:#64748b;">Your booking for <strong>{service}</strong> is within 48 hours
+        of the scheduled activity. Per our cancellation policy, refunds are not available within
+        48 hours of the event.</p>
+        <p style="color:#64748b;">If you have questions or need to make changes, please email
+        <a href="mailto:bookings@lastminutedealshq.com">bookings@lastminutedealshq.com</a>.</p>
+        <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
+        background:#0f172a;color:#fff;border-radius:8px;text-decoration:none;">Back to Home</a>
+        </body></html>""", 403
+
     if request.method == "POST" and not already_done:
         # Execute cancellation inline (same logic as DELETE /bookings/{id})
         stripe_client  = _stripe()
@@ -6349,6 +6387,8 @@ def self_serve_cancel(booking_id: str):
     </form>
     <p style="margin-top:20px;"><a href="{landing_url}" style="color:#64748b;font-size:14px;">
       Keep my booking</a></p>
+    <p style="color:#94a3b8;font-size:12px;margin-top:24px;">Cancellation policy: Refunds are not
+    available within 48 hours of the scheduled activity.</p>
     </body></html>"""
 
 
@@ -7764,21 +7804,53 @@ if _gyg_excl_raw:
         pid, dates_str = part.split(":", 1)
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
-# ── GYG Pricing ──────────────────────────────────────────────────────────────
-# GYG_PRICING_MODEL: "individual" (default) or "group" — per-product, set once.
-#   individual → accepts all standard categories except MILITARY
-#   group → accepts only GROUP
-# GYG_PARTICIPANT_MAX: max participants per booking (individual) or max group
-#   size (group). Set per product to match GYG product configuration.
-_GYG_PRICING_MODEL = os.getenv("GYG_PRICING_MODEL", "individual").strip().lower()
-_GYG_PARTICIPANT_MAX = int(os.getenv("GYG_PARTICIPANT_MAX", "50"))
-if _GYG_PRICING_MODEL == "group":
-    _GYG_VALID_CATEGORIES = {"GROUP"}
-else:
-    _GYG_VALID_CATEGORIES = {
-        "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
-        "INFANT", "EU_CITIZEN", "EU_CITIZEN_STUDENT", "GROUP",
-    }
+# ── GYG Per-Product Configuration ────────────────────────────────────────────
+# Each product on GYG has a fixed pricing model, participant limit, and
+# availability format. Configured once per product — never toggled.
+#
+# GYG_PRODUCTS format: "product_id:pricing:max:avail_type;..."
+#   pricing:    "individual" or "group"
+#   max:        max participants per booking (individual) or max group size (group)
+#   avail_type: "period" (opening hours) or "point" (fixed start times)
+#
+# Example: GYG_PRODUCTS=969081:group:4:period;123456:individual:10:point
+#
+_GYG_PRODUCTS: dict[str, dict] = {}
+_gyg_products_raw = os.getenv("GYG_PRODUCTS", "").strip()
+if _gyg_products_raw:
+    for part in _gyg_products_raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        fields = part.split(":")
+        if len(fields) < 4:
+            print(f"[GYG] WARNING: invalid product config (need 4 fields): {part}")
+            continue
+        pid = fields[0].strip()
+        try:
+            _GYG_PRODUCTS[pid] = {
+                "pricing": fields[1].strip().lower(),
+                "max": int(fields[2].strip()),
+                "avail_type": fields[3].strip().lower(),
+            }
+            print(f"[GYG] Product {pid}: pricing={fields[1]}, max={fields[2]}, avail={fields[3]}")
+        except (ValueError, IndexError) as e:
+            print(f"[GYG] WARNING: bad product config for {pid}: {e}")
+
+_GYG_DEFAULT_CONFIG = {"pricing": "individual", "max": 50, "avail_type": "period"}
+
+
+def _gyg_product_cfg(product_id: str) -> dict:
+    """Return per-product GYG config. Unknown products get safe defaults."""
+    return _GYG_PRODUCTS.get(product_id, _GYG_DEFAULT_CONFIG)
+
+
+# Valid ticket categories per pricing model
+_GYG_INDIVIDUAL_CATEGORIES = {
+    "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
+    "INFANT", "EU_CITIZEN", "EU_CITIZEN_STUDENT", "GROUP",
+}
+_GYG_GROUP_CATEGORIES = {"GROUP"}
 
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
@@ -8107,70 +8179,98 @@ def gyg_get_availabilities():
                 filtered.append(s)
         slots = filtered
 
-    # Aggregate slots into daily Time Period entries with opening hours.
-    # One entry per day — works for both Time Point and Time Period GYG tests.
-    # Reserve endpoint handles specific time matching regardless of format.
-    _daily: dict[str, dict] = {}  # date_str -> {min_time, max_time, max_spots, price_c, currency, tz}
+    # ── Build availability entries using per-product config ──
+    cfg = _gyg_product_cfg(product_id)
 
-    for s in slots:
-        start = s.get("start_time", "")
-        if not start:
-            continue
-        if start.endswith("Z"):
-            start = start[:-1] + "+00:00"
-        if "T" not in start:
-            start = f"{start}T00:00:00+00:00"
-        currency = (s.get("currency") or "USD").upper()
-        price_c  = _gyg_price_cents(s.get("our_price") or s.get("price") or 0, currency)
-        spots = 10
-        try:
-            spots = int(s.get("spots_open", 10))
-        except (ValueError, TypeError):
-            pass
-
-        date_str = start[:10]  # "YYYY-MM-DD"
-        time_str = start[11:16]  # "HH:MM"
-        tz_suffix = start[19:]  # "+00:00" etc.
-        if date_str not in _daily:
-            _daily[date_str] = {"min_t": time_str, "max_t": time_str,
-                                "spots": spots, "price_c": price_c,
-                                "currency": currency, "tz": tz_suffix}
-        else:
-            d = _daily[date_str]
-            if time_str < d["min_t"]:
-                d["min_t"] = time_str
-            if time_str > d["max_t"]:
-                d["max_t"] = time_str
-            d["spots"] = max(d["spots"], spots)
-            if price_c > 0:
-                d["price_c"] = price_c
-                d["currency"] = currency
+    def _retail_prices(price_c: int, currency: str) -> list:
+        if cfg["pricing"] == "group":
+            return [{"category": "GROUP", "price": price_c,
+                     "groupSize": {"min": 1, "max": cfg["max"]}}]
+        return [{"category": "ADULT", "price": price_c}]
 
     avails = []
-    for date_str, d in sorted(_daily.items()):
-        close_t = d["max_t"]
-        # Extend closing by 1 hour since the last slot starts at max_t
-        try:
-            h, m = int(close_t[:2]), int(close_t[3:])
-            close_t = f"{min(h + 1, 23):02d}:{m:02d}"
-        except (ValueError, IndexError):
-            pass
-        if _GYG_PRICING_MODEL == "group":
-            _retail = [{"category": "GROUP", "price": d["price_c"],
-                        "groupSize": {"min": 1, "max": _GYG_PARTICIPANT_MAX}}]
-        else:
-            _retail = [{"category": "ADULT", "price": d["price_c"]}]
-        period_entry: dict = {
-            "dateTime":    f"{date_str}T00:00:00{d['tz']}",
-            "productId":   product_id,
-            "vacancies":   min(max(d["spots"], 0), 5000),
-            "openingTimes": [{"fromTime": d["min_t"], "toTime": close_t}],
-            "cutoffSeconds": 0,
-        }
-        if d["price_c"] > 0:
-            period_entry["currency"] = d["currency"]
-            period_entry["pricesByCategory"] = {"retailPrices": _retail}
-        avails.append(period_entry)
+
+    if cfg["avail_type"] == "point":
+        # Time Point: one entry per slot with specific dateTime
+        for s in slots:
+            start = s.get("start_time", "")
+            if not start:
+                continue
+            if start.endswith("Z"):
+                start = start[:-1] + "+00:00"
+            if "T" not in start:
+                start = f"{start}T00:00:00+00:00"
+            currency = (s.get("currency") or "USD").upper()
+            price_c  = _gyg_price_cents(s.get("our_price") or s.get("price") or 0, currency)
+            spots = 10
+            try:
+                spots = int(s.get("spots_open", 10))
+            except (ValueError, TypeError):
+                pass
+            entry: dict = {
+                "dateTime":      start,
+                "productId":     product_id,
+                "vacancies":     min(max(spots, 0), 5000),
+                "cutoffSeconds": 0,
+            }
+            if price_c > 0:
+                entry["currency"] = currency
+                entry["pricesByCategory"] = {"retailPrices": _retail_prices(price_c, currency)}
+            avails.append(entry)
+    else:
+        # Time Period: aggregate into daily entries with opening hours
+        _daily: dict[str, dict] = {}
+        for s in slots:
+            start = s.get("start_time", "")
+            if not start:
+                continue
+            if start.endswith("Z"):
+                start = start[:-1] + "+00:00"
+            if "T" not in start:
+                start = f"{start}T00:00:00+00:00"
+            currency = (s.get("currency") or "USD").upper()
+            price_c  = _gyg_price_cents(s.get("our_price") or s.get("price") or 0, currency)
+            spots = 10
+            try:
+                spots = int(s.get("spots_open", 10))
+            except (ValueError, TypeError):
+                pass
+            date_str = start[:10]   # "YYYY-MM-DD"
+            time_str = start[11:16] # "HH:MM"
+            tz_suffix = start[19:]  # "+00:00" etc.
+            if date_str not in _daily:
+                _daily[date_str] = {"min_t": time_str, "max_t": time_str,
+                                    "spots": spots, "price_c": price_c,
+                                    "currency": currency, "tz": tz_suffix}
+            else:
+                d = _daily[date_str]
+                if time_str < d["min_t"]:
+                    d["min_t"] = time_str
+                if time_str > d["max_t"]:
+                    d["max_t"] = time_str
+                d["spots"] = max(d["spots"], spots)
+                if price_c > 0:
+                    d["price_c"] = price_c
+                    d["currency"] = currency
+
+        for date_str, d in sorted(_daily.items()):
+            close_t = d["max_t"]
+            try:
+                h, m = int(close_t[:2]), int(close_t[3:])
+                close_t = f"{min(h + 1, 23):02d}:{m:02d}"
+            except (ValueError, IndexError):
+                pass
+            period_entry: dict = {
+                "dateTime":      f"{date_str}T00:00:00{d['tz']}",
+                "productId":     product_id,
+                "vacancies":     min(max(d["spots"], 0), 5000),
+                "openingTimes":  [{"fromTime": d["min_t"], "toTime": close_t}],
+                "cutoffSeconds": 0,
+            }
+            if d["price_c"] > 0:
+                period_entry["currency"] = d["currency"]
+                period_entry["pricesByCategory"] = {"retailPrices": _retail_prices(d["price_c"], d["currency"])}
+            avails.append(period_entry)
 
     elapsed_ms = int((_time.monotonic() - _t0) * 1000)
     _GYG_DEBUG["last_avail_response"] = {
@@ -8214,32 +8314,35 @@ def gyg_reserve():
     if not date_time or not items:
         return _gyg_err("VALIDATION_FAILURE", "Missing dateTime or bookingItems")
 
-    # Check product existence before validating categories — unknown products
-    # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY.
-    if not _gyg_product_exists(product_id):
+    # Check product existence — skip Supabase query for explicitly configured products
+    if product_id not in _GYG_PRODUCTS and not _gyg_product_exists(product_id):
         return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
 
-    # Validate ticket categories — ADULT and GROUP are supported
-    _SUPPORTED_CATEGORIES = _GYG_VALID_CATEGORIES
+    # Per-product config drives category validation and participant limits
+    cfg = _gyg_product_cfg(product_id)
+    _valid_cats = _GYG_GROUP_CATEGORIES if cfg["pricing"] == "group" else _GYG_INDIVIDUAL_CATEGORIES
+
+    # Validate ticket categories
     for it in items:
         cat = it.get("category", "")
-        if cat and cat not in _SUPPORTED_CATEGORIES:
+        if cat and cat not in _valid_cats:
             return _gyg_err("INVALID_TICKET_CATEGORY",
                             f"Unsupported category: {cat}",
                             ticketCategory=cat)
 
-    # Validate participants against configured max
+    # Validate participants against per-product max
+    _pmax = cfg["max"]
     for it in items:
         gs = it.get("groupSize", 0)
-        if gs and gs > _GYG_PARTICIPANT_MAX:
+        if gs and gs > _pmax:
             return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
-                            f"groupSize {gs} exceeds max {_GYG_PARTICIPANT_MAX}",
-                            participantsConfiguration={"min": 1, "max": _GYG_PARTICIPANT_MAX})
+                            f"groupSize {gs} exceeds max {_pmax}",
+                            participantsConfiguration={"min": 1, "max": _pmax})
     _total_count = sum(it.get("count", 0) for it in items)
-    if _total_count > _GYG_PARTICIPANT_MAX:
+    if _total_count > _pmax:
         return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
-                        f"Total count {_total_count} exceeds max {_GYG_PARTICIPANT_MAX}",
-                        participantsConfiguration={"min": 1, "max": _GYG_PARTICIPANT_MAX})
+                        f"Total count {_total_count} exceeds max {_pmax}",
+                        participantsConfiguration={"min": 1, "max": _pmax})
 
     # Total pax (GROUP category: count × groupSize)
     qty = 0
@@ -8515,18 +8618,23 @@ def gyg_cancel_booking():
     if not bk:
         return _gyg_err("INVALID_BOOKING", f"Unknown booking: {bk_ref}")
 
-    # Reject cancellation if the activity date has passed
-    try:
-        bk_dt = datetime.fromisoformat(bk["date_time"].replace("Z", "+00:00"))
-        if bk_dt < datetime.now(timezone.utc):
-            return _gyg_err("BOOKING_IN_PAST", "Booking date has already passed")
-    except (ValueError, KeyError):
-        pass
-
+    # Test-mode bookings can always be cancelled (GYG integration tests use imminent dates)
     if bk.get("is_test"):
         _GYG_BOOKINGS.pop(bk_ref, None)
         print(f"[GYG-TEST] Mock booking cancelled: {bk_ref}")
         return jsonify({"data": {}}), 200
+
+    # Reject cancellation if the activity date has passed or is within 48 hours
+    try:
+        bk_dt = datetime.fromisoformat(bk["date_time"].replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        if bk_dt < now:
+            return _gyg_err("BOOKING_IN_PAST", "Booking date has already passed")
+        if bk_dt - now < timedelta(hours=48):
+            return _gyg_err("CANCELLATION_NOT_POSSIBLE",
+                            "Cancellations are not permitted within 48 hours of the activity")
+    except (ValueError, KeyError):
+        pass
 
     burl = json.loads(bk["booking_url"])
     ok, err = _gyg_octo_cancel(bk["octo_uuid"], burl)
