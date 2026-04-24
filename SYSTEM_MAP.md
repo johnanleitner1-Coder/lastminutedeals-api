@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-23 (v40 — Added rich JSON-LD Event structured data to SEO tour pages and booking pages for Google Things to Do eligibility. Previous: v39 — Fixed search_slots uptime: capped MCP queries to 1000 rows (single Supabase page) to eliminate multi-page pagination timeouts. Improved run_mcp_remote.py resilience (connect timeout 8s→20s, ping 10m→8m, exponential backoff). Previous: v38 — GSC verification, sitemap.xml, robots.txt.)
+**Last updated:** 2026-04-24 (v41 — Added 3 new suppliers: European Voyages (679 products, 27 countries, 15% commission), CruiserCar Palermo (5 products, Italy, 20%), Nile Navigators (23 products, Egypt, 25%). Total: 32 suppliers, 47 countries, 100+ cities. Added GYG Supplier API with test mode safeguard (24/24 tests passing). Previous: v40 — JSON-LD Event structured data for Google Things to Do.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -130,7 +130,7 @@ START
   │    Only processes: enabled=true AND API key set in .env
   │    Currently enabled: bokun_reseller ONLY
   │
-  ├─ For each vendor_id (29 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086, 32610, 133616, 117927, 39712, 107408, 102335]
+  ├─ For each vendor_id (32 total): [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086, 32610, 133616, 117927, 39712, 107408, 102335, 44714, 88202, 107766]
   │    ├─ GET /products  (NO pricing capability header — avoids Bokun hang)
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
@@ -139,7 +139,7 @@ START
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
   │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
-  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 29 vendors mapped)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 32 vendors mapped)
   │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
   │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)

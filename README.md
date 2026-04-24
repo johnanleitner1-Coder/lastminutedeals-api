@@ -3,7 +3,7 @@
 [![Smithery](https://smithery.ai/badge/@johnanleitner1/Last_Minute_Deals_HQ)](https://smithery.ai/server/johnanleitner1/Last_Minute_Deals_HQ)
 [![lastminutedeals-api MCP server](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api/badges/score.svg)](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api)
 
-MCP server with real-time last-minute tour and activity inventory. 8,000+ live bookable slots across 29 suppliers in 16 countries and 30 cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
+MCP server with real-time last-minute tour and activity inventory. Live bookable slots across 32 suppliers in 47 countries and 100+ cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
 
 Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers are confirmed automatically.
 
@@ -216,7 +216,7 @@ book_slot(
 
 ```
 Every 4 hours:
-  fetch_octo_slots.py   →  Pull availability from 29 suppliers via OCTO API
+  fetch_octo_slots.py   →  Pull availability from 32 suppliers via OCTO API
   aggregate_slots.py    →  Deduplicate, filter, sort by urgency
   compute_pricing.py    →  Dynamic commission-based pricing
   sync_to_supabase.py   →  Upsert to production database

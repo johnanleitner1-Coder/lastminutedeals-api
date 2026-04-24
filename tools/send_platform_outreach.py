@@ -38,16 +38,16 @@ TARGETS = [
     {
         "name": "Bridgify",
         "to": "contact@bridgify.io",
-        "subject": "OCTO Supply Partner Inquiry — 29 Suppliers, 8,000+ Live Slots",
+        "subject": "OCTO Supply Partner Inquiry — 32 Suppliers, 10,000+ Live Slots",
         "body": """\
 Hi Bridgify team,
 
 I'm John, founder of Last Minute Deals HQ. We operate an OCTO-native \
-booking pipeline connected to 29 tour and activity suppliers across 16 \
+booking pipeline connected to 32 tour and activity suppliers across 16 \
 countries — Iceland, Egypt, Japan, Italy, Portugal, Turkey, Morocco, \
 Tanzania, and more. Our inventory includes glacier hikes, e-bike tours, \
 cooking classes, Nile cruises, desert safaris, and photography experiences. \
-~8,000 live bookable slots, refreshed every 4 hours.
+~10,000 live bookable slots, refreshed every 4 hours.
 
 We'd like to explore becoming a supply source for Bridgify. Our inventory \
 is real-time via the OCTO open standard, which I understand you already \
@@ -55,8 +55,8 @@ support. If we carry products your network doesn't already have, \
 integration should be straightforward.
 
 A few details:
-- 29 OCTO-connected suppliers (Bokun platform)
-- 8,000+ live slots across 30 cities
+- 32 OCTO-connected suppliers (Bokun platform)
+- 10,000+ live slots across 100+ cities
 - Real-time availability and booking via OCTO API
 - Focus on last-minute / short-lead inventory (<=72h)
 - Stripe-integrated checkout with auth-hold
@@ -77,9 +77,9 @@ https://api.lastminutedealshq.com
 Hi Holibob team,
 
 I'm John, founder of Last Minute Deals HQ. We run an OCTO-native booking \
-pipeline with 29 tour and activity suppliers across 16 countries — \
+pipeline with 32 tour and activity suppliers across 47 countries — \
 including destinations like Reykjavik, Rome, Cairo, Kyoto, Lisbon, \
-Marrakech, and Dar es Salaam. ~8,000 live bookable slots covering glacier \
+Marrakech, and Dar es Salaam. ~10,000 live bookable slots covering glacier \
 hikes, e-bike tours, cooking classes, Nile cruises, desert tours, and more.
 
 We're interested in becoming a supply partner for Holibob. Our inventory \
@@ -88,8 +88,8 @@ booking. If we carry experiences your network doesn't already have, we'd \
 love to explore integration.
 
 Quick overview:
-- 29 suppliers on Bokun/OCTO
-- 8,000+ live slots, 30 cities, 16 countries
+- 32 suppliers on Bokun/OCTO
+- 10,000+ live slots, 100+ cities, 47 countries
 - Real-time availability, refreshed every 4 hours
 - Specialization in last-minute / short-lead availability
 - REST API + MCP server for AI agent distribution
@@ -104,13 +104,13 @@ https://api.lastminutedealshq.com
     {
         "name": "Klook",
         "to": "nathan.szabo@klook.com",
-        "subject": "Connectivity Partner Inquiry — 29 Suppliers, 8,000+ Slots, 16 Countries",
+        "subject": "Connectivity Partner Inquiry — 32 Suppliers, 10,000+ Slots, 47 Countries",
         "body": """\
 Hi Nathan,
 
 I'm John, founder of Last Minute Deals HQ. We operate a booking pipeline \
-connected to 29 tour and activity suppliers across 16 countries — Iceland, \
-Egypt, Japan, Italy, Portugal, Turkey, Morocco, Tanzania, and more. ~8,000 \
+connected to 32 tour and activity suppliers across 47 countries — Iceland, \
+Egypt, Japan, Italy, Portugal, Turkey, Morocco, Tanzania, and more. ~10,000 \
 live bookable slots covering glacier hikes, e-bike tours, cooking classes, \
 Nile cruises, desert safaris, and photography experiences.
 
@@ -120,8 +120,8 @@ specialize in last-minute / short-lead availability (<=72h) — a segment \
 that's hard for traditional supply partners to fill consistently.
 
 Quick overview:
-- 29 connected suppliers (Bokun/OCTO platform)
-- 8,000+ live slots across 30 cities
+- 32 connected suppliers (Bokun/OCTO platform)
+- 10,000+ live slots across 100+ cities
 - Real-time availability, refreshed every 4 hours
 - REST API with search, booking, and status endpoints
 - Categories: tours, activities, wellness, photography, hospitality
@@ -143,9 +143,9 @@ https://api.lastminutedealshq.com
 Hi Headout team,
 
 I'm John, founder of Last Minute Deals HQ. We operate an OCTO-native \
-booking pipeline connected to 29 tour and activity suppliers across 16 \
-countries and 30 cities — including Rome, Reykjavik, Cairo, Kyoto, Lisbon, \
-Marrakech, Puerto Vallarta, and more. ~8,000 live bookable slots covering \
+booking pipeline connected to 32 tour and activity suppliers across 16 \
+countries and 100+ cities — including Rome, Reykjavik, Cairo, Kyoto, Lisbon, \
+Marrakech, Puerto Vallarta, and more. ~10,000 live bookable slots covering \
 e-bike tours, glacier hikes, cooking classes, desert safaris, Nile \
 cruises, photography experiences, and more.
 
@@ -155,8 +155,8 @@ real-time availability via the OCTO open standard, and we can map to \
 your API format.
 
 Quick overview:
-- 29 OCTO-connected suppliers (Bokun platform)
-- 8,000+ live slots across 30 cities
+- 32 OCTO-connected suppliers (Bokun platform)
+- 10,000+ live slots across 100+ cities
 - Real-time availability, refreshed every 4 hours
 - Focus on last-minute / short-lead inventory
 - Categories: tours, activities, wellness, photography, hospitality

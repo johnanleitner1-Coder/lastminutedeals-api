@@ -1512,7 +1512,7 @@ def mcp_server_card():
             "version": "1.0.0",
             "description": (
                 "Book last-minute tours and activities worldwide. "
-                f"7,000+ live slots from {_supplier_count()} suppliers across 16 countries."
+                f"Live slots from {_supplier_count()} suppliers across 47 countries and 100+ cities."
             ),
             "homepage": "https://lastminutedealshq.com",
         },
@@ -3487,7 +3487,7 @@ _TOURS_INDEX_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Last-Minute Tours & Experiences Worldwide — Last Minute Deals HQ</title>
-<meta name="description" content="Book last-minute tours and activities in 16 countries. Glacier hikes in Iceland, pyramid tours in Egypt, e-bike tours in Rome, and more. Instant confirmation from local suppliers.">
+<meta name="description" content="Book last-minute tours and activities in 47 countries. Walking tours in Paris, glacier hikes in Iceland, photo shoots in Budapest, pyramid tours in Egypt, and more. Instant confirmation from 32 suppliers.">
 <link rel="canonical" href="https://api.lastminutedealshq.com/tours">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -3510,7 +3510,7 @@ h1{{font-size:28px;margin-bottom:12px;color:#1a1a2e}}
 <div class="header"><a href="/" style="color:#fff;text-decoration:none">LAST MINUTE DEALS <span>HQ</span></a></div>
 <div class="container">
 <h1>Last-Minute Tours & Experiences Worldwide</h1>
-<p class="subtitle">Book instantly-confirmed tours and activities from {supplier_count} local suppliers in 16 countries. All inventory is live — if you see it, you can book it.</p>
+<p class="subtitle">Book instantly-confirmed tours and activities from {supplier_count} suppliers across 47 countries. All inventory is live — if you see it, you can book it.</p>
 <div class="grid">
 {destination_cards}
 </div>
@@ -7213,8 +7213,8 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory sourced live "
             "from production booking systems via the OCTO open standard. "
-            "23 active suppliers across Iceland, Italy, Morocco, Portugal, Japan, Tanzania, "
-            "Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, China, and Mexico. "
+            "32 active suppliers across 47 countries including France, UK, Germany, Italy, Spain, "
+            "Netherlands, Switzerland, Iceland, Egypt, Japan, Portugal, Turkey, and more. "
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
             "2. Present the options to the user and get their selection. "
@@ -7247,9 +7247,9 @@ def _start_mcp_thread():
         """
         Search available last-minute tours, activities, and experiences worldwide.
 
-        Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt,
-        Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK,
-        China, and Mexico. Results sorted by urgency (soonest departures first).
+        Queries live production inventory from 32 suppliers across 47 countries including
+        France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan,
+        Portugal, Turkey, and more. Results sorted by urgency (soonest departures first).
 
         When to use: Call this first when a user asks about tours or activities. Follow up
         with preview_slot(slot_id) for a shareable booking link, or book_slot to book directly.

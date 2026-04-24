@@ -25,10 +25,10 @@ exampleConfig:
 
 name: Last Minute Deals HQ
 description: >
-  8,000+ live bookable slots across 29 suppliers in 16 countries, sourced from
+  Live bookable slots across 32 suppliers in 47 countries, sourced from
   production booking systems via the OCTO open standard. Covers tours, activities,
-  and photography experiences in 30 cities including Reykjavik, Rome, Cairo, Kyoto,
-  London, Marrakech, Puerto Vallarta, and more. Search available slots, create Stripe
+  photo shoots, and multi-day trips in 100+ cities including Paris, London, Rome,
+  Berlin, Amsterdam, Cairo, Reykjavik, Kyoto, and more. Search available slots, create Stripe
   checkout sessions, or book autonomously with a pre-funded wallet. Inventory
   refreshed every 4 hours. To enable bookings, register a free API key at the
   booking server.
