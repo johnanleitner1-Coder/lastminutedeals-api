@@ -7765,11 +7765,14 @@ if _gyg_excl_raw:
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
 # ── GYG Pricing ──────────────────────────────────────────────────────────────
-# All products support both ADULT (individual) and GROUP categories.
-# Group bookings are capped at _GYG_GROUP_MAX — real capacity enforcement
-# comes from spots_open on the slot, this just satisfies the API contract.
+# Accept all standard GYG ticket categories — a booking is a booking regardless
+# of traveler type. GROUP has special handling (groupSize). All others are
+# treated as individual bookings at the same price.
 _GYG_GROUP_MAX = 50
-_GYG_VALID_CATEGORIES = {"ADULT", "GROUP"}
+_GYG_VALID_CATEGORIES = {
+    "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
+    "MILITARY", "INFANT", "GROUP",
+}
 
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
