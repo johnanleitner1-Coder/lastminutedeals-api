@@ -7764,25 +7764,11 @@ if _gyg_excl_raw:
         pid, dates_str = part.split(":", 1)
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
-# ── GYG Product Pricing Model ────────────────────────────────────────────────
-# Products support both ADULT (individual) and GROUP categories simultaneously.
-# GYG_MAX_GROUP_SIZE sets the max participants per group booking.
-# Format: "product_id:max_group_size;..."
-# Example: GYG_MAX_GROUP_SIZE=969081:4
-_GYG_MAX_GROUP_SIZE: dict[str, int] = {}
-_gyg_gs_raw = os.getenv("GYG_MAX_GROUP_SIZE", "").strip()
-if _gyg_gs_raw:
-    for part in _gyg_gs_raw.split(";"):
-        part = part.strip()
-        if ":" not in part:
-            continue
-        pid, val = part.split(":", 1)
-        try:
-            _GYG_MAX_GROUP_SIZE[pid.strip()] = int(val.strip())
-        except ValueError:
-            pass
-
-# Valid ticket categories — all GYG products accept ADULT and GROUP
+# ── GYG Pricing ──────────────────────────────────────────────────────────────
+# All products support both ADULT (individual) and GROUP categories.
+# Group bookings are capped at _GYG_GROUP_MAX — real capacity enforcement
+# comes from spots_open on the slot, this just satisfies the API contract.
+_GYG_GROUP_MAX = 50
 _GYG_VALID_CATEGORIES = {"ADULT", "GROUP"}
 
 
@@ -8137,11 +8123,11 @@ def gyg_get_availabilities():
         }
         if price_c > 0:
             entry["currency"] = currency
-            _retail = [{"category": "ADULT", "price": price_c}]
-            _max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
-            if _max_gs:
-                _retail.append({"category": "GROUP", "price": price_c,
-                                "groupSize": {"min": 1, "max": _max_gs}})
+            _retail = [
+                {"category": "ADULT", "price": price_c},
+                {"category": "GROUP", "price": price_c,
+                 "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
+            ]
             entry["pricesByCategory"] = {"retailPrices": _retail}
         avails.append(entry)
 
@@ -8189,8 +8175,7 @@ def gyg_reserve():
 
     # Check product existence before validating categories — unknown products
     # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY.
-    # Skip the Supabase query for products in our pricing config (already known).
-    if product_id not in _GYG_MAX_GROUP_SIZE and not _gyg_product_exists(product_id):
+    if not _gyg_product_exists(product_id):
         return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
 
     # Validate ticket categories — ADULT and GROUP are supported
@@ -8202,15 +8187,13 @@ def gyg_reserve():
                             f"Unsupported category: {cat}",
                             ticketCategory=cat)
 
-    # Validate groupSize against configured max for GROUP products
-    max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
-    if max_gs:
-        for it in items:
-            gs = it.get("groupSize", 0)
-            if gs and gs > max_gs:
-                return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
-                                f"groupSize {gs} exceeds max {max_gs}",
-                                participantsConfiguration={"min": 1, "max": max_gs})
+    # Validate groupSize against declared max
+    for it in items:
+        gs = it.get("groupSize", 0)
+        if gs and gs > _GYG_GROUP_MAX:
+            return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
+                            f"groupSize {gs} exceeds max {_GYG_GROUP_MAX}",
+                            participantsConfiguration={"min": 1, "max": _GYG_GROUP_MAX})
 
     # Total pax (GROUP category: count × groupSize)
     qty = 0
