@@ -8202,8 +8202,9 @@ def gyg_reserve():
         return _gyg_err("VALIDATION_FAILURE", "Missing dateTime or bookingItems")
 
     # Check product existence before validating categories — unknown products
-    # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY
-    if not _gyg_product_exists(product_id):
+    # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY.
+    # Skip the Supabase query for products in our pricing config (already known).
+    if product_id not in _GYG_PRODUCT_PRICING and not _gyg_product_exists(product_id):
         return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
 
     # Validate ticket categories — we only support categories present in our pricing
