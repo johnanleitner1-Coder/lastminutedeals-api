@@ -7764,6 +7764,38 @@ if _gyg_excl_raw:
         pid, dates_str = part.split(":", 1)
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
+# ── GYG Product Pricing Model ────────────────────────────────────────────────
+# Determines valid ticket categories, availability price format, and group
+# size limits per product.
+# Format: "product_id:model[:max_group_size];..."
+#   model = "individual" (default) or "group"
+#   max_group_size = optional int, only relevant for group products
+# Example: GYG_PRODUCT_PRICING=969081:group:6
+_GYG_PRODUCT_PRICING: dict[str, str] = {}
+_GYG_MAX_GROUP_SIZE: dict[str, int] = {}
+_gyg_pricing_raw = os.getenv("GYG_PRODUCT_PRICING", "").strip()
+if _gyg_pricing_raw:
+    for part in _gyg_pricing_raw.split(";"):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        fields = part.split(":")
+        pid = fields[0].strip()
+        _GYG_PRODUCT_PRICING[pid] = fields[1].strip().lower() if len(fields) > 1 else "individual"
+        if len(fields) > 2:
+            try:
+                _GYG_MAX_GROUP_SIZE[pid] = int(fields[2].strip())
+            except ValueError:
+                pass
+
+
+def _gyg_valid_categories(product_id: str) -> set[str]:
+    """Return the set of valid ticket categories for a product's pricing model."""
+    model = _GYG_PRODUCT_PRICING.get(product_id, "individual")
+    if model == "group":
+        return {"GROUP"}
+    return {"ADULT"}
+
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
     """Detect test traveler data — permanent safety net against fake bookings."""
@@ -8116,8 +8148,14 @@ def gyg_get_availabilities():
         }
         if price_c > 0:
             entry["currency"] = currency
+            _cat = "GROUP" if _GYG_PRODUCT_PRICING.get(product_id) == "group" else "ADULT"
+            _price_entry: dict = {"category": _cat, "price": price_c}
+            if _cat == "GROUP":
+                _max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
+                if _max_gs:
+                    _price_entry["groupSize"] = {"min": 1, "max": _max_gs}
             entry["pricesByCategory"] = {
-                "retailPrices": [{"category": "ADULT", "price": price_c}]
+                "retailPrices": [_price_entry]
             }
         avails.append(entry)
 
@@ -8163,14 +8201,29 @@ def gyg_reserve():
     if not date_time or not items:
         return _gyg_err("VALIDATION_FAILURE", "Missing dateTime or bookingItems")
 
+    # Check product existence before validating categories — unknown products
+    # must return INVALID_PRODUCT, not INVALID_TICKET_CATEGORY
+    if not _gyg_product_exists(product_id):
+        return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
+
     # Validate ticket categories — we only support categories present in our pricing
-    _SUPPORTED_CATEGORIES = {"ADULT"}
+    _SUPPORTED_CATEGORIES = _gyg_valid_categories(product_id)
     for it in items:
         cat = it.get("category", "")
         if cat and cat not in _SUPPORTED_CATEGORIES:
             return _gyg_err("INVALID_TICKET_CATEGORY",
                             f"Unsupported category: {cat}",
                             ticketCategory=cat)
+
+    # Validate groupSize against configured max for GROUP products
+    max_gs = _GYG_MAX_GROUP_SIZE.get(product_id)
+    if max_gs:
+        for it in items:
+            gs = it.get("groupSize", 0)
+            if gs and gs > max_gs:
+                return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
+                                f"groupSize {gs} exceeds max {max_gs}",
+                                participantsConfiguration={"min": 1, "max": max_gs})
 
     # Total pax (GROUP category: count × groupSize)
     qty = 0
@@ -8201,9 +8254,6 @@ def gyg_reserve():
         (req_dt + timedelta(hours=2)).isoformat(),
     )
     if not slots:
-        # Distinguish invalid product from no availability
-        if not _gyg_product_exists(product_id):
-            return _gyg_err("INVALID_PRODUCT", f"Unknown product: {product_id}")
         return _gyg_err("NO_AVAILABILITY", "No availability found")
 
     # Match by minute (Time Point products)
