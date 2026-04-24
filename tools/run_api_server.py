@@ -7765,14 +7765,20 @@ if _gyg_excl_raw:
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
 # ── GYG Pricing ──────────────────────────────────────────────────────────────
-# Accept standard GYG ticket categories. GROUP has special handling (groupSize).
-# MILITARY excluded — configured as unsupported in GYG test/product setup.
-_GYG_GROUP_MAX = 50
+# GYG_PRICING_MODEL: "individual" (default) or "group" — per-product, set once.
+#   individual → accepts all standard categories except MILITARY
+#   group → accepts only GROUP
+# GYG_PARTICIPANT_MAX: max participants per booking (individual) or max group
+#   size (group). Set per product to match GYG product configuration.
+_GYG_PRICING_MODEL = os.getenv("GYG_PRICING_MODEL", "individual").strip().lower()
 _GYG_PARTICIPANT_MAX = int(os.getenv("GYG_PARTICIPANT_MAX", "50"))
-_GYG_VALID_CATEGORIES = {
-    "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
-    "INFANT", "EU_CITIZEN", "EU_CITIZEN_STUDENT", "GROUP",
-}
+if _GYG_PRICING_MODEL == "group":
+    _GYG_VALID_CATEGORIES = {"GROUP"}
+else:
+    _GYG_VALID_CATEGORIES = {
+        "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
+        "INFANT", "EU_CITIZEN", "EU_CITIZEN_STUDENT", "GROUP",
+    }
 
 
 def _gyg_is_test_traveler(travelers: list) -> bool:
@@ -8149,11 +8155,11 @@ def gyg_get_availabilities():
             close_t = f"{min(h + 1, 23):02d}:{m:02d}"
         except (ValueError, IndexError):
             pass
-        _retail = [
-            {"category": "ADULT", "price": d["price_c"]},
-            {"category": "GROUP", "price": d["price_c"],
-             "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
-        ]
+        if _GYG_PRICING_MODEL == "group":
+            _retail = [{"category": "GROUP", "price": d["price_c"],
+                        "groupSize": {"min": 1, "max": _GYG_PARTICIPANT_MAX}}]
+        else:
+            _retail = [{"category": "ADULT", "price": d["price_c"]}]
         period_entry: dict = {
             "dateTime":    f"{date_str}T00:00:00{d['tz']}",
             "productId":   product_id,
@@ -8222,15 +8228,13 @@ def gyg_reserve():
                             f"Unsupported category: {cat}",
                             ticketCategory=cat)
 
-    # Validate groupSize against declared max
+    # Validate participants against configured max
     for it in items:
         gs = it.get("groupSize", 0)
-        if gs and gs > _GYG_GROUP_MAX:
+        if gs and gs > _GYG_PARTICIPANT_MAX:
             return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
-                            f"groupSize {gs} exceeds max {_GYG_GROUP_MAX}",
-                            participantsConfiguration={"min": 1, "max": _GYG_GROUP_MAX})
-
-    # Validate total participant count against max
+                            f"groupSize {gs} exceeds max {_GYG_PARTICIPANT_MAX}",
+                            participantsConfiguration={"min": 1, "max": _GYG_PARTICIPANT_MAX})
     _total_count = sum(it.get("count", 0) for it in items)
     if _total_count > _GYG_PARTICIPANT_MAX:
         return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
