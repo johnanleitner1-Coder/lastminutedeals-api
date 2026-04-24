@@ -7765,13 +7765,13 @@ if _gyg_excl_raw:
         _GYG_EXCLUDED_DATES[pid.strip()] = {d.strip() for d in dates_str.split(",") if d.strip()}
 
 # ── GYG Pricing ──────────────────────────────────────────────────────────────
-# Accept all standard GYG ticket categories — a booking is a booking regardless
-# of traveler type. GROUP has special handling (groupSize). All others are
-# treated as individual bookings at the same price.
+# Accept standard GYG ticket categories. GROUP has special handling (groupSize).
+# MILITARY excluded — configured as unsupported in GYG test/product setup.
 _GYG_GROUP_MAX = 50
+_GYG_PARTICIPANT_MAX = int(os.getenv("GYG_PARTICIPANT_MAX", "50"))
 _GYG_VALID_CATEGORIES = {
     "ADULT", "CHILD", "YOUTH", "SENIOR", "STUDENT",
-    "MILITARY", "INFANT", "GROUP",
+    "INFANT", "EU_CITIZEN", "EU_CITIZEN_STUDENT", "GROUP",
 }
 
 
@@ -8230,6 +8230,13 @@ def gyg_reserve():
                             f"groupSize {gs} exceeds max {_GYG_GROUP_MAX}",
                             participantsConfiguration={"min": 1, "max": _GYG_GROUP_MAX})
 
+    # Validate total participant count against max
+    _total_count = sum(it.get("count", 0) for it in items)
+    if _total_count > _GYG_PARTICIPANT_MAX:
+        return _gyg_err("INVALID_PARTICIPANTS_CONFIGURATION",
+                        f"Total count {_total_count} exceeds max {_GYG_PARTICIPANT_MAX}",
+                        participantsConfiguration={"min": 1, "max": _GYG_PARTICIPANT_MAX})
+
     # Total pax (GROUP category: count × groupSize)
     qty = 0
     for it in items:
@@ -8252,12 +8259,16 @@ def gyg_reserve():
         if local_date in excluded:
             return _gyg_err("NO_AVAILABILITY", "No availability on this date")
 
-    # Search ±2h window to handle timezone offsets between GYG and our UTC storage
-    slots = _gyg_slots_by_product(
-        product_id,
-        (req_dt - timedelta(hours=2)).isoformat(),
-        (req_dt + timedelta(hours=2)).isoformat(),
-    )
+    # Time Period requests use T00:00:00 — search the full day.
+    # Time Point requests use a specific time — search ±2h window.
+    _is_time_period = (req_dt.hour == 0 and req_dt.minute == 0 and req_dt.second == 0)
+    if _is_time_period:
+        _from = req_dt.replace(hour=0, minute=0, second=0)
+        _to   = req_dt.replace(hour=23, minute=59, second=59)
+    else:
+        _from = req_dt - timedelta(hours=2)
+        _to   = req_dt + timedelta(hours=2)
+    slots = _gyg_slots_by_product(product_id, _from.isoformat(), _to.isoformat())
     if not slots:
         return _gyg_err("NO_AVAILABILITY", "No availability found")
 
