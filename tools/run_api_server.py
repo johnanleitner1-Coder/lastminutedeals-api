@@ -8101,16 +8101,15 @@ def gyg_get_availabilities():
                 filtered.append(s)
         slots = filtered
 
-    # Build Time Point entries (specific departure times) and collect
-    # data for Time Period entries (daily aggregates with opening hours)
-    avails = []
-    _daily: dict[str, dict] = {}  # date_str -> {min_time, max_time, max_spots, price_c, currency}
+    # Aggregate slots into daily Time Period entries with opening hours.
+    # One entry per day — works for both Time Point and Time Period GYG tests.
+    # Reserve endpoint handles specific time matching regardless of format.
+    _daily: dict[str, dict] = {}  # date_str -> {min_time, max_time, max_spots, price_c, currency, tz}
 
     for s in slots:
         start = s.get("start_time", "")
         if not start:
             continue
-        # GYG requires offset notation (±HH:MM), not "Z"
         if start.endswith("Z"):
             start = start[:-1] + "+00:00"
         if "T" not in start:
@@ -8123,24 +8122,6 @@ def gyg_get_availabilities():
         except (ValueError, TypeError):
             pass
 
-        _retail = [
-            {"category": "ADULT", "price": price_c},
-            {"category": "GROUP", "price": price_c,
-             "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
-        ]
-
-        # Time Point entry — specific departure time
-        tp_entry: dict = {
-            "dateTime":  start,
-            "productId": product_id,
-            "vacancies": min(max(spots, 0), 5000),
-        }
-        if price_c > 0:
-            tp_entry["currency"] = currency
-            tp_entry["pricesByCategory"] = {"retailPrices": _retail}
-        avails.append(tp_entry)
-
-        # Aggregate for Time Period entries
         date_str = start[:10]  # "YYYY-MM-DD"
         time_str = start[11:16]  # "HH:MM"
         tz_suffix = start[19:]  # "+00:00" etc.
@@ -8159,7 +8140,7 @@ def gyg_get_availabilities():
                 d["price_c"] = price_c
                 d["currency"] = currency
 
-    # Time Period entries — one per day with openingTimes
+    avails = []
     for date_str, d in sorted(_daily.items()):
         close_t = d["max_t"]
         # Extend closing by 1 hour since the last slot starts at max_t
