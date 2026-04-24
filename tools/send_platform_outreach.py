@@ -72,7 +72,7 @@ https://api.lastminutedealshq.com
     {
         "name": "Holibob",
         "to": "Suppliersupport@holibob.tech",
-        "subject": "Supply Partner Inquiry — 29 OCTO Suppliers, 16 Countries",
+        "subject": "Supply Partner Inquiry — 32 OCTO Suppliers, 47 Countries",
         "body": """\
 Hi Holibob team,
 
@@ -138,7 +138,7 @@ https://api.lastminutedealshq.com
     {
         "name": "Headout",
         "to": "support@headout.com",
-        "subject": "Supply Partner Inquiry — 29 Suppliers, 16 Countries via OCTO",
+        "subject": "Supply Partner Inquiry — 32 Suppliers, 47 Countries via OCTO",
         "body": """\
 Hi Headout team,
 

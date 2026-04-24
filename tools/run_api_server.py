@@ -867,7 +867,7 @@ _SUPPLIER_DIR_CACHE: dict = {}   # {"data": [...], "expires": float}
 _SUPPLIER_DIR_CACHE_TTL = 300    # 5 minutes
 
 # Static fallback supplier list — used when Supabase is unreachable.
-# Covers all 23 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
+# Covers all 32 known Bokun vendors; order matches vendor_id_to_supplier_map in octo_suppliers.json.
 _SUPPLIER_DIR_STATIC = [
     {"name": "Arctic Adventures",       "destinations": ["Husafell", "Iceland", "Reykjavik", "Skaftafell"], "platform": "Bokun"},
     {"name": "Trivanzo Holidays",        "destinations": ["Cairo", "Egypt", "Luxor", "Red Sea"],              "platform": "Bokun"},
@@ -898,6 +898,9 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "VIDABOA",              "destinations": ["Porto", "Douro Valley", "Portugal"],                         "platform": "Bokun"},
     {"name": "Gallo Tour",           "destinations": ["Rome", "Italy"],                                            "platform": "Bokun"},
     {"name": "Food Activity Japan",  "destinations": ["Osaka", "Japan"],                                           "platform": "Bokun"},
+    {"name": "European Voyages",    "destinations": ["Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin", "Vienna", "Prague", "Budapest", "Lisbon", "Madrid", "Edinburgh", "Dublin", "Zurich", "Brussels", "Copenhagen", "Stockholm", "Oslo", "Athens", "Istanbul", "Nice", "Florence", "Venice", "Munich", "Milan", "France", "UK", "Germany", "Spain", "Netherlands", "Switzerland", "Austria", "Czech Republic", "Hungary", "Portugal", "Ireland", "Denmark", "Sweden", "Norway", "Greece", "Turkey", "Italy", "Croatia", "Malta", "Monaco", "Luxembourg", "Slovakia", "Slovenia", "Poland", "Estonia", "Latvia", "Lithuania"], "platform": "Bokun"},
+    {"name": "CruiserCar Palermo",  "destinations": ["Palermo", "Sicily", "Italy"],                                "platform": "Bokun"},
+    {"name": "Nile Navigators",     "destinations": ["Cairo", "Luxor", "Aswan", "Egypt"],                          "platform": "Bokun"},
 ]
 
 

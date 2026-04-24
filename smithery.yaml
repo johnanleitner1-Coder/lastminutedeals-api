@@ -25,7 +25,7 @@ exampleConfig:
 
 name: Last Minute Deals HQ
 description: >
-  Live bookable slots across 32 suppliers in 47 countries, sourced from
+  Live bookable slots across 32 suppliers in 47 countries across Europe, Asia, Africa, and the Americas. Sourced from
   production booking systems via the OCTO open standard. Covers tours, activities,
   photo shoots, and multi-day trips in 100+ cities including Paris, London, Rome,
   Berlin, Amsterdam, Cairo, Reykjavik, Kyoto, and more. Search available slots, create Stripe
@@ -160,3 +160,39 @@ suppliers:
   - name: Nefertiti Tours
     destinations: [Cairo, Giza, Egypt]
     experiences: [pyramids tours, camel rides, ATV desert tours, private guided tours]
+
+  - name: Blue Dolphin Sailing
+    destinations: [Guanacaste, Costa Rica]
+    experiences: [sailing tours, sunset cruises, snorkeling]
+
+  - name: EGYPT GATE
+    destinations: [Cairo, Egypt]
+    experiences: [tours, cultural experiences]
+
+  - name: Imperio tours
+    destinations: [Rome, Italy]
+    experiences: [Fiat 500 tours, golf cart tours, food tours]
+
+  - name: VIDABOA
+    destinations: [Porto, Douro Valley, Portugal]
+    experiences: [wine tours, private tours]
+
+  - name: Gallo Tour
+    destinations: [Rome, Italy]
+    experiences: [golf cart tours]
+
+  - name: Food Activity Japan
+    destinations: [Osaka, Japan]
+    experiences: [matcha making, food experiences]
+
+  - name: European Voyages
+    destinations: [Paris, London, Rome, Barcelona, Amsterdam, Berlin, Vienna, Prague, Budapest, Lisbon, Madrid, Edinburgh, Dublin, Zurich, Brussels, Copenhagen, Stockholm, Oslo, Athens, Istanbul, Nice, Florence, Venice, Munich, Milan, Seville, Porto, Dubrovnik, Santorini, Bruges, Salzburg, Krakow, Warsaw, Helsinki, Tallinn, Riga, Vilnius, Reykjavik, Split, Valletta, Monaco, Luxembourg, Bratislava, Ljubljana, Geneva, Lyon, Marseille]
+    experiences: [walking tours, city tours, food tours, day trips, multi-day tours, cultural experiences, historical tours, river cruises, wine tours, museum tours, cooking classes, transfers, airport shuttles]
+
+  - name: CruiserCar Palermo
+    destinations: [Palermo, Sicily, Italy]
+    experiences: [car tours, city tours, transfers]
+
+  - name: Nile Navigators
+    destinations: [Cairo, Luxor, Aswan, Egypt]
+    experiences: [Nile cruises, river tours, cultural experiences]

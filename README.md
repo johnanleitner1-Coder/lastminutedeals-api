@@ -126,7 +126,7 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 
 ## Suppliers
 
-23 active suppliers. Live inventory across Iceland, Italy, Mexico, Morocco, Portugal, Japan, Tanzania, Finland, Montenegro, Romania, Egypt, Turkey, United States, United Kingdom, and China.
+32 active suppliers. Live inventory across 47 countries including France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan, Portugal, Turkey, Morocco, Tanzania, Finland, Montenegro, Romania, United States, United Kingdom, China, Mexico, Costa Rica, and more.
 
 | Supplier | Destinations | Experiences |
 |---|---|---|
@@ -159,6 +159,9 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 | VIDABOA | Porto, Douro Valley, Portugal | Wine tours, private tours |
 | Gallo Tour | Rome, Italy | Golf cart tours |
 | Food Activity Japan | Osaka, Japan | Matcha making, food experiences |
+| European Voyages | Paris, London, Rome, Barcelona, Amsterdam, Berlin, Vienna, Prague, Budapest + 38 more | Walking tours, city tours, food tours, day trips, multi-day tours, river cruises, wine tours, cooking classes, transfers |
+| CruiserCar Palermo | Palermo, Sicily, Italy | Car tours, city tours, transfers |
+| Nile Navigators | Cairo, Luxor, Aswan, Egypt | Nile cruises, river tours, cultural experiences |
 
 ## Categories
 
@@ -228,9 +231,9 @@ MCP/REST requests:
 
 ## Status
 
-- **Slots live:** 5,000+
-- **Suppliers:** 17
-- **Countries:** 15
+- **Slots live:** 8,000+
+- **Suppliers:** 32
+- **Countries:** 47
 - **Refresh interval:** Every 4 hours
 - **Uptime:** Hosted on Railway (24/7)
 - **Payments:** Stripe (authorization-then-capture — customer is never charged for a failed booking)

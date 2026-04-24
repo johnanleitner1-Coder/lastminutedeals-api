@@ -79,7 +79,7 @@ If the supplier is in an EXISTING destination, no SEO changes needed — the des
 
 ## Step 5: Update counts in static docs
 
-Grep for the old count (e.g., "23 suppliers") and update in:
+Grep for the old count (e.g., "32 suppliers") and update in:
 
 - [ ] `README.md` — description + supplier table
 - [ ] `openapi.yaml` — line 6 description

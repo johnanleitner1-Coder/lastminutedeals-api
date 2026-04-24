@@ -1158,7 +1158,7 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
 | MCP Streamable HTTP server | Railway (mcp service) | ✅ | run_mcp_remote.py (transport changed SSE → streamable-http, 2026-04-18) |
 | Payments | Stripe | ✅ | Checkout + webhooks + auth-capture + saved cards |
-| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 17 vendor IDs, 417 products, ~6,400 total in marketplace |
+| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 32 vendor IDs, ~1,100 products, ~6,400 total in marketplace |
 | Bokun notifications | HTTP notification (URL token auth) | ✅ | Smoke tested 2026-04-16 |
 | Email | SendGrid (primary) + SMTP (fallback) | ✅ | 4 email types wired |
 | Landing page | Cloudflare Pages | ✅ | Rebuilt every pipeline run |

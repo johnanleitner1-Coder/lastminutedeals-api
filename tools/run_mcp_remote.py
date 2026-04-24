@@ -46,7 +46,7 @@ try:
     _SUPPLIER_MAP = _octo_cfg[0].get("vendor_id_to_supplier_map", {})
     _SUPPLIER_COUNT = len(set(v["name"] for v in _SUPPLIER_MAP.values()))
 except Exception:
-    _SUPPLIER_COUNT = 23  # fallback
+    _SUPPLIER_COUNT = 32  # fallback
 
 BOOKING_API = (os.getenv("BOOKING_API_URL") or "https://api.lastminutedealshq.com").rstrip("/")
 API_KEY     = os.getenv("LMD_WEBSITE_API_KEY", "")
@@ -118,8 +118,10 @@ mcp = FastMCP(
         "Bicycle Roma (Rome — e-bike tours, food tours, day trips), "
         "Blue Dolphin Sailing (Guanacaste, Costa Rica — sailing tours, sunset cruises), "
         "Boka Bliss (Kotor, Montenegro — boat tours, sea caves), "
+        "CruiserCar Palermo (Palermo, Sicily — car tours, transfers), "
         "EGYPT GATE (Cairo, Egypt — tours and experiences), "
         "EgyExcursions (Cairo, Egypt — pyramids, cultural tours), "
+        "European Voyages (Paris, London, Rome, Barcelona, Amsterdam + 40 more European cities — walking tours, food tours, day trips, river cruises, multi-day tours), "
         "Food Activity Japan (Osaka — matcha making, food experiences), "
         "Gallo Tour (Rome — golf cart tours), "
         "Hillborn Experiences (Tanzania — ultra-luxury safaris, Kilimanjaro, Zanzibar), "
@@ -127,6 +129,7 @@ mcp = FastMCP(
         "Ishestar Riding Tours (Iceland — horse riding), "
         "Marvel Egypt Tours (Cairo, Luxor, Aswan — Nile cruises, temples), "
         "Nefertiti Tours (Cairo, Giza — pyramids, camel rides, ATV desert tours), "
+        "Nile Navigators (Cairo, Luxor, Aswan — Nile cruises, river tours), "
         "O Turista Tours (Lisbon, Porto, Sintra — private tours, day trips), "
         "Perfect Day Tours (Luxor, Egypt — hot air balloon, temples, horse carriage tours), "
         "Pure Morocco Experience (Marrakech, Sahara — desert tours), "
@@ -227,10 +230,10 @@ async def search_slots(
     """
     Search available last-minute tours, activities, and experiences worldwide.
 
-    Queries live production inventory from 23 suppliers across Iceland, Italy, Egypt,
-    Japan, Morocco, Portugal, Tanzania, Finland, Montenegro, Romania, Turkey, USA, UK,
-    China, and Mexico — sourced via the OCTO open booking standard. Results are sorted
-    by urgency (soonest departures first).
+    Queries live production inventory from 32 suppliers across 47 countries including
+    France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan,
+    Portugal, Turkey, and more — sourced via the OCTO open booking standard. Results are
+    sorted by urgency (soonest departures first).
 
     When to use: Call this first when a user asks about tours, activities, or experiences.
     Follow up with preview_slot(slot_id) to get a shareable booking link, or book_slot
@@ -648,6 +651,81 @@ async def get_supplier_info() -> dict:
                 "name": "Sailing Windermere",
                 "destinations": ["Windermere", "Lake District", "United Kingdom"],
                 "categories": ["sailing experiences", "lake tours", "private charters"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Blue Dolphin Sailing",
+                "destinations": ["Guanacaste", "Costa Rica"],
+                "categories": ["sailing tours", "sunset cruises", "snorkeling"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "EGYPT GATE",
+                "destinations": ["Cairo", "Egypt"],
+                "categories": ["tours", "cultural experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Imperio tours",
+                "destinations": ["Rome", "Italy"],
+                "categories": ["Fiat 500 tours", "golf cart tours", "food tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "VIDABOA",
+                "destinations": ["Porto", "Douro Valley", "Portugal"],
+                "categories": ["wine tours", "private tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Gallo Tour",
+                "destinations": ["Rome", "Italy"],
+                "categories": ["golf cart tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Food Activity Japan",
+                "destinations": ["Osaka", "Japan"],
+                "categories": ["matcha making", "food experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "European Voyages",
+                "destinations": ["Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin",
+                                 "Vienna", "Prague", "Budapest", "Lisbon", "Madrid", "Edinburgh",
+                                 "Dublin", "Zurich", "Brussels", "Copenhagen", "Stockholm", "Oslo",
+                                 "Athens", "Istanbul", "Nice", "Florence", "Venice", "Munich",
+                                 "Milan", "Seville", "Porto", "Dubrovnik", "Santorini", "Bruges",
+                                 "Salzburg", "Krakow", "Warsaw", "Helsinki", "Tallinn", "Riga",
+                                 "Vilnius", "Reykjavik", "Split", "Valletta", "Monaco",
+                                 "Luxembourg", "Bratislava", "Ljubljana", "Geneva", "Lyon",
+                                 "Marseille"],
+                "categories": ["walking tours", "city tours", "food tours", "day trips",
+                               "multi-day tours", "cultural experiences", "historical tours",
+                               "river cruises", "wine tours", "museum tours", "cooking classes",
+                               "transfers", "airport shuttles"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+                "notes": "679 products across 47 European cities. Largest supplier in the network.",
+            },
+            {
+                "name": "CruiserCar Palermo",
+                "destinations": ["Palermo", "Sicily", "Italy"],
+                "categories": ["car tours", "city tours", "transfers"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Nile Navigators",
+                "destinations": ["Cairo", "Luxor", "Aswan", "Egypt"],
+                "categories": ["Nile cruises", "river tours", "cultural experiences"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },
