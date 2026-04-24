@@ -8101,7 +8101,11 @@ def gyg_get_availabilities():
                 filtered.append(s)
         slots = filtered
 
+    # Build Time Point entries (specific departure times) and collect
+    # data for Time Period entries (daily aggregates with opening hours)
     avails = []
+    _daily: dict[str, dict] = {}  # date_str -> {min_time, max_time, max_spots, price_c, currency}
+
     for s in slots:
         start = s.get("start_time", "")
         if not start:
@@ -8119,20 +8123,67 @@ def gyg_get_availabilities():
         except (ValueError, TypeError):
             pass
 
-        entry = {
+        _retail = [
+            {"category": "ADULT", "price": price_c},
+            {"category": "GROUP", "price": price_c,
+             "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
+        ]
+
+        # Time Point entry — specific departure time
+        tp_entry: dict = {
             "dateTime":  start,
             "productId": product_id,
             "vacancies": min(max(spots, 0), 5000),
         }
         if price_c > 0:
-            entry["currency"] = currency
-            _retail = [
-                {"category": "ADULT", "price": price_c},
-                {"category": "GROUP", "price": price_c,
-                 "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
-            ]
-            entry["pricesByCategory"] = {"retailPrices": _retail}
-        avails.append(entry)
+            tp_entry["currency"] = currency
+            tp_entry["pricesByCategory"] = {"retailPrices": _retail}
+        avails.append(tp_entry)
+
+        # Aggregate for Time Period entries
+        date_str = start[:10]  # "YYYY-MM-DD"
+        time_str = start[11:16]  # "HH:MM"
+        tz_suffix = start[19:]  # "+00:00" etc.
+        if date_str not in _daily:
+            _daily[date_str] = {"min_t": time_str, "max_t": time_str,
+                                "spots": spots, "price_c": price_c,
+                                "currency": currency, "tz": tz_suffix}
+        else:
+            d = _daily[date_str]
+            if time_str < d["min_t"]:
+                d["min_t"] = time_str
+            if time_str > d["max_t"]:
+                d["max_t"] = time_str
+            d["spots"] = max(d["spots"], spots)
+            if price_c > 0:
+                d["price_c"] = price_c
+                d["currency"] = currency
+
+    # Time Period entries — one per day with openingTimes
+    for date_str, d in sorted(_daily.items()):
+        close_t = d["max_t"]
+        # Extend closing by 1 hour since the last slot starts at max_t
+        try:
+            h, m = int(close_t[:2]), int(close_t[3:])
+            close_t = f"{min(h + 1, 23):02d}:{m:02d}"
+        except (ValueError, IndexError):
+            pass
+        _retail = [
+            {"category": "ADULT", "price": d["price_c"]},
+            {"category": "GROUP", "price": d["price_c"],
+             "groupSize": {"min": 1, "max": _GYG_GROUP_MAX}},
+        ]
+        period_entry: dict = {
+            "dateTime":    f"{date_str}T00:00:00{d['tz']}",
+            "productId":   product_id,
+            "vacancies":   min(max(d["spots"], 0), 5000),
+            "openingTimes": [{"fromTime": d["min_t"], "toTime": close_t}],
+            "cutoffSeconds": 0,
+        }
+        if d["price_c"] > 0:
+            period_entry["currency"] = d["currency"]
+            period_entry["pricesByCategory"] = {"retailPrices": _retail}
+        avails.append(period_entry)
 
     elapsed_ms = int((_time.monotonic() - _t0) * 1000)
     _GYG_DEBUG["last_avail_response"] = {
