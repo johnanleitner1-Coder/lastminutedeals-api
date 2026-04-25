@@ -644,11 +644,56 @@ scheduling was redundant.
 |---|---|---|---|
 | 164 | `run_mcp_remote.py` | **Glama/Claude Desktop cold-start resilience** — 8s connect timeout insufficient for Railway cold starts (10-30s). Fixed 1.5s retry backoff too aggressive, warmup interval (10 min) too close to Railway's 15-min sleep threshold. | Connect timeout 8s→20s, total timeout 15s→30s, warmup interval 10m→8m, exponential backoff (3s, 8s), immediate first ping on startup. |
 
+---
+
+## Session 33 Fixes (GYG cancellation resilience)
+
+### CRITICAL
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 165 | `run_api_server.py` | **GYG bookings stored only in-memory** — `_GYG_BOOKINGS` dict lost on every Railway redeploy. After restart, `gyg_cancel_booking` returns INVALID_BOOKING for all previously confirmed bookings. Supplier can't cancel through GYG, we can't cancel at OCTO, booking stays active. | Persist all confirmed GYG bookings to Supabase Storage as `gyg_{bookingRef}.json` via existing `_save_booking_record()`. Cancel endpoint falls back to `_load_booking_record()` when in-memory lookup fails. |
+| 166 | `run_api_server.py` | **Supplier cancellations invisible for GYG bookings** — Bokun webhook handler finds bookings via `by_confirmation/` index (OCTO UUID). GYG bookings were never written to Supabase, so supplier-initiated cancellations had no record to match. Booking stays active in supplier system while GYG/customer think it's confirmed. | GYG booking persistence (Fix #165) writes `confirmation` (OCTO UUID) and `supplier_reference` fields, automatically creating `by_confirmation/` index entries. Bokun webhook now discovers GYG bookings. |
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 167 | `run_api_server.py` | **Failed GYG OCTO cancellations silently dropped** — if `_gyg_octo_cancel` failed (network error, OCTO outage), cancel endpoint returned error to GYG but did nothing else. Booking stayed active at supplier with no retry. | On cancel failure, queue to `cancellation_queue/` via existing `_queue_octo_retry()`. APScheduler retries every 15 min automatically. |
+
+### CRITICAL
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 168 | `run_api_server.py`, `fetch_octo_slots.py`, `send_booking_email.py` | **Flat 48-hour cancellation policy doesn't match supplier policies** — 154 products have 24h cutoff (safe, we're more restrictive), but 1 product has 72h, 22 have 360h (15 days), 2 have 336h (14 days), and 1 is non-refundable. Customer cancelling at 50 hours for a 72h-cutoff product: we refund them, supplier refuses to refund us, we eat the cost. Same for 15-day products. | Per-product `cancellation_cutoff_hours` extracted from OCTO API per option. Stored in slot dict, booking_url JSON, and booking record. All cancel endpoints use per-booking cutoff. Booking page and confirmation email show the actual window. Default 48h for old bookings without the field. |
+| 169 | `run_api_server.py` | **GYG cancel-booking rejects within 48h — violates GYG API spec** — GYG spec says "This call must cancel the booking in your system." Rejecting with CANCELLATION_NOT_POSSIBLE for time-based reasons is not a valid error code. GYG monitors rejections and escalates manually. | Removed time-based rejection from GYG cancel-booking. Only rejects for BOOKING_IN_PAST (activity already happened). GYG controls the customer-facing cancellation policy on their portal. |
+
+---
+
+## Session 34 Fixes (Cancellation policy display + acknowledgment gates)
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 170 | `run_api_server.py` | **Booking page shows broken text for non-refundable/long-cutoff products** — Template "Free cancellation up to {cancel_policy} before the activity" produced "Free cancellation up to non-refundable before the activity" for non-refundable products. Long-cutoff (15-day) products showed same misleading text. No customer acknowledgment required for any tier. | Three-tier conditional display: standard (green, no checkbox), long-cutoff >48h (amber + mandatory checkbox), non-refundable (red + mandatory checkbox). Book Now button disabled until acknowledged. |
+| 171 | `run_api_server.py` | **Autonomous/saved-card booking allows non-refundable and long-cutoff products** — Wallet-debit and saved-card paths charge instantly with no policy display. Customer has no opportunity to acknowledge non-refundable policy before money is taken. Creates chargeback risk. | Block autonomous and saved-card booking for non-refundable (≥9999×24h) and long-cutoff (>48h) products with 403 + `policy_acknowledgment_required`. Forces approval mode with checkout URL. |
+| 172 | `run_api_server.py`, `run_mcp_remote.py` | **MCP tools return zero cancellation data** — `search_slots`, `preview_slot`, `book_slot` returned no cancellation policy info. AI agents couldn't see or communicate the policy to customers before booking. | Added `cancellation_policy` field to all MCP tool responses. Updated MCP instructions to require policy communication before booking. |
+| 173 | `send_booking_email.py` | **Confirmation email shows cancel link for non-refundable bookings** — Non-refundable products got the same "Cancel this booking" link and "you'll receive a full refund" text as standard products. Customer clicks cancel, gets rejected, files chargeback. | Non-refundable: no cancel link, clear "non-refundable" warning. Long-cutoff: cancel link + specific deadline date (e.g., "before May 31, 2026"). Standard: unchanged. |
+| 174 | `run_api_server.py` | **Self-serve cancel page shows wrong text for non-refundable bookings** — Non-refundable products showed a cancel form with time-based rejection text. Customer expected to be able to cancel. | Non-refundable: no cancel form, clear "non-refundable" page. Long-cutoff: shows specific deadline date in rejection message. |
+
+### MEDIUM
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 175 | `run_api_server.py` | **FastMCP search_slots drops cancellation_policy field** — `_safe()` whitelist function didn't include `cancellation_policy`, silently stripping it from search results even though `_sanitize_slot()` added it. FastMCP/Claude Desktop agents never saw the policy. | Added `cancellation_policy` to `_safe()` key whitelist. |
+| 176 | `send_booking_email.py` | **Email `or 48` falsiness bug for 0-hour cutoff** — `int(slot.get("cancellation_cutoff_hours") or 48)` coerces integer 0 to 48 because 0 is falsy. Products with 0-hour cutoff ("cancel up to departure") get "48 hours" in email. | Changed to `int(_cutoff_raw) if _cutoff_raw is not None else 48`. |
+
 ### Bug Counts
 
 | Source | Count |
 |---|---|
-| Session 32: 1 high (search_slots pagination timeout), 1 medium (remote MCP resilience) | 2 |
-| **Running total** | **164** |
+| Session 34: 5 high (booking page display, autonomous gate, MCP policy, email, self-serve cancel), 2 medium (FastMCP safe(), email falsiness) | 7 |
+| **Running total** | **176** |
 
 ---

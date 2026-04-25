@@ -2636,8 +2636,10 @@ def create_checkout():
             # price_charged: null and may retry, creating duplicate sessions.
             "our_price":      float(our_price),
             "price_charged":  float(our_price) * quantity,
+            "cancellation_cutoff_hours": slot.get("cancellation_cutoff_hours"),
         })
 
+        _policy = _cancel_policy_label(slot.get("cancellation_cutoff_hours"))
         result = {
             "success":         True,
             "checkout_url":    session.url,
@@ -2654,9 +2656,12 @@ def create_checkout():
             "price_per_person": float(our_price),
             "total_price":     float(our_price) * quantity,
             "currency":        slot.get("currency", "USD"),
+            "cancellation_policy": _policy,
             # Human-readable instruction for the calling agent.
             "action_required": (
-                "Direct the customer to checkout_url to complete payment. "
+                "IMPORTANT: Tell the customer the cancellation policy before they pay: "
+                + _policy + ". "
+                "Then direct them to checkout_url to complete payment. "
                 "Booking expires in 24 hours. Poll get_booking_status for confirmation."
             ),
         }
@@ -2798,6 +2803,41 @@ def book_direct():
                             "failure_reason": "slot_expired"}), 410
     except Exception:
         pass
+
+    # ── Cancellation policy gate: block autonomous booking for risky products ──
+    _auto_cutoff = slot.get("cancellation_cutoff_hours")
+    if _auto_cutoff is None:
+        try:
+            _burl_str = slot.get("booking_url", "")
+            if _burl_str and isinstance(_burl_str, str) and _burl_str.startswith("{"):
+                _auto_cutoff = json.loads(_burl_str).get("cancellation_cutoff_hours")
+        except Exception:
+            pass
+    _auto_cutoff = int(_auto_cutoff) if _auto_cutoff is not None else 48
+    if _auto_cutoff >= 9999 * 24:
+        return jsonify({
+            "status": "failed",
+            "error": "This product is non-refundable. Autonomous booking is not available "
+                     "for non-refundable products. Use approval mode (omit wallet_id) to "
+                     "generate a checkout URL so the customer can review and acknowledge "
+                     "the cancellation policy before paying.",
+            "failure_reason": "policy_acknowledgment_required",
+            "cancellation_policy": "Non-refundable — no cancellations or refunds",
+            "cancellation_cutoff_hours": _auto_cutoff,
+        }), 403
+    if _auto_cutoff > 48:
+        _policy_txt = _cancel_policy_label(_auto_cutoff)
+        return jsonify({
+            "status": "failed",
+            "error": f"This product has a {_cancel_cutoff_display(_auto_cutoff)} cancellation "
+                     "window. Autonomous booking is not available for products with "
+                     "cancellation windows over 48 hours. Use approval mode (omit wallet_id) "
+                     "to generate a checkout URL so the customer can review and acknowledge "
+                     "the cancellation policy before paying.",
+            "failure_reason": "policy_acknowledgment_required",
+            "cancellation_policy": _policy_txt,
+            "cancellation_cutoff_hours": _auto_cutoff,
+        }), 403
 
     our_price = slot.get("our_price") or slot.get("price")
     if not our_price or float(our_price) <= 0:
@@ -2979,6 +3019,7 @@ def book_direct():
         "status":                "booked",
         "payment_method":        "wallet",
         "wallet_id":             wallet_id,
+        "cancellation_cutoff_hours": slot.get("cancellation_cutoff_hours"),
         "executed_at":           datetime.now(timezone.utc).isoformat(),
         "customer_name":         customer_name,
         "customer_email":        customer_email,
@@ -3322,6 +3363,7 @@ def _fulfill_booking_async(
             "price_charged":         amount_total / 100,
             "status":                "booked",
             "dry_run":               dry_run,
+            "cancellation_cutoff_hours": slot_for_email.get("cancellation_cutoff_hours"),
             "executed_at":           datetime.now(timezone.utc).isoformat(),
             "customer_name":         customer["name"],
             "customer_email":        customer["email"],
@@ -3526,6 +3568,21 @@ _SLOT_INTERNAL_FIELDS = frozenset({
     "api_key_env", "platform",
 })
 
+def _cancel_policy_label(hours) -> str:
+    """Convert cancellation_cutoff_hours to a human-readable policy string."""
+    try:
+        h = int(hours)
+    except (TypeError, ValueError):
+        return "Free cancellation up to 48 hours before the activity"
+    if h >= 9999 * 24:
+        return "Non-refundable — no cancellations or refunds"
+    if h <= 0:
+        return "Free cancellation up to departure"
+    if h % 24 == 0 and h >= 48:
+        return f"Free cancellation up to {h // 24} days before the activity"
+    return f"Free cancellation up to {h} hours before the activity"
+
+
 def _sanitize_slot(slot: dict) -> dict:
     """Strip internal fields and recompute hours_until_start before returning a slot."""
     out = {k: v for k, v in slot.items() if k not in _SLOT_INTERNAL_FIELDS}
@@ -3541,6 +3598,10 @@ def _sanitize_slot(slot: dict) -> dict:
             out["hours_until_start"] = round(hours, 2)
     except Exception:
         pass
+    # Add human-readable cancellation policy for agent consumption
+    out["cancellation_policy"] = _cancel_policy_label(
+        slot.get("cancellation_cutoff_hours")
+    )
     return out
 
 
@@ -3579,6 +3640,11 @@ form h2{{font-size:16px;margin-bottom:16px;color:#333}}
 .btn:hover{{background:#d63851}}
 .btn:disabled{{background:#ccc;cursor:not-allowed}}
 .note{{text-align:center;font-size:12px;color:#999;margin-top:12px;padding:0 24px 20px}}
+.cancel-standard{{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;color:#166534;text-align:left}}
+.cancel-long{{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;color:#92400e;text-align:left}}
+.cancel-nonrefund{{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;color:#991b1b;text-align:left}}
+.cancel-check{{display:flex;align-items:flex-start;gap:8px;margin-top:8px;cursor:pointer;font-size:13px}}
+.cancel-check input{{margin-top:2px;flex-shrink:0}}
 .footer{{text-align:center;padding:24px;font-size:12px;color:#999}}
 .error{{background:#fff0f0;color:#c00;padding:16px 24px;border-radius:12px;margin-bottom:16px;text-align:center}}
 .gone{{text-align:center;padding:48px 24px}}
@@ -3609,9 +3675,10 @@ form h2{{font-size:16px;margin-bottom:16px;color:#333}}
 <div class="field"><label for="qty">Guests</label><select id="qty" name="quantity">{qty_options}</select></div>
 <div class="field"><label>&nbsp;</label><div style="font-size:14px;color:#666;padding:10px 0">Total: <strong id="total">{price_display}</strong></div></div>
 </div>
-<button type="submit" class="btn" id="bookBtn">Book Now — Pay Securely</button>
+{cancellation_block}
+<button type="submit" class="btn" id="bookBtn"{book_btn_disabled}>Book Now — Pay Securely</button>
 </form>
-<div class="note">You'll be redirected to Stripe for secure payment. Your card is only charged after the booking is confirmed with the supplier.<br>Cancellation policy: Free cancellation up to 48 hours before the activity. No refunds within 48 hours of the event.</div>
+<div class="note">You'll be redirected to Stripe for secure payment. Your card is only charged after the booking is confirmed with the supplier.</div>
 </div>
 </div>
 <div class="footer">Powered by Last Minute Deals HQ &middot; Secure payments by Stripe</div>
@@ -3621,6 +3688,8 @@ var price={price_raw},cur="{currency}";
 var sel=document.getElementById("qty"),total=document.getElementById("total"),btn=document.getElementById("bookBtn");
 function fmt(v){{return new Intl.NumberFormat(undefined,{{style:"currency",currency:cur}}).format(v)}}
 sel.addEventListener("change",function(){{total.innerHTML=fmt(price*parseInt(sel.value))}});
+var cb=document.getElementById("cancelAck");
+if(cb){{cb.addEventListener("change",function(){{btn.disabled=!cb.checked}})}}
 document.getElementById("bookForm").addEventListener("submit",function(){{btn.disabled=true;btn.textContent="Redirecting to payment…"}});
 }})();
 </script>
@@ -4293,6 +4362,47 @@ def booking_page(slot_id):
         ld_event["location"] = ld_loc
     booking_ld = '<script type="application/ld+json">' + json.dumps(ld_event) + '</script>'
 
+    _slot_cutoff = slot.get("cancellation_cutoff_hours")
+    if _slot_cutoff is None:
+        try:
+            _burl = slot.get("booking_url", "")
+            if _burl and isinstance(_burl, str) and _burl.startswith("{"):
+                _slot_cutoff = json.loads(_burl).get("cancellation_cutoff_hours")
+        except Exception:
+            pass
+    _slot_cutoff = int(_slot_cutoff) if _slot_cutoff is not None else 48
+
+    # Build tier-appropriate cancellation policy block
+    _NON_REFUNDABLE_SENTINEL = 9999 * 24
+    if _slot_cutoff >= _NON_REFUNDABLE_SENTINEL:
+        _cancel_block = (
+            '<div class="cancel-nonrefund">'
+            '<strong>Non-refundable:</strong> This booking cannot be cancelled or refunded once purchased.'
+            '<label class="cancel-check"><input type="checkbox" id="cancelAck" required>'
+            'I understand this booking is non-refundable and no cancellations or refunds are available.</label>'
+            '</div>'
+        )
+        _btn_disabled = ' disabled'
+    elif _slot_cutoff > 48:
+        _cutoff_text = _cancel_cutoff_display(_slot_cutoff)
+        _cancel_block = (
+            '<div class="cancel-long">'
+            f'<strong>Cancellation policy:</strong> This booking must be cancelled at least {_cutoff_text} '
+            'in advance for a full refund. Late cancellations are non-refundable.'
+            '<label class="cancel-check"><input type="checkbox" id="cancelAck" required>'
+            f'I understand cancellations must be made at least {_cutoff_text} before the activity for a refund.</label>'
+            '</div>'
+        )
+        _btn_disabled = ' disabled'
+    else:
+        _cutoff_text = _cancel_cutoff_display(_slot_cutoff)
+        _cancel_block = (
+            '<div class="cancel-standard">'
+            f'<strong>Cancellation policy:</strong> Free cancellation up to {_cutoff_text} before the activity.'
+            '</div>'
+        )
+        _btn_disabled = ''
+
     html = _BOOKING_PAGE_HTML.format(
         service_name=slot.get("service_name", "Experience")[:100],
         business_name=slot.get("business_name", "")[:80],
@@ -4305,6 +4415,8 @@ def booking_page(slot_id):
         slot_id=slot_id,
         qty_options=qty_options,
         error_block=error_block,
+        cancellation_block=_cancel_block,
+        book_btn_disabled=_btn_disabled,
     )
     # Inject structured data before </head>
     html = html.replace("</head>", booking_ld + "</head>", 1)
@@ -4665,6 +4777,36 @@ def book_with_saved_card(customer_id: str):
     except Exception:
         pass
 
+    # ── Cancellation policy gate: block saved-card booking for risky products ──
+    _sc_cutoff = slot.get("cancellation_cutoff_hours")
+    if _sc_cutoff is None:
+        try:
+            _sc_burl = slot.get("booking_url", "")
+            if _sc_burl and isinstance(_sc_burl, str) and _sc_burl.startswith("{"):
+                _sc_cutoff = json.loads(_sc_burl).get("cancellation_cutoff_hours")
+        except Exception:
+            pass
+    _sc_cutoff = int(_sc_cutoff) if _sc_cutoff is not None else 48
+    if _sc_cutoff >= 9999 * 24:
+        return jsonify({
+            "success": False,
+            "error": "This product is non-refundable. Saved-card booking is not available "
+                     "for non-refundable products. Use POST /api/book to generate a checkout "
+                     "URL so the customer can review and acknowledge the cancellation policy.",
+            "cancellation_policy": "Non-refundable — no cancellations or refunds",
+            "cancellation_cutoff_hours": _sc_cutoff,
+        }), 403
+    if _sc_cutoff > 48:
+        return jsonify({
+            "success": False,
+            "error": f"This product has a {_cancel_cutoff_display(_sc_cutoff)} cancellation "
+                     "window. Saved-card booking is not available for products with "
+                     "cancellation windows over 48 hours. Use POST /api/book to generate a "
+                     "checkout URL so the customer can review the cancellation policy.",
+            "cancellation_policy": _cancel_policy_label(_sc_cutoff),
+            "cancellation_cutoff_hours": _sc_cutoff,
+        }), 403
+
     our_price = slot.get("our_price") or slot.get("price")
     if not our_price or float(our_price) <= 0:
         return jsonify({"success": False, "error": "No price available."}), 400
@@ -4754,6 +4896,7 @@ def book_with_saved_card(customer_id: str):
             "customer_email":    customer_email,
             "customer_phone":    customer_phone,
             "slot_id":           slot_id,
+            "cancellation_cutoff_hours": slot.get("cancellation_cutoff_hours"),
         })
 
         # Send confirmation email with self-serve cancel link
@@ -5823,6 +5966,59 @@ def get_booking(booking_id: str):
     })
 
 
+def _cancel_cutoff_hours(record: dict) -> int:
+    """
+    Get the per-product cancellation cutoff in hours for a booking record.
+
+    Resolution order:
+      1. Direct field on the booking record (set at booking time for new bookings)
+      2. booking_url JSON blob (always contains the cutoff if slot was fetched after the fix)
+      3. Slot lookup from Supabase (works if slot is still live)
+      4. Default: 48 hours (conservative — protects us against unknown supplier policies)
+    """
+    # 1. Direct field
+    val = record.get("cancellation_cutoff_hours")
+    if val is not None:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            pass
+    # 2. booking_url JSON
+    try:
+        burl = record.get("booking_url", "")
+        if burl and isinstance(burl, str) and burl.startswith("{"):
+            burl_d = json.loads(burl)
+            val = burl_d.get("cancellation_cutoff_hours")
+            if val is not None:
+                return int(val)
+    except Exception:
+        pass
+    # 3. Slot lookup
+    sid = record.get("slot_id", "")
+    if sid:
+        slot = get_slot_by_id(sid)
+        if slot:
+            val = slot.get("cancellation_cutoff_hours")
+            if val is not None:
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    pass
+    # 4. Default
+    return 48
+
+
+def _cancel_cutoff_display(hours: int) -> str:
+    """Convert cancellation cutoff hours to a human-readable string."""
+    if hours <= 0:
+        return "up to departure"
+    if hours >= 9999 * 24:
+        return "non-refundable"
+    if hours % 24 == 0 and hours >= 48:
+        return f"{hours // 24} days"
+    return f"{hours} hours"
+
+
 @app.route("/bookings/<booking_id>", methods=["DELETE"])
 def cancel_booking(booking_id: str):
     """
@@ -5856,15 +6052,22 @@ def cancel_booking(booking_id: str):
         return jsonify({"success": True, "booking_id": booking_id, "status": "cancelled",
                         "message": "Booking was already cancelled"}), 200
 
-    # 48-hour cancellation policy: no refunds within 48h of a future event
+    # Per-product cancellation policy: block cancellations for non-refundable or within cutoff
+    _cutoff_h = _cancel_cutoff_hours(record)
+    if _cutoff_h >= 9999 * 24:
+        return jsonify({"success": False,
+                        "error": "This booking is non-refundable. No cancellations or refunds are available.",
+                        "cancellation_policy": "Non-refundable"}), 403
     try:
         _evt_time = record.get("start_time", "")
         if _evt_time:
             _evt_dt = datetime.fromisoformat(_evt_time.replace("Z", "+00:00"))
             _now = datetime.now(timezone.utc)
-            if _evt_dt > _now and _evt_dt - _now < timedelta(hours=48):
+            if _evt_dt > _now and _evt_dt - _now < timedelta(hours=_cutoff_h):
+                _display = _cancel_cutoff_display(_cutoff_h)
                 return jsonify({"success": False, "error": "Cancellations are not permitted "
-                                "within 48 hours of the activity"}), 403
+                                f"within {_display} of the activity",
+                                "cancellation_policy": _cancel_policy_label(_cutoff_h)}), 403
     except (ValueError, TypeError):
         pass
 
@@ -6242,26 +6445,52 @@ def self_serve_cancel(booking_id: str):
     # can reference it even when the booking was already cancelled on arrival (C-2).
     refund_issued = False
 
-    # 48-hour cancellation policy: no refunds within 48h of a future event
-    _within_48h = False
+    # Per-product cancellation policy: no refunds within the supplier's cutoff window
+    _within_cutoff = False
+    _cutoff_h = _cancel_cutoff_hours(record)
+    _cutoff_display = _cancel_cutoff_display(_cutoff_h)
+    _is_nonrefundable = _cutoff_h >= 9999 * 24
+
+    # Non-refundable products: no cancel form at all
+    if _is_nonrefundable and not already_done:
+        return f"""<!DOCTYPE html><html><head><title>Non-Refundable Booking</title></head>
+        <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
+        <h2 style="color:#0f172a;">Non-refundable booking</h2>
+        <p style="color:#64748b;">Your booking for <strong>{service}</strong> is non-refundable.
+        No cancellations or refunds are available for this product.</p>
+        <p style="color:#64748b;">If you have questions, please email
+        <a href="mailto:bookings@lastminutedealshq.com">bookings@lastminutedealshq.com</a>.</p>
+        <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
+        background:#0f172a;color:#fff;border-radius:8px;text-decoration:none;">Back to Home</a>
+        </body></html>""", 403
+
     if not already_done:
         try:
             _evt_time = record.get("start_time", "")
             if _evt_time:
                 _evt_dt = datetime.fromisoformat(_evt_time.replace("Z", "+00:00"))
                 _now = datetime.now(timezone.utc)
-                if _evt_dt > _now and _evt_dt - _now < timedelta(hours=48):
-                    _within_48h = True
+                if _evt_dt > _now and _evt_dt - _now < timedelta(hours=_cutoff_h):
+                    _within_cutoff = True
         except (ValueError, TypeError):
             pass
 
-    if _within_48h and not already_done:
+    if _within_cutoff and not already_done:
+        # For long-cutoff products, show the specific deadline date
+        _deadline_msg = ""
+        if _cutoff_h > 48:
+            try:
+                _evt_dt2 = datetime.fromisoformat(record.get("start_time", "").replace("Z", "+00:00"))
+                _deadline_dt = _evt_dt2 - timedelta(hours=_cutoff_h)
+                _deadline_msg = f" The cancellation deadline was {_deadline_dt.strftime('%B %d, %Y')}."
+            except Exception:
+                pass
         return f"""<!DOCTYPE html><html><head><title>Cancellation Not Available</title></head>
         <body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;padding:0 24px;">
         <h2 style="color:#0f172a;">Cancellation not available</h2>
-        <p style="color:#64748b;">Your booking for <strong>{service}</strong> is within 48 hours
-        of the scheduled activity. Per our cancellation policy, refunds are not available within
-        48 hours of the event.</p>
+        <p style="color:#64748b;">Your booking for <strong>{service}</strong> is within
+        {_cutoff_display} of the scheduled activity. Per the cancellation policy, refunds
+        are not available at this time.{_deadline_msg}</p>
         <p style="color:#64748b;">If you have questions or need to make changes, please email
         <a href="mailto:bookings@lastminutedealshq.com">bookings@lastminutedealshq.com</a>.</p>
         <a href="{landing_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
@@ -6388,7 +6617,7 @@ def self_serve_cancel(booking_id: str):
     <p style="margin-top:20px;"><a href="{landing_url}" style="color:#64748b;font-size:14px;">
       Keep my booking</a></p>
     <p style="color:#94a3b8;font-size:12px;margin-top:24px;">Cancellation policy: Refunds are not
-    available within 48 hours of the scheduled activity.</p>
+    available within {_cutoff_display} of the scheduled activity.</p>
     </body></html>"""
 
 
@@ -7310,6 +7539,7 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
         if not slot:
             return {"error": "Slot not found or no longer available."}
         host = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
+        _policy = _cancel_policy_label(slot.get("cancellation_cutoff_hours"))
         return {
             "booking_page_url": f"{host}/book/{sid}",
             "service_name": slot.get("service_name", ""),
@@ -7318,7 +7548,8 @@ def _mcp_call_tool(name: str, arguments: dict) -> dict:
             "location_city": slot.get("location_city", ""),
             "price": float(slot.get("our_price") or slot.get("price") or 0),
             "currency": slot.get("currency", "USD"),
-            "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
+            "cancellation_policy": _policy,
+            "instructions": "Share the booking_page_url with the user. IMPORTANT: Tell the customer the cancellation policy BEFORE they click the link: " + _policy,
         }
 
     elif name == "book_from_itinerary":
@@ -7471,6 +7702,9 @@ def _start_mcp_thread():
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
             "2. Present the options to the user and get their selection. "
+            "IMPORTANT — each slot includes a cancellation_policy field. You MUST tell the "
+            "customer the cancellation policy before they commit to booking. For non-refundable "
+            "bookings, get explicit confirmation that the customer understands before proceeding. "
             "3. Call preview_slot(slot_id) to get a booking page URL. "
             "4. Share the booking_page_url with the user — they click it, enter their details, "
             "and pay via Stripe. No need to collect name/email/phone yourself. "
@@ -7480,6 +7714,7 @@ def _start_mcp_thread():
             "AUTONOMOUS MODE: If you have a wallet_id (pre-funded agent wallet), pass it "
             "with execution_mode='autonomous' to book_slot — the booking completes immediately "
             "with no checkout step and returns a confirmation number directly. "
+            "Note: autonomous mode is not available for non-refundable or long-cutoff products. "
             "Call get_supplier_info() to see live destination coverage before searching."
         ),
     )
@@ -7492,6 +7727,7 @@ def _start_mcp_thread():
             "location_city", "location_state", "location_country",
             "start_time", "end_time", "duration_minutes",
             "hours_until_start", "spots_open", "our_price", "currency", "confidence",
+            "cancellation_policy",
         )}
 
     @mcp.tool()
@@ -7677,6 +7913,7 @@ def _start_mcp_thread():
         if not slot or not slot.get("available"):
             return {"error": "Slot not found or no longer available."}
         host = os.getenv("BOOKING_SERVER_HOST", "https://api.lastminutedealshq.com").rstrip("/")
+        _policy = _cancel_policy_label(slot.get("cancellation_cutoff_hours"))
         return {
             "booking_page_url": f"{host}/book/{slot_id}",
             "service_name": slot.get("service_name", ""),
@@ -7685,7 +7922,8 @@ def _start_mcp_thread():
             "location_city": slot.get("location_city", ""),
             "price": float(slot.get("our_price") or slot.get("price") or 0),
             "currency": slot.get("currency", "USD"),
-            "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
+            "cancellation_policy": _policy,
+            "instructions": "Share the booking_page_url with the user. IMPORTANT: Tell the customer the cancellation policy BEFORE they click the link: " + _policy,
         }
 
     @mcp.tool()
@@ -8578,6 +8816,10 @@ def gyg_book():
     # Persist booking mapping
     octo_uuid = (booking_data.get("uuid") or booking_data.get("id")
                  or res["octo_uuid"])
+    sup_ref = (booking_data.get("supplierReference")
+               or booking_data.get("reference") or "")
+    _confirmed_at = datetime.now(timezone.utc).isoformat()
+
     _GYG_BOOKINGS[bk_ref] = {
         "octo_uuid":    octo_uuid,
         "slot_id":      res.get("slot_id", ""),
@@ -8585,13 +8827,33 @@ def gyg_book():
         "gyg_ref":      gyg_ref,
         "product_id":   product_id,
         "date_time":    res.get("date_time", ""),
-        "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        "confirmed_at": _confirmed_at,
         "is_test":      False,
     }
     _GYG_RESERVATIONS.pop(res_ref, None)
 
-    sup_ref = (booking_data.get("supplierReference")
-               or booking_data.get("reference") or "")
+    # Fix #1 + #2: Persist to Supabase Storage so booking survives redeploys
+    # and is discoverable by the Bokun webhook handler via by_confirmation/ index.
+    _gyg_bk_id = f"gyg_{bk_ref}"
+    _save_booking_record(_gyg_bk_id, {
+        "booking_id":         _gyg_bk_id,
+        "confirmation":       octo_uuid,
+        "supplier_reference": sup_ref,
+        "slot_id":            res.get("slot_id", ""),
+        "booking_url":        res["booking_url"],
+        "supplier_id":        burl.get("supplier_id", ""),
+        "gyg_ref":            gyg_ref,
+        "gyg_booking_ref":    bk_ref,
+        "product_id":         product_id,
+        "start_time":         res.get("date_time", ""),
+        "status":             "confirmed",
+        "source":             "gyg",
+        "is_test":            False,
+        "cancellation_cutoff_hours": burl.get("cancellation_cutoff_hours"),
+        "confirmed_at":       _confirmed_at,
+        "created_at":         _confirmed_at,
+    })
+
     print(f"[GYG] Booked: {bk_ref} -> OCTO {octo_uuid} sup_ref={sup_ref}")
 
     return jsonify({"data": {
@@ -8615,6 +8877,22 @@ def gyg_cancel_booking():
         return _gyg_err("VALIDATION_FAILURE", "Missing bookingReference")
 
     bk = _GYG_BOOKINGS.get(bk_ref)
+
+    # Fix #1: Fall back to Supabase Storage when in-memory lookup fails (after redeploy)
+    if not bk:
+        _persisted = _load_booking_record(f"gyg_{bk_ref}")
+        if _persisted:
+            bk = {
+                "octo_uuid":   _persisted.get("confirmation", ""),
+                "slot_id":     _persisted.get("slot_id", ""),
+                "booking_url": _persisted.get("booking_url", ""),
+                "gyg_ref":     _persisted.get("gyg_ref", ""),
+                "product_id":  _persisted.get("product_id", ""),
+                "date_time":   _persisted.get("start_time", ""),
+                "is_test":     _persisted.get("is_test", False),
+            }
+            print(f"[GYG] Restored booking from Supabase: {bk_ref}")
+
     if not bk:
         return _gyg_err("INVALID_BOOKING", f"Unknown booking: {bk_ref}")
 
@@ -8624,24 +8902,43 @@ def gyg_cancel_booking():
         print(f"[GYG-TEST] Mock booking cancelled: {bk_ref}")
         return jsonify({"data": {}}), 200
 
-    # Reject cancellation if the activity date has passed or is within 48 hours
+    # Reject cancellation if the activity date has passed
+    # NOTE: GYG controls the customer-facing cancellation policy on their portal.
+    # When GYG sends us a cancel-booking call, they've already enforced their policy.
+    # We only reject for truly invalid states (past events). The per-product cutoff
+    # is NOT enforced here — GYG's spec says "This call must cancel the booking."
     try:
         bk_dt = datetime.fromisoformat(bk["date_time"].replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         if bk_dt < now:
             return _gyg_err("BOOKING_IN_PAST", "Booking date has already passed")
-        if bk_dt - now < timedelta(hours=48):
-            return _gyg_err("CANCELLATION_NOT_POSSIBLE",
-                            "Cancellations are not permitted within 48 hours of the activity")
     except (ValueError, KeyError):
         pass
 
     burl = json.loads(bk["booking_url"])
     ok, err = _gyg_octo_cancel(bk["octo_uuid"], burl)
     if not ok:
+        # Fix #3: Queue for auto-retry instead of just failing
+        _supplier_id = burl.get("supplier_id", "")
+        _queue_octo_retry(
+            booking_id=f"gyg_{bk_ref}",
+            supplier_id=_supplier_id,
+            confirmation=bk["octo_uuid"],
+            payment_intent_id="",   # GYG handles payment, no Stripe PI
+            price_charged=0,
+        )
+        print(f"[GYG] Cancel failed, queued for retry: {bk_ref} | {err}")
         return _gyg_err("INTERNAL_SYSTEM_FAILURE", f"Cancel failed: {err}")
 
     _GYG_BOOKINGS.pop(bk_ref, None)
+    # Update persisted record status
+    _persisted_rec = _load_booking_record(f"gyg_{bk_ref}")
+    if _persisted_rec:
+        _persisted_rec["status"] = "cancelled"
+        _persisted_rec["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+        _persisted_rec["cancelled_by"] = "gyg_cancel_booking"
+        _save_booking_record(f"gyg_{bk_ref}", _persisted_rec)
+
     print(f"[GYG] Booking cancelled: {bk_ref}")
     return jsonify({"data": {}}), 200
 

@@ -147,6 +147,9 @@ mcp = FastMCP(
         "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
         "1. Call search_slots with the user's city/destination and preferred timeframe. "
         "2. Present options and get the user's selection. "
+        "IMPORTANT — each slot includes a cancellation_policy field. You MUST tell the "
+        "customer the cancellation policy before they commit to booking. For non-refundable "
+        "bookings, get explicit confirmation that the customer understands before proceeding. "
         "3. Call preview_slot(slot_id) to get a booking page URL. "
         "4. Share the booking_page_url with the user — they click it, enter their details, "
         "and pay via Stripe. No need to collect name/email/phone yourself. "
@@ -155,7 +158,8 @@ mcp = FastMCP(
         "6. Call get_booking_status to confirm once payment is complete. "
         "AUTONOMOUS MODE: if you have a wallet_id, pass it with execution_mode='autonomous' "
         "to skip the checkout step entirely — booking completes immediately with a "
-        "confirmation number. Call get_supplier_info() to see live destination coverage."
+        "confirmation number. Note: autonomous mode is not available for non-refundable "
+        "or long-cutoff products. Call get_supplier_info() to see live destination coverage."
     ),
 )
 
@@ -197,25 +201,41 @@ async def _api_post(path: str, body: dict) -> dict:
     return r.json()
 
 
+def _cancel_policy_label(hours) -> str:
+    """Convert cancellation_cutoff_hours to a human-readable policy string."""
+    try:
+        h = int(hours)
+    except (TypeError, ValueError):
+        return "Free cancellation up to 48 hours before the activity"
+    if h >= 9999 * 24:
+        return "Non-refundable — no cancellations or refunds"
+    if h <= 0:
+        return "Free cancellation up to departure"
+    if h % 24 == 0 and h >= 48:
+        return f"Free cancellation up to {h // 24} days before the activity"
+    return f"Free cancellation up to {h} hours before the activity"
+
+
 def _safe_slot(s: dict) -> dict:
     """Strip internal fields before returning to agents."""
     return {
-        "slot_id":           s.get("slot_id", ""),
-        "category":          s.get("category", ""),
-        "service_name":      s.get("service_name", ""),
-        "business_name":     s.get("business_name", ""),
-        "location_city":     s.get("location_city", ""),
-        "location_state":    s.get("location_state", ""),
-        "location_country":  s.get("location_country", ""),
-        "start_time":        s.get("start_time", ""),
-        "end_time":          s.get("end_time", ""),
-        "duration_minutes":  s.get("duration_minutes"),
-        "hours_until_start": s.get("hours_until_start"),
-        "spots_open":        s.get("spots_open"),
-        "spots_total":       s.get("spots_total"),
-        "our_price":         s.get("our_price"),
-        "currency":          s.get("currency", "USD"),
-        "confidence":        s.get("confidence", "high"),
+        "slot_id":              s.get("slot_id", ""),
+        "category":             s.get("category", ""),
+        "service_name":         s.get("service_name", ""),
+        "business_name":        s.get("business_name", ""),
+        "location_city":        s.get("location_city", ""),
+        "location_state":       s.get("location_state", ""),
+        "location_country":     s.get("location_country", ""),
+        "start_time":           s.get("start_time", ""),
+        "end_time":             s.get("end_time", ""),
+        "duration_minutes":     s.get("duration_minutes"),
+        "hours_until_start":    s.get("hours_until_start"),
+        "spots_open":           s.get("spots_open"),
+        "spots_total":          s.get("spots_total"),
+        "our_price":            s.get("our_price"),
+        "currency":             s.get("currency", "USD"),
+        "confidence":           s.get("confidence", "high"),
+        "cancellation_policy":  _cancel_policy_label(s.get("cancellation_cutoff_hours")),
     }
 
 
@@ -438,6 +458,7 @@ async def preview_slot(slot_id: str) -> dict:
     if not data or not data.get("available"):
         return {"error": "Slot not found or no longer available."}
     host = BOOKING_API.replace("web-production-dc74b.up.railway.app", "api.lastminutedealshq.com")  # no-op when BOOKING_API already uses custom domain
+    _policy = _cancel_policy_label(data.get("cancellation_cutoff_hours"))
     return {
         "booking_page_url": f"{host}/book/{slot_id}",
         "service_name": data.get("service_name", ""),
@@ -446,7 +467,8 @@ async def preview_slot(slot_id: str) -> dict:
         "location_city": data.get("location_city", ""),
         "price": float(data.get("our_price") or data.get("price") or 0),
         "currency": data.get("currency", "USD"),
-        "instructions": "Share the booking_page_url with the user. They can view details and complete the booking themselves.",
+        "cancellation_policy": _policy,
+        "instructions": "Share the booking_page_url with the user. IMPORTANT: Tell the customer the cancellation policy BEFORE they click the link: " + _policy,
     }
 
 

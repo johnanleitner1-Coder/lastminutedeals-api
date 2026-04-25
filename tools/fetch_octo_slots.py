@@ -344,6 +344,30 @@ def octo_availability_to_slot(
     country       = (resolved or {}).get("country") or supplier.get("country", "US")
     category      = _infer_category(product, supplier.get("category", "experiences"))
 
+    # Extract per-product cancellation cutoff from the OCTO option.
+    # Bokun returns cancellationCutoffAmount + cancellationCutoffUnit on each option.
+    # Convert to hours for uniform enforcement across all cancel endpoints.
+    _cancel_hours = 48  # safe default if OCTO doesn't provide data
+    _options = product.get("options") or []
+    for _opt in _options:
+        if _opt.get("id") == option_id:
+            _cutoff_amt  = _opt.get("cancellationCutoffAmount")
+            _cutoff_unit = (_opt.get("cancellationCutoffUnit") or "").lower()
+            if _cutoff_amt is not None:
+                try:
+                    _cutoff_amt = int(_cutoff_amt)
+                except (ValueError, TypeError):
+                    break
+                if _cutoff_unit == "hour":
+                    _cancel_hours = _cutoff_amt
+                elif _cutoff_unit == "minute":
+                    _cancel_hours = max(0, _cutoff_amt // 60)
+                elif _cutoff_unit == "day":
+                    _cancel_hours = _cutoff_amt * 24
+                else:
+                    _cancel_hours = _cutoff_amt  # assume hours
+            break
+
     # Encode all OCTO booking params in booking_url (internal, never shown to users)
     # OCTOBooker will parse this JSON to execute the reservation + confirmation
     booking_params = json.dumps({
@@ -361,6 +385,8 @@ def octo_availability_to_slot(
         # start_time included so OCTOBooker 409 re-resolution can match the exact
         # originally-requested time slot (not silently rebook a different departure).
         "start_time":     start_iso,
+        # Per-product cancellation cutoff in hours — enforced at cancel time.
+        "cancellation_cutoff_hours": _cancel_hours,
     })
 
     raw = {
@@ -382,13 +408,15 @@ def octo_availability_to_slot(
         "spots_open":     vacancies,
         "spots_total":    capacity,
         "teacher":        None,
+        "cancellation_cutoff_hours": _cancel_hours,
     }
 
     slot = normalize(raw, platform="octo")
 
-    # Carry forward availability/spots fields (normalize() doesn't include them)
+    # Carry forward fields that normalize() doesn't include
     slot["spots_open"]  = vacancies
     slot["spots_total"] = capacity
+    slot["cancellation_cutoff_hours"] = _cancel_hours
 
     return slot
 

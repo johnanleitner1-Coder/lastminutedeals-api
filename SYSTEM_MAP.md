@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-24 (v42 — GYG per-product config (replaces system-wide toggles), 48-hour cancellation policy across all cancel endpoints/booking page/emails. Previous: v41 — Added 3 new suppliers, GYG Supplier API with all 4 test types passing 24/24.)
+**Last updated:** 2026-04-25 (v45 — Tiered cancellation display + acknowledgment gates + autonomous booking blocks. Previous: v44 — Per-product cancellation cutoffs replace flat 48h policy.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -926,11 +926,14 @@ GYG calls book(reservationReference, travelers, bookingItems)
 GYG calls cancel-booking(bookingReference)
   → Test-mode bookings always cancellable (bypasses 48h policy)
   → 48-hour cancellation policy: rejects if event is within 48h
-  → We look up booking, call OCTO DELETE /bookings/{uuid}
+  → Look up booking: in-memory first, then Supabase Storage fallback
+  → Call OCTO DELETE /bookings/{uuid}
+  → On success: update persisted record status to "cancelled"
+  → On failure: queue to cancellation_queue/ for APScheduler auto-retry (15 min)
   → Return success (or BOOKING_IN_PAST / CANCELLATION_NOT_POSSIBLE)
 ```
 
-**Reservation/booking stores:** In-memory dicts (`_GYG_RESERVATIONS`, `_GYG_BOOKINGS`). Reservations expire after 60 min. On server restart, GYG-side expiration handles cleanup.
+**Reservation/booking stores:** Reservations: in-memory only (`_GYG_RESERVATIONS`, expire after 60 min). Bookings: in-memory (`_GYG_BOOKINGS`) + persisted to Supabase Storage as `gyg_{bookingRef}.json` with `by_confirmation/` index (OCTO UUID + supplier ref). Survives redeploys. Discoverable by Bokun webhook handler for supplier-initiated cancellations.
 
 **All 4 booking types supported (all 24/24 tests passed 2026-04-24):**
 - Time Point Individual (specific time, individual categories)
@@ -938,22 +941,46 @@ GYG calls cancel-booking(bookingReference)
 - Time Period Individual (date-only, time=T00:00:00)
 - Time Period Group (date-only + GROUP)
 
-**48-hour cancellation policy (system-wide):**
-- GYG cancel-booking: rejects with CANCELLATION_NOT_POSSIBLE if event < 48h away
-- Self-serve /cancel/{id}: shows "Cancellation not available" page
-- DELETE /bookings/{id}: returns 403
-- Booking page /book/{slot_id}: policy stated before checkout
-- Confirmation email: policy stated in cancel instructions
-- Past events (already happened): policy does NOT block — only future events within 48h
+**Per-product cancellation policy (replaces flat 48h):**
+- Each OCTO product has its own cancellation cutoff from supplier (24h, 72h, 15 days, etc.)
+- `cancellation_cutoff_hours` extracted from OCTO option's `cancellationCutoffAmount` field
+- Bokun returns this field on 100% of options (verified: 2,990/2,990 across all 32 suppliers)
+- `cancellation_cutoff_hours` stored in: slot dict, booking_url JSON (inside raw column), booking record
+- Fallback for old bookings without field: 48 hours (conservative default)
+- Actual supplier distribution: 154 products @ 24h, 22 @ 360h (15 days), 2 @ 336h (14 days), 1 @ 72h, 1 @ 0 min, 1 non-refundable
+
+**Three-tier cancellation display (ADDED 2026-04-25):**
+- **Standard (≤48h):** Green banner on booking page, no checkbox. Normal cancel flow.
+- **Long window (>48h):** Amber warning, mandatory checkbox acknowledgment before Book Now enabled.
+- **Non-refundable (≥9999×24h sentinel):** Red warning, mandatory checkbox acknowledgment. Email has NO cancel link. Self-serve cancel shows "non-refundable" page (no cancel form). DELETE /bookings returns 403.
+
+**Cancellation policy across all booking paths:**
+- ✅ Booking page /book/{slot_id}: tiered display with checkbox gate for long/non-refundable
+- ✅ MCP search_slots: `cancellation_policy` field in every slot (all 3 MCP paths)
+- ✅ MCP preview_slot: includes `cancellation_policy` + instructions to tell customer before booking
+- ✅ MCP book_slot: includes `cancellation_policy` in response + updated action_required text
+- ✅ MCP instructions: agents told to communicate policy before booking
+- ✅ Autonomous booking (wallet): blocks non-refundable and >48h products (403)
+- ✅ Saved-card booking: blocks non-refundable and >48h products (403)
+- ✅ Confirmation email: tiered wording — no cancel link for non-refundable, specific deadline date for long-cutoff
+- ✅ Self-serve cancel /cancel/{id}: non-refundable → no cancel form. Long-cutoff → shows deadline date.
+- ✅ DELETE /bookings/{id}: non-refundable → 403. Within cutoff → 403 with display.
+- GYG cancel-booking: does NOT enforce cutoff (GYG controls policy on their portal)
 
 **GYG credentials in .env:**
 - `GYG_API_USERNAME` / `GYG_API_PASSWORD` — for us calling GYG endpoints
 - `GYG_INBOUND_USERNAME` / `GYG_INBOUND_PASSWORD` — for GYG calling our endpoints
 
+**GYG cancellation resilience (FIXED 2026-04-24):**
+- ✅ Bookings persisted to Supabase Storage — survive Railway redeploys
+- ✅ Supplier cancel detection — Bokun webhook finds GYG bookings via by_confirmation/ index
+- ✅ Failed OCTO cancellations queued to cancellation_queue/ for APScheduler auto-retry (15 min)
+- ⚠️ 48h cancellation policy — needs alignment check with GYG portal settings (user wants to discuss)
+
 **Remaining GYG work:**
 - Build supplier allowlist filter (only 13 of 32 suppliers should be exposed — see project memory)
 - Flip GYG_TEST_MODE to false when ready for real bookings
-- Remove old env vars: GYG_PRICING_MODEL, GYG_PARTICIPANT_MAX (replaced by GYG_PRODUCTS)
+- Discuss 48h policy alignment with GYG portal (#4)
 
 ---
 

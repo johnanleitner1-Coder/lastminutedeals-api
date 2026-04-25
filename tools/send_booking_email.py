@@ -37,7 +37,7 @@ import os
 import smtplib
 import sys
 import textwrap
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
@@ -251,6 +251,17 @@ def _format_price(price, currency: str = "USD") -> str:
         return f"${float(price):.2f}"
     except Exception:
         return str(price)
+
+
+def _cancel_policy_text(hours: int) -> str:
+    """Convert cancellation cutoff hours to human-readable text for emails."""
+    if hours <= 0:
+        return "up to departure"
+    if hours >= 9999 * 24:
+        return "non-refundable"
+    if hours % 24 == 0 and hours >= 48:
+        return f"{hours // 24} days"
+    return f"{hours} hours"
 
 
 def _gcal_url(slot: dict) -> str:
@@ -604,6 +615,22 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
     first_name   = customer_name.split()[0] if customer_name else "there"
     conf_display = confirmation_number or "—"
     gcal         = _gcal_url(slot)
+    _cutoff_raw  = slot.get("cancellation_cutoff_hours")
+    _cutoff_h    = int(_cutoff_raw) if _cutoff_raw is not None else 48
+    _cutoff_txt  = _cancel_policy_text(_cutoff_h)
+    _is_nonrefundable = _cutoff_h >= 9999 * 24
+    _is_long_cutoff   = not _is_nonrefundable and _cutoff_h > 48
+    # Compute specific deadline date for long-cutoff products
+    _deadline_str = ""
+    if _is_long_cutoff:
+        try:
+            _start_iso = slot.get("start_time", "")
+            if _start_iso:
+                _start_dt = datetime.fromisoformat(_start_iso.replace("Z", "+00:00"))
+                _deadline_dt = _start_dt - timedelta(hours=_cutoff_h)
+                _deadline_str = _deadline_dt.strftime("%B %d, %Y")
+        except Exception:
+            pass
 
     html_body = f"""
           <!-- Hero -->
@@ -739,8 +766,23 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
                         </td>
                         <td>
                           <p style="margin:0; font-family:{FONT_STACK}; font-size:14px; color:{BRAND_DARK}; line-height:1.5;">
-                            <strong>Need to cancel?</strong>
-                            {"<a href='" + cancel_url + "' style='color:" + BRAND_BLUE_DK + ";'>Cancel this booking</a> — you'll receive a full refund. Cancellations must be made at least 48 hours before the activity." if cancel_url else "Reply to this email as soon as possible and we'll do our best to help."}
+                            {
+                                "<strong>Non-refundable:</strong> This booking is non-refundable. No cancellations or refunds are available. If you have questions, reply to this email."
+                                if _is_nonrefundable
+                                else (
+                                    "<strong>Need to cancel?</strong> "
+                                    + (
+                                        "<a href='" + cancel_url + "' style='color:" + BRAND_BLUE_DK + ";'>Cancel this booking</a>"
+                                        if cancel_url
+                                        else "Reply to this email"
+                                    )
+                                    + (
+                                        " — free cancellation before " + _deadline_str + ". Cancellations after that date are non-refundable."
+                                        if _is_long_cutoff and _deadline_str
+                                        else " — you'll receive a full refund. Cancellations must be made at least " + _cutoff_txt + " before the activity."
+                                    )
+                                )
+                            }
                           </p>
                         </td>
                       </tr>
@@ -785,8 +827,28 @@ def _build_confirmed_html(customer_name: str, slot: dict, confirmation_number: s
         ------------
         • Arrive 5–10 minutes early to check in.
         • Bring a valid ID and this email (phone is fine).
-        • Need to cancel? {"Cancel here: " + cancel_url + " (must be 48+ hours before activity)" if cancel_url else "Reply to this email ASAP."}
-        • Cancellation policy: Refunds are not available within 48 hours of the scheduled activity.
+        • {
+            "This booking is non-refundable. No cancellations or refunds are available."
+            if _is_nonrefundable
+            else (
+                "Need to cancel? "
+                + ("Cancel here: " + cancel_url if cancel_url else "Reply to this email ASAP.")
+                + (
+                    " Free cancellation before " + _deadline_str + ". Cancellations after that date are non-refundable."
+                    if _is_long_cutoff and _deadline_str
+                    else " (must be " + _cutoff_txt + "+ before activity)"
+                )
+            )
+        }
+        • Cancellation policy: {
+            "This booking is non-refundable."
+            if _is_nonrefundable
+            else (
+                "Free cancellation before " + _deadline_str + ". Cancellations after that date are non-refundable."
+                if _is_long_cutoff and _deadline_str
+                else "Refunds are not available within " + _cutoff_txt + " of the scheduled activity."
+            )
+        }
 
         ADD TO CALENDAR
         ---------------
