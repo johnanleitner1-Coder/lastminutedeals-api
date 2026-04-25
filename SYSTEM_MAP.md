@@ -139,7 +139,7 @@ START
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
   │    │    │    ├─ Level 2: product_id_map exact match (null/empty ref fallback)
-  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 32 vendors mapped)
+  │    │    │    ├─ Level 3: vendor_id_to_supplier_map (catch-all — all 37 vendors mapped)
   │    │    │    ├─ WARNING logged if all 3 levels fail (new vendor added without config)
   │    │    │    └─ 0 unresolved slots ✅ | guaranteed for any future product from known vendors
   │    │    └─ normalize_slot: slot_id = sha256(platform+product_id+start_time)
@@ -1213,10 +1213,12 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | API server | Railway (web service) | ✅ | Auto-redeploys on git push |
 | MCP Streamable HTTP server | Railway (mcp service) | ✅ | run_mcp_remote.py (transport changed SSE → streamable-http, 2026-04-18) |
 | Payments | Stripe | ✅ | Checkout + webhooks + auth-capture + saved cards |
-| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 32 vendor IDs, ~1,100 products, ~6,400 total in marketplace |
+| Supplier booking | Bokun OCTO API | ✅ (API reachable) / ❌ (real end-to-end untested) | 37 vendor IDs, ~1,545 products, 25,000+ live slots |
 | Bokun notifications | HTTP notification (URL token auth) | ✅ | Smoke tested 2026-04-16 |
 | Email | SendGrid (primary) + SMTP (fallback) | ✅ | 4 email types wired |
-| Landing page | Cloudflare Pages | ✅ | Rebuilt every pipeline run |
+| Landing page | Cloudflare Pages | ✅ | Rewritten 2026-04-25 — accurate product desc, links to Railway /tours |
+| SEO /tours pages | Railway _TOUR_DESTINATIONS | ✅ | 50 destinations (48 orig + Brazil + Istanbul), dynamic slot counts |
+| /llms.txt | Railway + Cloudflare Pages | ✅ | Added to API server 2026-04-25 — describes OCTO/Bokun product correctly |
 | Slot discovery | Railway APScheduler (every 4h) | ✅ | Local Task Scheduler DISABLED 2026-04-18 — Railway handles it 24/7 |
 | Pricing history | Google Sheets | ❌ | OAuth token expired — urgency pricing disabled |
 | Booked slot dedup | .tmp/booked_slots.json (ALL paths) | ❌ | Lost on Railway redeploy — fast dedup breaks; Stripe path degrades gracefully via OCTO 409; execute/guaranteed double-booking risk |
