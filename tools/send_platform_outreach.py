@@ -77,7 +77,7 @@ https://api.lastminutedealshq.com
 Hi Holibob team,
 
 I'm John, founder of Last Minute Deals HQ. We run an OCTO-native booking \
-pipeline with 32 tour and activity suppliers across 47 countries — \
+pipeline with 37 tour and activity suppliers across 48 countries — \
 including destinations like Reykjavik, Rome, Cairo, Kyoto, Lisbon, \
 Marrakech, and Dar es Salaam. ~10,000 live bookable slots covering glacier \
 hikes, e-bike tours, cooking classes, Nile cruises, desert tours, and more.
@@ -88,8 +88,8 @@ booking. If we carry experiences your network doesn't already have, we'd \
 love to explore integration.
 
 Quick overview:
-- 32 suppliers on Bokun/OCTO
-- 10,000+ live slots, 100+ cities, 47 countries
+- 37 suppliers on Bokun/OCTO
+- 17,000+ live slots, 100+ cities, 48 countries
 - Real-time availability, refreshed every 4 hours
 - Specialization in last-minute / short-lead availability
 - REST API + MCP server for AI agent distribution
@@ -104,12 +104,12 @@ https://api.lastminutedealshq.com
     {
         "name": "Klook",
         "to": "nathan.szabo@klook.com",
-        "subject": "Connectivity Partner Inquiry — 32 Suppliers, 10,000+ Slots, 47 Countries",
+        "subject": "Connectivity Partner Inquiry — 37 Suppliers, 17,000+ Slots, 48 Countries",
         "body": """\
 Hi Nathan,
 
 I'm John, founder of Last Minute Deals HQ. We operate a booking pipeline \
-connected to 32 tour and activity suppliers across 47 countries — Iceland, \
+connected to 37 tour and activity suppliers across 48 countries — Iceland, \
 Egypt, Japan, Italy, Portugal, Turkey, Morocco, Tanzania, and more. ~10,000 \
 live bookable slots covering glacier hikes, e-bike tours, cooking classes, \
 Nile cruises, desert safaris, and photography experiences.
@@ -138,7 +138,7 @@ https://api.lastminutedealshq.com
     {
         "name": "Headout",
         "to": "support@headout.com",
-        "subject": "Supply Partner Inquiry — 32 Suppliers, 47 Countries via OCTO",
+        "subject": "Supply Partner Inquiry — 37 Suppliers, 48 Countries via OCTO",
         "body": """\
 Hi Headout team,
 

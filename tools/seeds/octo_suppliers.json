@@ -16,7 +16,7 @@
     "timeout": 60,
     "retry_on_timeout": true,
     "pricing_capability": true,
-    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086, 32610, 133616, 117927, 39712, 107408, 102335, 44714, 88202, 107766],
+    "vendor_ids": [85, 22298, 134418, 103510, 137492, 16261, 105917, 3020, 33562, 70, 102991, 123380, 98502, 109399, 4278, 136863, 126903, 137927, 104051, 17252, 57545, 121323, 101086, 32610, 133616, 117927, 39712, 107408, 102335, 44714, 88202, 107766, 136472, 108755, 51082, 116116, 35238],
     "reference_supplier_map": {
       "AA":                         {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
       "AA0903":                     {"name": "Arctic Adventures", "city": "Reykjavik", "country": "IS"},
@@ -125,7 +125,12 @@
       "102335": {"name": "Food Activity Japan",  "city": "Osaka",           "country": "JP"},
       "44714":  {"name": "European Voyages",    "city": "Paris",           "country": "FR"},
       "88202":  {"name": "CruiserCar Palermo",  "city": "Palermo",         "country": "IT"},
-      "107766": {"name": "Nile Navigators",     "city": "Cairo",           "country": "EG"}
+      "107766": {"name": "Nile Navigators",     "city": "Cairo",           "country": "EG"},
+      "136472": {"name": "Fantastic Walks",     "city": "London",          "country": "GB"},
+      "108755": {"name": "Top Gear Tours",      "city": "Cairo",           "country": "EG"},
+      "51082":  {"name": "Amazing Tours Agency", "city": "Rio de Janeiro", "country": "BR"},
+      "116116": {"name": "Anatolia Expedition", "city": "Istanbul",        "country": "TR"},
+      "35238":  {"name": "Turkey Tours Company", "city": "Istanbul",       "country": "TR"}
     }
   }
 ]

@@ -143,7 +143,12 @@ mcp = FastMCP(
         "TUTU VIEW Ltd (China — multi-day tours, silk road, cultural experiences), "
         "Vakare Travel Service (Antalya, Turkey — boat tours, jeep safaris), "
         "VIDABOA (Porto, Portugal — Douro Valley wine tours), "
-        "Zestro Bizlinks (Japan — experiences). "
+        "Zestro Bizlinks (Japan — experiences), "
+        "Fantastic Walks (UK — walking tours), "
+        "Top Gear Tours (Egypt — tours and experiences), "
+        "Amazing Tours Agency (Brazil — tours and experiences), "
+        "Anatolia Expedition (Turkey — cultural tours, expeditions), "
+        "Turkey Tours Company (Istanbul, Turkey — 66 products, cultural tours, Cappadocia, Ephesus). "
         "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
         "1. Call search_slots with the user's city/destination and preferred timeframe. "
         "2. Present options and get the user's selection. "
@@ -250,9 +255,9 @@ async def search_slots(
     """
     Search available last-minute tours, activities, and experiences worldwide.
 
-    Queries live production inventory from 32 suppliers across 47 countries including
+    Queries live production inventory from 37 suppliers across 48 countries including
     France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan,
-    Portugal, Turkey, and more — sourced via the OCTO open booking standard. Results are
+    Portugal, Turkey, Brazil, and more — sourced via the OCTO open booking standard. Results are
     sorted by urgency (soonest departures first).
 
     When to use: Call this first when a user asks about tours, activities, or experiences.

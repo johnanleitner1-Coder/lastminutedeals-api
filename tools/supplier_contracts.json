@@ -369,6 +369,91 @@
       "contract_status": "confirmed",
       "contract_date": "2026-04-22",
       "notes": "Accepted 22 Apr 2026. Osaka — matcha making, food experiences. 10% commission across all types."
+    },
+
+    "Fantastic Walks": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 136472,
+      "city": "London",
+      "country": "GB",
+      "products": 3,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-25",
+      "notes": "Accepted 25 Apr 2026. UK walking tours. 20% commission across all types."
+    },
+
+    "Top Gear Tours": {
+      "pricing_model": "commission",
+      "commission_pct": 0.22,
+      "commission_by_type": {
+        "experiences": 0.22,
+        "extras": 0.22,
+        "pick_up": 0.22
+      },
+      "bokun_vendor_id": 108755,
+      "city": "Cairo",
+      "country": "EG",
+      "products": 7,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-25",
+      "notes": "Accepted 25 Apr 2026. Egypt tours. 22% commission across all types."
+    },
+
+    "Amazing Tours Agency": {
+      "pricing_model": "commission",
+      "commission_pct": 0.30,
+      "commission_by_type": {
+        "experiences": 0.30,
+        "extras": 0.30,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 51082,
+      "city": "Rio de Janeiro",
+      "country": "BR",
+      "products": 36,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-25",
+      "notes": "Accepted 25 Apr 2026. Brazil tours. 30% commission on experiences and extras, 0% pick-up."
+    },
+
+    "Anatolia Expedition": {
+      "pricing_model": "commission",
+      "commission_pct": 0.30,
+      "commission_by_type": {
+        "experiences": 0.30,
+        "extras": 0.10,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 116116,
+      "city": "Istanbul",
+      "country": "TR",
+      "products": 7,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-25",
+      "notes": "Accepted 25 Apr 2026. Turkey tours. 30% experiences, 10% extras, 0% pick-up. Supplier cannot cancel or change bookings."
+    },
+
+    "Turkey Tours Company": {
+      "pricing_model": "commission",
+      "commission_pct": 0.30,
+      "commission_by_type": {
+        "experiences": 0.30,
+        "extras": 0.10,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 35238,
+      "city": "Istanbul",
+      "country": "TR",
+      "products": 66,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-25",
+      "notes": "Accepted 25 Apr 2026. Turkey tours — 66 products, largest new batch. 30% experiences, 10% extras, 0% pick-up. Supplier cannot cancel or change bookings."
     }
   }
 }
