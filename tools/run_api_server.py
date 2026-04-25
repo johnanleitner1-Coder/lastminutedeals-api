@@ -1231,6 +1231,21 @@ _TOUR_DESTINATIONS = {
         "intro": "Austria bridges imperial grandeur and alpine beauty. Vienna's palaces and Salzburg's Mozart heritage sit against a backdrop of mountain scenery. Walking tours, food experiences, and cultural journeys run daily with instant confirmation.",
         "highlights": ["Walking tours", "Vienna", "Salzburg", "Food tours", "Imperial palaces", "Cultural experiences"],
     },
+    # ── New supplier destinations ──────────────────────────────────────────
+    "brazil": {
+        "name": "Brazil", "query": "Brazil",
+        "title": "Last-Minute Brazil Tours & Experiences",
+        "meta_desc": "Book tours and experiences in Brazil. Cultural adventures, city tours, and local experiences. Instant confirmation.",
+        "intro": "Brazil's vibrant culture, stunning landscapes, and warm hospitality make it one of South America's most exciting destinations. Local suppliers offer tours and experiences with instant confirmation — from city explorations to cultural adventures.",
+        "highlights": ["City tours", "Cultural experiences", "Local adventures", "Day trips"],
+    },
+    "istanbul": {
+        "name": "Istanbul", "query": "Istanbul",
+        "title": "Last-Minute Istanbul Tours — Bosphorus, Bazaars & Beyond",
+        "meta_desc": "Book walking tours, food tours, cultural experiences, and day trips in Istanbul. Grand Bazaar, Hagia Sophia, Bosphorus cruise, Cappadocia trips. Instant confirmation from multiple local suppliers.",
+        "intro": "Istanbul straddles Europe and Asia across the Bosphorus, and the city's energy is unlike anywhere else. Multiple local suppliers offer walking tours through the Grand Bazaar and Sultanahmet, food tours sampling street simit and balik ekmek, Bosphorus cruises at sunset, and multi-day trips to Cappadocia's fairy chimneys and Ephesus's ancient ruins — all with instant confirmation.",
+        "highlights": ["Walking tours", "Food tours", "Grand Bazaar", "Bosphorus cruises", "Cappadocia trips", "Ephesus day trips", "Cultural experiences"],
+    },
 }
 
 
@@ -1749,6 +1764,62 @@ def mcp_server_card():
             "additionalProperties": False,
         },
     })
+
+
+@app.route("/llms.txt", methods=["GET"])
+def llms_txt():
+    """Serve llms.txt for AI agent discovery."""
+    content = f"""# Last Minute Deals HQ
+> Live tour and activity inventory for AI agents. {_supplier_count()} suppliers, 100+ cities, instant confirmation via OCTO.
+
+Last Minute Deals HQ is a booking API for tours and activities. An AI agent searches
+available slots, shows them to a customer, and books via Stripe checkout or pre-funded
+wallet. Inventory is sourced live from {_supplier_count()} tour operators connected through the OCTO
+open standard (the industry protocol for tours and activities).
+
+This is not a scraper. Every slot is a real, bookable product from a verified supplier
+with instant confirmation. Inventory refreshes every 4 hours from production booking systems.
+
+## What's available
+- 25,000+ live bookable slots across 100+ cities
+- {_supplier_count()} connected suppliers via OCTO/Bokun
+- Categories: tours, activities, wellness, photography, food experiences, safaris, boat tours
+- Destinations: Iceland, Egypt, Turkey, Italy, Portugal, Japan, Morocco, Tanzania, Mexico,
+  Costa Rica, Montenegro, Finland, China, Romania, United Kingdom, Brazil, plus 30+ European
+  cities via European Voyages
+- Availability window: 0-72 hours from now (last-minute focus)
+- Payment: Stripe auth-then-capture (customer never charged for a failed booking)
+
+## For AI Agents — MCP Server
+
+Connect directly via MCP-over-HTTP (no transport setup):
+  POST https://api.lastminutedealshq.com/mcp
+
+### MCP Tools
+- search_slots: Search available tours by city, category, hours_ahead, max_price
+- book_slot: Book for a customer (Stripe checkout or wallet)
+- preview_slot: Get shareable booking page URL
+- get_booking_status: Check confirmation status
+- get_supplier_info: Full supplier network with destinations
+
+## For AI Agents — REST API
+
+Base URL: https://api.lastminutedealshq.com
+API spec: https://lastminutedealshq.com/openapi.json
+
+GET /api/slots?city=Rome&hours_ahead=72&max_price=50 — Search available slots
+POST /api/book — Create Stripe checkout for a slot
+POST /api/book/direct — Book via pre-funded wallet (autonomous)
+GET /bookings/{{id}} — Check booking status
+POST /api/keys/register — Get a free API key
+GET /health — System health
+GET /metrics — Live system metrics (public)
+
+## Installation
+npx -y @smithery/cli install @johnanleitner1/Last_Minute_Deals_HQ --client claude
+Or connect directly: https://api.lastminutedealshq.com/mcp
+"""
+    return content, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
 @app.route("/health", methods=["GET"])
