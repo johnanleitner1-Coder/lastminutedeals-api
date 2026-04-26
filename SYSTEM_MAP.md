@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-25 (v45 — Tiered cancellation display + acknowledgment gates + autonomous booking blocks. Previous: v44 — Per-product cancellation cutoffs replace flat 48h policy.)
+**Last updated:** 2026-04-25 (v46 — Distribution channels: Telegram bot, blogger outreach, supplier follow-ups, directory submission copy. Previous: v45 — Tiered cancellation display + acknowledgment gates + autonomous booking blocks.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -1228,6 +1228,11 @@ Only `fetch_octo_slots.py` and `OCTOBooker` are active. `RezdyBooker` exists in
 | Watcher status | .tmp/watcher_status.json | ❌ | LOCAL ONLY — watcher not running; /api/watcher/status always returns "not started" |
 | SMS alerts | Twilio | 🔲 | Implemented, not activated |
 | Social posting | Twitter/Reddit/Telegram | 🔲 | Scripts exist, not running |
+| Telegram bot | @lastminutedealshq_bot | ✅ | Long-polling bot in telegram_bot.py, runs as daemon thread in API server. Users send city name → get tours + booking links |
+| Blogger outreach | SendGrid → travel bloggers | ✅ | 5 emails sent 2026-04-25 to AI travel tool reviewers (CodeConductor, Thrifty Traveler, Mike's Road Trip, AFAR, Dupple) |
+| Supplier follow-ups | SendGrid → inbound leads | ✅ | 3 emails sent 2026-04-25 (European Voyages, Experience Galway, Stoke Travel) |
+| Custom GPT | ChatGPT GPT Store | ⚠️ | "Last Minute Tour Finder" — search works via /slots, booking links via /book/{slot_id}. Setup doc: .tmp/custom_gpt_setup.md |
+| AI tool directories | thenextai.com, allgpts.co, bensbites, TAAFT | 🔲 | Submission copy ready in .tmp/directory_submissions.md — needs manual form submission |
 
 ---
 

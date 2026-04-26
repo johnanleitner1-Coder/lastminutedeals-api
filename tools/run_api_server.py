@@ -9094,6 +9094,25 @@ if __name__ == "__main__":
     _start_mcp_thread()
     _warm_mcp_slots_cache()       # pre-populate search_slots cache before first agent request
 
+    # ── Start Telegram bot in background ──────────────────────────────────
+    def _start_telegram_bot():
+        try:
+            from telegram_bot import main as tg_main
+            tg_main()
+        except ImportError:
+            print("[TELEGRAM] telegram_bot.py not found — bot disabled")
+        except Exception as e:
+            print(f"[TELEGRAM] Bot crashed: {e}")
+
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+        _tg_thread = threading.Thread(
+            target=_start_telegram_bot, daemon=True, name="telegram-bot"
+        )
+        _tg_thread.start()
+        print("[TELEGRAM] Bot thread started")
+    else:
+        print("[TELEGRAM] No TELEGRAM_BOT_TOKEN — bot disabled")
+
     print(f"Booking API + MCP server starting on http://localhost:{PORT}")
     print(f"  Health check:    http://localhost:{PORT}/health")
     print(f"  Book endpoint:   POST http://localhost:{PORT}/api/book")
