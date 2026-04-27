@@ -25,7 +25,7 @@ exampleConfig:
 
 name: Last Minute Deals HQ
 description: >
-  Live bookable slots across 32 suppliers in 47 countries across Europe, Asia, Africa, and the Americas. Sourced from
+  Live bookable slots across 40 suppliers in 48 countries across Europe, Asia, Africa, and the Americas. Sourced from
   production booking systems via the OCTO open standard. Covers tours, activities,
   photo shoots, and multi-day trips in 100+ cities including Paris, London, Rome,
   Berlin, Amsterdam, Cairo, Reykjavik, Kyoto, and more. Search available slots, create Stripe
@@ -196,3 +196,15 @@ suppliers:
   - name: Nile Navigators
     destinations: [Cairo, Luxor, Aswan, Egypt]
     experiences: [Nile cruises, river tours, cultural experiences]
+
+  - name: Eimverk Distillery
+    destinations: [Reykjavik, Iceland]
+    experiences: [distillery tours]
+
+  - name: mondo guide srl
+    destinations: [Rome, Italy]
+    experiences: [guided tours, cultural experiences, day trips]
+
+  - name: The Osaka&Tokyo
+    destinations: [Osaka, Tokyo, Japan]
+    experiences: [cultural experiences, city tours]

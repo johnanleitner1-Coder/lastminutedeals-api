@@ -3,7 +3,7 @@
 [![Smithery](https://smithery.ai/badge/@johnanleitner1/Last_Minute_Deals_HQ)](https://smithery.ai/server/johnanleitner1/Last_Minute_Deals_HQ)
 [![lastminutedeals-api MCP server](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api/badges/score.svg)](https://glama.ai/mcp/servers/johnanleitner1-Coder/lastminutedeals-api)
 
-MCP server with real-time last-minute tour and activity inventory. Live bookable slots across 37 suppliers in 48 countries and 100+ cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
+MCP server with real-time last-minute tour and activity inventory. Live bookable slots across 40 suppliers in 48 countries and 100+ cities, sourced live from production booking systems via the [OCTO open standard](https://docs.octo.travel/). Inventory refreshed every 4 hours.
 
 Search available slots and create Stripe checkout sessions — customers pay on our page, suppliers are confirmed automatically.
 
@@ -126,7 +126,7 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 
 ## Suppliers
 
-37 active suppliers. Live inventory across 48 countries including France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan, Portugal, Turkey, Brazil, Morocco, Tanzania, Finland, Montenegro, Romania, United States, United Kingdom, China, Mexico, Costa Rica, and more.
+40 active suppliers. Live inventory across 48 countries including France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan, Portugal, Turkey, Brazil, Morocco, Tanzania, Finland, Montenegro, Romania, United States, United Kingdom, China, Mexico, Costa Rica, and more.
 
 | Supplier | Destinations | Experiences |
 |---|---|---|
@@ -167,6 +167,9 @@ get_booking_status(booking_id="bk_a1b2c3_x9y8z7")
 | Amazing Tours Agency | Brazil | Tours and experiences |
 | Anatolia Expedition | Istanbul, Turkey | Cultural tours, expeditions |
 | Turkey Tours Company | Istanbul, Turkey | Cultural tours, Cappadocia, Ephesus, day trips |
+| Eimverk Distillery | Reykjavik, Iceland | Distillery tours |
+| mondo guide srl | Rome, Italy | Guided tours, cultural experiences, day trips |
+| The Osaka&Tokyo | Osaka, Tokyo, Japan | Cultural experiences, city tours |
 
 ## Categories
 
@@ -224,7 +227,7 @@ book_slot(
 
 ```
 Every 4 hours:
-  fetch_octo_slots.py   →  Pull availability from 37 suppliers via OCTO API
+  fetch_octo_slots.py   →  Pull availability from 40 suppliers via OCTO API
   aggregate_slots.py    →  Deduplicate, filter, sort by urgency
   compute_pricing.py    →  Dynamic commission-based pricing
   sync_to_supabase.py   →  Upsert to production database

@@ -49,7 +49,7 @@ Quick pitch for The Rundown — this is the kind of "AI tool that \
 actually does something new" story your readers love.
 
 We built one of only 3 MCP servers in the world that can book real \
-tours and activities. 37 local operators across 100+ cities — Iceland \
+tours and activities. 40 local operators across 100+ cities — Iceland \
 glacier hikes, Rome cooking classes, Istanbul Bosphorus cruises, Egypt \
 desert safaris. Real Stripe payments, instant confirmation with the \
 operator.
@@ -87,7 +87,7 @@ Story tip: AI agents are now booking real tours — not just planning \
 itineraries.
 
 Last Minute Deals HQ operates one of only 3 MCP servers worldwide \
-that can execute real tour bookings. We connect 37 local tour operators \
+that can execute real tour bookings. We connect 40 local tour operators \
 across 100+ cities via the OCTO open standard (Bokun platform), with \
 inventory refreshing every 4 hours.
 
@@ -101,7 +101,7 @@ Technical details:
 - MCP-over-HTTP protocol at api.lastminutedealshq.com/mcp
 - Also available as a ChatGPT Custom GPT in the GPT Store
 - Real Stripe checkout + OCTO booking confirmation
-- 37 suppliers across Iceland, Italy, Turkey, Egypt, Japan, Portugal, \
+- 40 suppliers across Iceland, Italy, Turkey, Egypt, Japan, Portugal, \
 Morocco, Brazil, and 40+ more countries
 - Commission-based revenue model, no upfront costs to suppliers
 
@@ -129,7 +129,7 @@ Nomad List, and Marcos. Great list — but none of them can actually \
 book a tour or activity.
 
 We built Last Minute Tour Finder, a free ChatGPT GPT that searches \
-live inventory from 37 tour operators across 100+ cities and gives \
+live inventory from 40 tour operators across 100+ cities and gives \
 users a direct booking link. Glacier hikes in Iceland, food tours in \
 Istanbul, cooking classes in Rome — with real Stripe checkout and \
 instant confirmation.
@@ -162,7 +162,7 @@ of the 7 tools reviewed can actually book anything — users should \
 
 We built the tool that closes that gap. Last Minute Tour Finder is a \
 free Custom GPT in the ChatGPT Store connected to live inventory from \
-37 tour operators across 100+ cities. Users search by city, see real \
+40 tour operators across 100+ cities. Users search by city, see real \
 departures in the next 72 hours, and book directly via Stripe checkout \
 with instant confirmation.
 

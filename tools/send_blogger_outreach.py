@@ -3,7 +3,7 @@ send_blogger_outreach.py — Email travel bloggers and AI tool reviewers.
 
 These writers have published "best AI travel tools" articles but none of them
 cover a tool that can actually BOOK tours.  Our pitch: we're the first
-ChatGPT GPT (and MCP server) that books real tours from 37 suppliers.
+ChatGPT GPT (and MCP server) that books real tours from 40 suppliers.
 
 Usage:
     python tools/send_blogger_outreach.py [--dry-run]
@@ -53,7 +53,7 @@ but I noticed every tool on the list stops at planning. None of them can \
 actually complete a booking.
 
 We built one that does. Last Minute Tour Finder is a free Custom GPT in the \
-ChatGPT Store that searches live inventory from 37 tour operators across \
+ChatGPT Store that searches live inventory from 40 tour operators across \
 100+ cities and lets customers book directly — glacier hikes in Iceland, \
 cooking classes in Rome, Bosphorus cruises in Istanbul, desert safaris in \
 Egypt. Real Stripe checkout, instant confirmation with the supplier.
@@ -88,7 +88,7 @@ for trip planning. You nailed the core problem: they're good at \
 recommendations but none of them can actually book anything.
 
 We built the missing piece. Last Minute Tour Finder is a free Custom GPT \
-in the ChatGPT Store that connects to live inventory from 37 local tour \
+in the ChatGPT Store that connects to live inventory from 40 local tour \
 operators — Iceland, Rome, Istanbul, Cairo, Paris, Barcelona, and 100+ \
 cities total. When a user finds something they like, they get a direct \
 booking link with Stripe checkout and instant confirmation.
@@ -118,7 +118,7 @@ here's one I think your audience would find interesting.
 
 We built Last Minute Tour Finder, a free Custom GPT in the ChatGPT Store \
 that actually books tours and activities. Not just recommendations — real \
-live inventory from 37 local operators across 100+ cities (Iceland, Italy, \
+live inventory from 40 local operators across 100+ cities (Iceland, Italy, \
 Turkey, Egypt, Japan, Portugal, and more). Users search by city, see \
 what's available in the next few days, and book directly with Stripe \
 checkout and instant confirmation.
@@ -152,7 +152,7 @@ good at itineraries but stop short of actually getting you booked. That's \
 the gap we're filling.
 
 Last Minute Tour Finder is a free Custom GPT in the ChatGPT Store that \
-searches live inventory from 37 local tour operators across 100+ cities \
+searches live inventory from 40 local tour operators across 100+ cities \
 and lets travelers book directly. Glacier hikes in Iceland, food tours in \
 Istanbul, cooking classes in Rome, Nile cruises in Egypt — all with real \
 Stripe checkout and instant confirmation from the operator.
@@ -185,7 +185,7 @@ Store for travel — but noted that most focus on itineraries rather than \
 actual booking. You're right, and that's exactly what we built.
 
 Last Minute Tour Finder is a free GPT in the ChatGPT Store connected to \
-live inventory from 37 tour operators across 100+ cities. Users search by \
+live inventory from 40 tour operators across 100+ cities. Users search by \
 city, see real-time availability (sorted by soonest departure), and book \
 directly via Stripe checkout with instant supplier confirmation.
 

@@ -454,6 +454,75 @@
       "contract_status": "confirmed",
       "contract_date": "2026-04-25",
       "notes": "Accepted 25 Apr 2026. Turkey tours — 66 products, largest new batch. 30% experiences, 10% extras, 0% pick-up. Supplier cannot cancel or change bookings."
+    },
+
+    "Eimverk Distillery": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.00,
+        "pick_up": 0.00
+      },
+      "bokun_vendor_id": 1773,
+      "city": "Reykjavik",
+      "country": "IS",
+      "products": 1,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "cancellation": {
+        "supplier_can_cancel": "always",
+        "supplier_can_change": "always",
+        "reseller_can_cancel": "before_travel_date",
+        "reseller_can_change": "before_travel_date"
+      },
+      "notes": "Accepted 22 Apr 2026. Iceland distillery experience. 20% commission on experiences, 0% extras/pick-up."
+    },
+
+    "mondo guide srl": {
+      "pricing_model": "commission",
+      "commission_pct": 0.25,
+      "commission_by_type": {
+        "experiences": 0.25,
+        "extras": 0.25,
+        "pick_up": 0.25
+      },
+      "bokun_vendor_id": 134171,
+      "city": "Rome",
+      "country": "IT",
+      "products": 76,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "cancellation": {
+        "supplier_can_cancel": "always",
+        "supplier_can_change": "always",
+        "reseller_can_cancel": "before_travel_date",
+        "reseller_can_change": "before_travel_date"
+      },
+      "notes": "Accepted 22 Apr 2026. Rome/Italy guided tours — 76 products. 25% commission across all types."
+    },
+
+    "The Osaka&Tokyo": {
+      "pricing_model": "commission",
+      "commission_pct": 0.20,
+      "commission_by_type": {
+        "experiences": 0.20,
+        "extras": 0.20,
+        "pick_up": 0.20
+      },
+      "bokun_vendor_id": 91685,
+      "city": "Osaka",
+      "country": "JP",
+      "products": 6,
+      "contract_status": "confirmed",
+      "contract_date": "2026-04-22",
+      "cancellation": {
+        "supplier_can_cancel": "always",
+        "supplier_can_change": "always",
+        "reseller_can_cancel": "before_travel_date",
+        "reseller_can_change": "before_travel_date"
+      },
+      "notes": "Accepted 22 Apr 2026. Osaka & Tokyo experiences — 6 products. 20% commission across all types."
     }
   }
 }

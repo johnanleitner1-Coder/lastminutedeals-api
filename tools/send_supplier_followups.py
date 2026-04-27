@@ -48,7 +48,7 @@ network.
 
 We're a Bokun reseller that distributes tours through AI channels — our \
 ChatGPT integration, MCP server for AI agents, and direct API. We're \
-currently connected to 37 operators across 100+ cities and handle all \
+currently connected to 40 operators across 100+ cities and handle all \
 payment processing via Stripe with instant confirmation.
 
 Getting connected is straightforward:
@@ -83,7 +83,7 @@ Great to hear from you! We'd love to add Galway experiences to our network.
 
 We're a Bokun-based reseller distributing tours through AI-powered \
 channels — a ChatGPT integration in the GPT Store, an MCP server for \
-AI agents, and a direct booking API. Currently connected to 37 operators \
+AI agents, and a direct booking API. Currently connected to 40 operators \
 across 100+ cities worldwide.
 
 If you're on Bokun, connecting is simple:
@@ -121,7 +121,7 @@ Following up on the partnership note I sent a couple weeks ago. We're a \
 Bokun-based reseller distributing tours through AI channels — ChatGPT \
 integration, MCP server for AI agents, and direct booking API.
 
-Since then we've grown to 37 connected operators across 100+ cities. \
+Since then we've grown to 40 connected operators across 100+ cities. \
 Stoke Travel's adventure experiences in Barcelona would be a great \
 addition.
 

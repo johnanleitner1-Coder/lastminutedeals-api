@@ -120,6 +120,7 @@ mcp = FastMCP(
         "Boka Bliss (Kotor, Montenegro — boat tours, sea caves), "
         "CruiserCar Palermo (Palermo, Sicily — car tours, transfers), "
         "EGYPT GATE (Cairo, Egypt — tours and experiences), "
+        "Eimverk Distillery (Reykjavik, Iceland — distillery tours), "
         "EgyExcursions (Cairo, Egypt — pyramids, cultural tours), "
         "European Voyages (Paris, London, Rome, Barcelona, Amsterdam + 40 more European cities — walking tours, food tours, day trips, river cruises, multi-day tours), "
         "Food Activity Japan (Osaka — matcha making, food experiences), "
@@ -127,6 +128,7 @@ mcp = FastMCP(
         "Hillborn Experiences (Tanzania — ultra-luxury safaris, Kilimanjaro, Zanzibar), "
         "Imperio tours (Rome — Fiat 500 tours, golf cart tours, food tours), "
         "Ishestar Riding Tours (Iceland — horse riding), "
+        "mondo guide srl (Rome, Italy — 76 guided tour products), "
         "Marvel Egypt Tours (Cairo, Luxor, Aswan — Nile cruises, temples), "
         "Nefertiti Tours (Cairo, Giza — pyramids, camel rides, ATV desert tours), "
         "Nile Navigators (Cairo, Luxor, Aswan — Nile cruises, river tours), "
@@ -136,6 +138,7 @@ mcp = FastMCP(
         "REDRIB Experience (Helsinki, Finland — speed boat tours), "
         "Ramen Factory Kyoto (Japan — cooking classes), "
         "Sailing Windermere (Windermere, UK — sailing experiences on Lake Windermere), "
+        "The Osaka&Tokyo (Osaka, Tokyo — Japan experiences), "
         "The Photo Experience (London — photography tours), "
         "TourTransfer Bucharest (Romania — city tours, Dracula castle), "
         "Tours El Chiquiz (Puerto Vallarta, Mexico — tequila tasting, hiking), "
@@ -255,7 +258,7 @@ async def search_slots(
     """
     Search available last-minute tours, activities, and experiences worldwide.
 
-    Queries live production inventory from 37 suppliers across 48 countries including
+    Queries live production inventory from 40 suppliers across 48 countries including
     France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan,
     Portugal, Turkey, Brazil, and more — sourced via the OCTO open booking standard. Results are
     sorted by urgency (soonest departures first).
@@ -753,6 +756,27 @@ async def get_supplier_info() -> dict:
                 "name": "Nile Navigators",
                 "destinations": ["Cairo", "Luxor", "Aswan", "Egypt"],
                 "categories": ["Nile cruises", "river tours", "cultural experiences"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "Eimverk Distillery",
+                "destinations": ["Reykjavik", "Iceland"],
+                "categories": ["distillery tours"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "mondo guide srl",
+                "destinations": ["Rome", "Italy"],
+                "categories": ["guided tours", "cultural experiences", "day trips"],
+                "booking_platform": "Bokun",
+                "confirmation": "instant",
+            },
+            {
+                "name": "The Osaka&Tokyo",
+                "destinations": ["Osaka", "Tokyo", "Japan"],
+                "categories": ["cultural experiences", "city tours"],
                 "booking_platform": "Bokun",
                 "confirmation": "instant",
             },

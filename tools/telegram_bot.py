@@ -139,7 +139,7 @@ def handle_start(chat_id):
         "<b>Popular cities:</b>\n"
         "Rome • Istanbul • Reykjavik • Paris • Cairo • Barcelona • "
         "Amsterdam • Lisbon • London • Marrakech • Kyoto\n\n"
-        "37 local operators across 100+ cities. Real inventory, "
+        "40 local operators across 100+ cities. Real inventory, "
         "instant Stripe checkout, confirmed with the operator on the spot."
     )
     send_message(chat_id, text)

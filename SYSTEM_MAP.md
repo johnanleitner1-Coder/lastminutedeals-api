@@ -944,7 +944,7 @@ GYG calls cancel-booking(bookingReference)
 **Per-product cancellation policy (replaces flat 48h):**
 - Each OCTO product has its own cancellation cutoff from supplier (24h, 72h, 15 days, etc.)
 - `cancellation_cutoff_hours` extracted from OCTO option's `cancellationCutoffAmount` field
-- Bokun returns this field on 100% of options (verified: 2,990/2,990 across all 37 suppliers)
+- Bokun returns this field on 100% of options (verified: 2,990/2,990 across all 40 suppliers)
 - `cancellation_cutoff_hours` stored in: slot dict, booking_url JSON (inside raw column), booking record
 - Fallback for old bookings without field: 48 hours (conservative default)
 - Actual supplier distribution: 154 products @ 24h, 22 @ 360h (15 days), 2 @ 336h (14 days), 1 @ 72h, 1 @ 0 min, 1 non-refundable

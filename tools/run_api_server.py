@@ -922,6 +922,9 @@ _SUPPLIER_DIR_STATIC = [
     {"name": "European Voyages",    "destinations": ["Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin", "Vienna", "Prague", "Budapest", "Lisbon", "Madrid", "Edinburgh", "Dublin", "Zurich", "Brussels", "Copenhagen", "Stockholm", "Oslo", "Athens", "Istanbul", "Nice", "Florence", "Venice", "Munich", "Milan", "France", "UK", "Germany", "Spain", "Netherlands", "Switzerland", "Austria", "Czech Republic", "Hungary", "Portugal", "Ireland", "Denmark", "Sweden", "Norway", "Greece", "Turkey", "Italy", "Croatia", "Malta", "Monaco", "Luxembourg", "Slovakia", "Slovenia", "Poland", "Estonia", "Latvia", "Lithuania"], "platform": "Bokun"},
     {"name": "CruiserCar Palermo",  "destinations": ["Palermo", "Sicily", "Italy"],                                "platform": "Bokun"},
     {"name": "Nile Navigators",     "destinations": ["Cairo", "Luxor", "Aswan", "Egypt"],                          "platform": "Bokun"},
+    {"name": "Eimverk Distillery",  "destinations": ["Reykjavik", "Iceland"],                                      "platform": "Bokun"},
+    {"name": "mondo guide srl",     "destinations": ["Rome", "Italy"],                                             "platform": "Bokun"},
+    {"name": "The Osaka&Tokyo",     "destinations": ["Osaka", "Tokyo", "Japan"],                                   "platform": "Bokun"},
 ]
 
 
@@ -3925,7 +3928,7 @@ _TOURS_INDEX_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Last-Minute Tours & Experiences Worldwide — Last Minute Deals HQ</title>
-<meta name="description" content="Book last-minute tours and activities in 48 countries. Walking tours in Paris, food tours in Barcelona, canal cruises in Amsterdam, glacier hikes in Iceland, pyramid tours in Egypt, and more. Instant confirmation from 37 suppliers.">
+<meta name="description" content="Book last-minute tours and activities in 48 countries. Walking tours in Paris, food tours in Barcelona, canal cruises in Amsterdam, glacier hikes in Iceland, pyramid tours in Egypt, and more. Instant confirmation from 40 suppliers.">
 <link rel="canonical" href="https://api.lastminutedealshq.com/tours">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -7905,7 +7908,7 @@ def _start_mcp_thread():
         instructions=(
             "You have access to real last-minute tour and activity inventory sourced live "
             "from production booking systems via the OCTO open standard. "
-            "37 active suppliers across 48 countries including France, UK, Germany, Italy, Spain, "
+            "40 active suppliers across 48 countries including France, UK, Germany, Italy, Spain, "
             "Netherlands, Switzerland, Iceland, Egypt, Japan, Portugal, Turkey, Brazil, and more. "
             "BOOKING WORKFLOW — follow this sequence every time a user wants to book: "
             "1. Call search_slots with the user's city/destination and preferred timeframe. "
@@ -7944,7 +7947,7 @@ def _start_mcp_thread():
         """
         Search available last-minute tours, activities, and experiences worldwide.
 
-        Queries live production inventory from 37 suppliers across 48 countries including
+        Queries live production inventory from 40 suppliers across 48 countries including
         France, UK, Germany, Italy, Spain, Netherlands, Switzerland, Iceland, Egypt, Japan,
         Portugal, Turkey, Brazil, and more. Results sorted by urgency (soonest departures first).
 
