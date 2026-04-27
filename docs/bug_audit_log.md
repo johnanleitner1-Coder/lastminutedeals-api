@@ -697,3 +697,41 @@ scheduling was redundant.
 | **Running total** | **176** |
 
 ---
+
+## Session 35 Fixes — Security & Financial Risk Audit (2026-04-27)
+
+Full code audit targeting money-losing bugs. Supabase Disk IO warning investigated.
+
+### CRITICAL
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 177 | `run_api_server.py` | **Bokun webhook unauthenticated** — `BOKUN_WEBHOOK_TOKEN` not set in `.env` or Railway. Webhook handler logged a warning but processed the request anyway. Anyone could POST to `/api/bokun/webhook` and trigger cancellation + Stripe refund on any booking | Changed fallback to return 503 (reject). Generated token, added to `.env`. Must also set in Railway env vars + Bokun Dashboard webhook URL |
+| 178 | `run_api_server.py` | **Stripe capture failure after OCTO success — fragile orphan handling** — `stripe.PaymentIntent.capture()` had no dedicated try/except. If capture failed, the outer except queued an OCTO cancel (which could itself fail silently). No direct OCTO cancellation attempt before falling to queue | Wrapped capture in try/except. On failure: immediately calls `_cancel_octo_booking()` synchronously. If that also fails, saves `ORPHAN_` record with `capture_failed_needs_manual_action` status. Then re-raises for hold cancellation |
+| 179 | `run_api_server.py` | **Saved card flow (`/api/customers/{id}/book`) had zero idempotency** — no dedup key, no in-memory lock, no persistent record check. A retry created a second PaymentIntent and second OCTO booking | Added `_SAVED_CARD_IN_FLIGHT` dict + `_SAVED_CARD_LOCK` (same pattern as `/api/book/direct`). Extracted inner logic to `_book_with_saved_card_inner()` with try/finally for guaranteed lock cleanup |
+| 180 | `run_api_server.py` | **Webhook idempotency only blocked "booked" status** — persistent check allowed retry when status was "processing". After a redeploy (in-memory lock lost), Stripe retry could spawn a second fulfillment thread for the same session while first was still running | Added "processing" to the blocked statuses set. "failed" still allowed (legitimate retry) |
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 181 | `run_api_server.py` | **Wallet balance check not atomic with debit** — balance check and debit were ~70 lines apart. Two concurrent requests for different slots on the same wallet could both pass the check and both debit, pushing wallet negative | Added per-wallet `threading.Lock` via `_get_wallet_lock()`. Lock acquired before balance check, released in finally block after debit |
+| 182 | `run_api_server.py` | **Thread timeout doesn't kill fulfillment thread (wallet flow)** — when `fut.result(timeout=...)` raised `TimeoutError`, wallet was credited back but the thread kept running. If it succeeded, an OCTO booking existed with no payment | After timeout, queue preemptive OCTO cancellation via `_queue_octo_retry()` as safety net |
+| 183 | `run_api_server.py` | **Saved card flow: capture failure orphaned OCTO booking** — same as Fix 178 but in the saved-card path. `stripe.PaymentIntent.capture(pi.id)` had no try/except | Added same capture safety pattern: synchronous `_cancel_octo_booking()` on failure, `ORPHAN_SC_` record as last resort |
+
+### MEDIUM
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 184 | `run_api_server.py` | **Request logging writes every API request to Supabase Postgres** — ~5,000+ writes/day via daemon threads. Primary cause of Supabase Disk IO Budget depletion warning | Disabled DB write thread. In-memory `_request_log_buffer` (50k entries) already serves `/metrics` |
+| 185 | `run_api_server.py` | **Reconciliation scans entire booking bucket every 30 min** — N+1 reads on Supabase Storage, major IO contributor | Reduced frequency from 30 min to 60 min |
+| 186 | `run_api_server.py` | **Reliability metrics N+1 reads on every /metrics call** — `_get_reliability_metrics()` listed all booking files then fetched each individually | Added 5-minute TTL cache (`_RELIABILITY_CACHE`) |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 35: 4 critical, 3 high, 3 medium | 10 |
+| **Running total** | **186** |
+
+---

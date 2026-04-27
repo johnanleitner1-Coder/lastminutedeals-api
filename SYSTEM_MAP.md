@@ -107,7 +107,7 @@
 │                                                                     │
 │  Background jobs (APScheduler, in-process):                        │
 │  retry_cancellations()       — every 15 min                        │
-│  reconcile_bookings()        — every 30 min                        │
+│  reconcile_bookings()        — every 60 min                        │
 │  slot_discovery()            — every 4 h (fetch_octo + aggregate)  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -797,7 +797,7 @@ Bokun: POST /api/bokun/webhook?token=...
   │
   ├─ Token: hmac.compare_digest(BOKUN_WEBHOOK_TOKEN, request.args["token"])
   │    ├─ WRONG → 401
-  │    └─ BOKUN_WEBHOOK_TOKEN not set → WARNING log, allow through (insecure)
+  │    └─ BOKUN_WEBHOOK_TOKEN not set → 503 reject (FIXED Session 35 — was insecure allow-through)
   │
   ├─ Parse: booking_data = data["booking"] OR data (handles nested/flat Bokun formats)
   │    confirmation = booking_data["confirmationCode"] / "confirmation_code" / "id"
@@ -1046,7 +1046,7 @@ Writes: deletes from queue on success/permanent-failure, increments count on tra
 Max attempts: 48 (12 hours at 15-min intervals)
 ```
 
-### Job 2: reconcile_bookings (every 30 minutes) [3 sub-jobs]
+### Job 2: reconcile_bookings (every 60 minutes) [3 sub-jobs]
 
 **Tool: reconcile_bookings.py**
 
@@ -1070,14 +1070,14 @@ reconcile_bookings():
   │
   └─ NOTE: execute/guaranteed bookings ARE in Supabase (fixed A-2) → reconciled
 
-Job 2 (A-6): act on reconciliation_required (every 30 min):
+Job 2 (A-6): act on reconciliation_required (every 60 min):
   ├─ Two-cycle guard: skip if reconciliation_flag_at < 35 min ago
   ├─ Issue Stripe refund (_refund_stripe_once)
   ├─ Wallet credit-back (if payment_method="wallet")
   ├─ status → "cancelled" (Stripe OK) or "cancellation_refund_failed" (Stripe fail)
   └─ Send cancellation email to customer ✅ FIXED (A-6)
 
-Job 3 (A-15): retry cancellation_refund_failed (every 30 min):
+Job 3 (A-15): retry cancellation_refund_failed (every 60 min):
   ├─ No payment_intent_id? → wallet credit-back + mark cancelled
   ├─ Retry Stripe refund
   │    ├─ SUCCESS → wallet credit-back + mark cancelled + email customer ✅ FIXED (A-15)

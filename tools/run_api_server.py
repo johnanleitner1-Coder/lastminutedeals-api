@@ -100,6 +100,22 @@ _last_discovery_slot_count: int = 0
 _DIRECT_IN_FLIGHT: dict[str, bool] = {}
 _DIRECT_LOCK = threading.Lock()
 
+# Saved-card booking idempotency (same pattern as direct/wallet flow)
+_SAVED_CARD_IN_FLIGHT: dict[str, bool] = {}
+_SAVED_CARD_LOCK = threading.Lock()
+
+# Per-wallet locks to prevent concurrent bookings from overdrafting a wallet.
+# Two requests for DIFFERENT slots on the SAME wallet could both pass the
+# balance check before either debits — pushing the wallet negative.
+_WALLET_LOCKS: dict[str, threading.Lock] = {}
+_WALLET_LOCKS_META = threading.Lock()  # protects _WALLET_LOCKS dict itself
+
+def _get_wallet_lock(wallet_id: str) -> threading.Lock:
+    with _WALLET_LOCKS_META:
+        if wallet_id not in _WALLET_LOCKS:
+            _WALLET_LOCKS[wallet_id] = threading.Lock()
+        return _WALLET_LOCKS[wallet_id]
+
 def _signing_secret() -> str:
     """Return the HMAC signing secret from LMD_SIGNING_SECRET env var.
 
@@ -456,11 +472,14 @@ def _log_request(response):
     _record_request(path, source, response.status_code, latency_ms,
                     mcp_method=getattr(request, "_mcp_method", None),
                     mcp_tool=getattr(request, "_mcp_tool", None))
-    threading.Thread(
-        target=_write_request_log,
-        args=(path, request.method, response.status_code, latency_ms, source),
-        daemon=True,
-    ).start()
+    # DB write disabled — the in-memory _request_log_buffer (50k entries) already
+    # serves /metrics. Writing every request to Supabase Postgres was the primary
+    # cause of Disk IO Budget depletion (~5,000+ writes/day).
+    # threading.Thread(
+    #     target=_write_request_log,
+    #     args=(path, request.method, response.status_code, latency_ms, source),
+    #     daemon=True,
+    # ).start()
     return response
 
 
@@ -824,8 +843,10 @@ def _start_retry_scheduler() -> None:
     # Retry failed cancellations every 15 min (run immediately on startup)
     scheduler.add_job(_run_retry, "interval", minutes=15, id="retry_cancellations",
                       next_run_time=_dt.datetime.now())
-    # Reconcile active bookings against platform every 30 min (first run after 5 min)
-    scheduler.add_job(_run_reconcile, "interval", minutes=30, id="reconcile_bookings",
+    # Reconcile active bookings against platform every 60 min (first run after 5 min)
+    # Reduced from 30 min — the N+1 reads on the booking bucket were a major
+    # contributor to Supabase Disk IO Budget depletion.
+    scheduler.add_job(_run_reconcile, "interval", minutes=60, id="reconcile_bookings",
                       next_run_time=_dt.datetime.now() + _dt.timedelta(minutes=5))
     # Slot discovery: fetch OCTO + aggregate every 4 hours (first run after 10 min warmup)
     scheduler.add_job(_run_slot_discovery, "interval", hours=4, id="slot_discovery",
@@ -1913,9 +1934,13 @@ def health():
     return jsonify(response)
 
 
+_RELIABILITY_CACHE: dict = {}  # {"data": dict, "expires": float}
+_RELIABILITY_CACHE_TTL = 300  # 5 minutes — booking metrics change slowly
+
 def _get_reliability_metrics() -> dict:
     """
     Compute booking reliability stats from Supabase Storage booking records.
+    Results are cached for 5 minutes to avoid N+1 reads on every /metrics call.
 
     Returns:
       - Status counts and success rate
@@ -1924,6 +1949,11 @@ def _get_reliability_metrics() -> dict:
       - Per-supplier success rates and avg execution time
       - Circuit breaker states
     """
+    now = time.time()
+    cached = _RELIABILITY_CACHE.get("data")
+    if cached and _RELIABILITY_CACHE.get("expires", 0) > now:
+        return cached
+
     sb_url    = os.getenv("SUPABASE_URL", "").rstrip("/")
     sb_secret = os.getenv("SUPABASE_SECRET_KEY", "")
     if not sb_url or not sb_secret:
@@ -2094,6 +2124,9 @@ def _get_reliability_metrics() -> dict:
     except Exception:
         pass
 
+    # Cache the result for 5 minutes
+    _RELIABILITY_CACHE["data"] = stats
+    _RELIABILITY_CACHE["expires"] = time.time() + _RELIABILITY_CACHE_TTL
     return stats
 
 
@@ -2917,17 +2950,26 @@ def book_direct():
 
     amount_cents = int(float(our_price) * quantity * 100)  # total for all persons
 
-    # Check balance before attempting — fail fast, never partial
-    balance = wlt_mod.get_balance(wallet_id)
-    if balance is None or balance < amount_cents:
-        balance_dollars = (balance or 0) / 100
-        return jsonify({
-            "status": "failed",
-            "error": f"Insufficient wallet balance. Need ${our_price:.2f}, have ${balance_dollars:.2f}.",
-            "failure_reason": "insufficient_funds",
-            "wallet_balance_cents": balance or 0,
-            "required_cents": amount_cents,
-        }), 402
+    # Acquire per-wallet lock to prevent concurrent bookings from overdrafting.
+    # The lock spans balance check → debit so no other request can interleave.
+    _wallet_lock = _get_wallet_lock(wallet_id)
+    _wallet_lock.acquire()
+    try:
+        balance = wlt_mod.get_balance(wallet_id)
+        if balance is None or balance < amount_cents:
+            balance_dollars = (balance or 0) / 100
+            _wallet_lock.release()
+            return jsonify({
+                "status": "failed",
+                "error": f"Insufficient wallet balance. Need ${our_price:.2f}, have ${balance_dollars:.2f}.",
+                "failure_reason": "insufficient_funds",
+                "wallet_balance_cents": balance or 0,
+                "required_cents": amount_cents,
+            }), 402
+    except Exception:
+        _wallet_lock.release()
+        raise
+    # NOTE: _wallet_lock is still held — released after debit below
 
     # ── Idempotency: reject retries that arrive while first call is still running ──
     # Key includes a 5-minute timestamp bucket so duplicate suppression only applies
@@ -2985,17 +3027,26 @@ def book_direct():
     })
 
     # Debit wallet — atomic before starting fulfillment
+    # _wallet_lock is still held from balance check above — release after debit.
     try:
         debited = wlt_mod.debit_wallet(
             wallet_id, amount_cents,
             f"Booking: {service_name} ({slot_id[:12]})"
         )
     except Exception as debit_exc:
+        _wallet_lock.release()
         _save_booking_record(_recovery_key, {"status": "debit_failed", "resolved": True})
         with _DIRECT_LOCK:
             _DIRECT_IN_FLIGHT.pop(_idem_key, None)
         return jsonify({"status": "failed", "error": str(debit_exc)[:200],
                         "failure_reason": "debit_failed"}), 500
+    finally:
+        # Release wallet lock — balance check + debit are now atomic
+        if _wallet_lock.locked():
+            try:
+                _wallet_lock.release()
+            except RuntimeError:
+                pass  # Already released in except branch above
     if not debited:
         _save_booking_record(_recovery_key, {"status": "debit_failed", "resolved": True})
         with _DIRECT_LOCK:
@@ -3029,15 +3080,32 @@ def book_direct():
     booking_meta: dict = {}
     fulfill_error = None
 
+    _fulfill_timed_out = False
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url, quantity)
             # _fulfill_booking returns a 3-tuple: (confirmation, booking_meta, supplier_reference)
             confirmation, booking_meta, supplier_reference = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
+    except concurrent.futures.TimeoutError as exc:
+        _fulfill_timed_out = True
+        fulfill_error = exc
     except Exception as exc:
         fulfill_error = exc
 
     if fulfill_error:
+        # If timed out, the thread is still running and may succeed later,
+        # creating an OCTO booking with no corresponding payment.
+        # Queue a preemptive OCTO cancellation so the orphan gets cleaned up.
+        if _fulfill_timed_out:
+            try:
+                burl_j_to = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+                _timeout_sid = burl_j_to.get("supplier_id", platform)
+                _queue_octo_retry(f"timeout_{slot_id[:16]}", _timeout_sid,
+                                  slot_id, None, 0)
+                print(f"[DIRECT] Fulfillment timed out — queued preemptive OCTO cancel for {slot_id}")
+            except Exception as q_err:
+                print(f"[DIRECT] Could not queue timeout-cancel: {q_err}")
+
         # Refund the wallet debit — booking never completed
         failure_reason = _classify_failure(fulfill_error)
         try:
@@ -3236,13 +3304,15 @@ def stripe_webhook():
                     return jsonify({"status": "ok", "note": "already_processing"})
                 _WEBHOOK_IN_FLIGHT[session_id] = True
 
-            # ── Idempotency check (persistent) — already completed ────────────
-            # Only suppress for "booked" — a prior "failed" attempt should be retried
-            # (Stripe retries its webhook for up to 3 days; the next attempt may succeed).
+            # ── Idempotency check (persistent) — already completed or in-progress ─
+            # Block on "booked" (done) and "processing" (another instance may be
+            # handling it after a redeploy — prevents double-fulfillment).
+            # Allow retry on "failed" (Stripe retries for up to 3 days; transient
+            # OCTO failures may resolve on next attempt).
             wh_record_key = f"webhook_session_{session_id[:40]}"
             existing = _load_booking_record(wh_record_key)
-            if existing and existing.get("status") == "booked":
-                print(f"[WEBHOOK] Already processed session {session_id}: booked")
+            if existing and existing.get("status") in ("booked", "processing"):
+                print(f"[WEBHOOK] Already processed session {session_id}: {existing.get('status')}")
                 with _WEBHOOK_LOCK:
                     _WEBHOOK_IN_FLIGHT.pop(session_id, None)
                 return jsonify({"status": "ok", "note": "already_processed"})
@@ -3403,21 +3473,42 @@ def _fulfill_booking_async(
                 fut = ex.submit(_fulfill_booking, slot_id, customer, platform, booking_url, quantity)
                 confirmation, booking_meta, supplier_reference = fut.result(timeout=_MAX_BOOKING_TIMEOUT_S)
 
+        # Resolve supplier_id early — needed for both success and failure paths
+        try:
+            burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
+            supplier_id = burl_j.get("supplier_id", platform)
+        except Exception:
+            supplier_id = platform
+
         # Capture the payment hold — skip in dry_run (no real money involved)
         if payment_intent and not dry_run:
-            stripe.PaymentIntent.capture(payment_intent)
-            print(f"[FULFILL] Payment captured: {payment_intent}")
+            try:
+                stripe.PaymentIntent.capture(payment_intent)
+                print(f"[FULFILL] Payment captured: {payment_intent}")
+            except Exception as cap_err:
+                # CRITICAL: OCTO booking is confirmed but payment capture failed.
+                # We MUST cancel the OCTO booking to avoid giving away a free tour.
+                print(f"[FULFILL] *** CAPTURE FAILED: {cap_err} — cancelling OCTO booking ***")
+                octo_cancel_result = _cancel_octo_booking(supplier_id, str(confirmation))
+                if not octo_cancel_result.get("success"):
+                    # Last resort: save a persistent record for manual resolution
+                    _save_booking_record(f"ORPHAN_{session_id[:20]}", {
+                        "status":           "capture_failed_needs_manual_action",
+                        "confirmation":     str(confirmation),
+                        "supplier_id":      supplier_id,
+                        "payment_intent":   payment_intent,
+                        "octo_cancel_error": octo_cancel_result.get("detail", "unknown"),
+                        "capture_error":    str(cap_err)[:500],
+                        "created_at":       datetime.now(timezone.utc).isoformat(),
+                    })
+                    print(f"[FULFILL] *** ORPHAN RECORD SAVED — manual action required ***")
+                raise  # Re-raise so outer except cancels the payment hold
 
         _mark_booked(slot_id)
 
         # Use the pre-assigned pending booking_id so polling agents see the
         # status transition: pending_payment → booked on the same ID.
         booking_record_id = pending_booking_id or f"bk_{slot_id[:12]}"
-        try:
-            burl_j      = json.loads(booking_url) if isinstance(booking_url, str) and booking_url.startswith("{") else {}
-            supplier_id = burl_j.get("supplier_id", platform)
-        except Exception:
-            supplier_id = platform
 
         record = {
             "booking_id":            booking_record_id,
@@ -4835,6 +4926,32 @@ def book_with_saved_card(customer_id: str):
     if not all([slot_id, customer_name, customer_email, customer_phone]):
         return jsonify({"success": False, "error": "Missing required fields."}), 400
 
+    # ── Idempotency: prevent duplicate saved-card bookings ────────────────
+    import hashlib as _sc_hl
+    _sc_ts_bucket = int(time.time()) // 300  # 5-minute window
+    _sc_idem_key = _sc_hl.sha256(
+        f"{customer_id}:{slot_id}:{customer_email}:{_sc_ts_bucket}".encode()
+    ).hexdigest()[:32]
+    with _SAVED_CARD_LOCK:
+        if _SAVED_CARD_IN_FLIGHT.get(_sc_idem_key):
+            return jsonify({
+                "success": False,
+                "error": "A booking for this slot is already in progress. "
+                         "Please wait for the first request to complete before retrying.",
+            }), 409
+        _SAVED_CARD_IN_FLIGHT[_sc_idem_key] = True
+
+    try:  # finally: clear _SAVED_CARD_IN_FLIGHT
+        return _book_with_saved_card_inner(customer_id, slot_id, customer_name,
+                                           customer_email, customer_phone, stripe, data)
+    finally:
+        with _SAVED_CARD_LOCK:
+            _SAVED_CARD_IN_FLIGHT.pop(_sc_idem_key, None)
+
+
+def _book_with_saved_card_inner(customer_id, slot_id, customer_name,
+                                 customer_email, customer_phone, stripe, data):
+    """Inner logic for saved-card booking — extracted so idempotency lock cleanup is guaranteed."""
     # Availability checks
     slot = get_slot_by_id(slot_id)
     if not slot:
@@ -4934,11 +5051,8 @@ def book_with_saved_card(customer_id: str):
         # _fulfill_booking returns a 3-tuple: (confirmation, booking_meta, supplier_reference)
         confirmation, booking_meta, supplier_reference = _fulfill_booking(
             slot_id, customer, slot.get("platform", ""), slot.get("booking_url", ""))
-        stripe.PaymentIntent.capture(pi.id)
-        _mark_booked(slot_id)
 
-        # Persist booking record so DELETE /bookings/{id} can cancel it later
-        booking_record_id = f"bk_{slot_id[:12]}_{uuid.uuid4().hex[:8]}"
+        # Resolve supplier_id early — needed for both success and capture-failure paths
         booking_url_raw = slot.get("booking_url", "")
         try:
             _burl = json.loads(booking_url_raw) if isinstance(booking_url_raw, str) else (booking_url_raw or {})
@@ -4946,6 +5060,28 @@ def book_with_saved_card(customer_id: str):
         except Exception:
             _burl = {}
             _supplier_id = slot.get("platform", "")
+
+        # Capture payment — with safe OCTO cancellation on failure
+        try:
+            stripe.PaymentIntent.capture(pi.id)
+        except Exception as cap_err:
+            print(f"[SAVED_CARD] *** CAPTURE FAILED: {cap_err} — cancelling OCTO booking ***")
+            octo_cancel_result = _cancel_octo_booking(_supplier_id, str(confirmation))
+            if not octo_cancel_result.get("success"):
+                _save_booking_record(f"ORPHAN_SC_{slot_id[:16]}", {
+                    "status":           "capture_failed_needs_manual_action",
+                    "confirmation":     str(confirmation),
+                    "supplier_id":      _supplier_id,
+                    "payment_intent":   pi.id,
+                    "capture_error":    str(cap_err)[:500],
+                    "created_at":       datetime.now(timezone.utc).isoformat(),
+                })
+            raise  # Let outer except cancel the hold
+
+        _mark_booked(slot_id)
+
+        # Persist booking record so DELETE /bookings/{id} can cancel it later
+        booking_record_id = f"bk_{slot_id[:12]}_{uuid.uuid4().hex[:8]}"
         _save_booking_record(booking_record_id, {
             "booking_id":        booking_record_id,
             "confirmation":      str(confirmation or ""),
@@ -6354,7 +6490,8 @@ def bokun_webhook():
             print("[BOKUN_WEBHOOK] Invalid token — rejected")
             return jsonify({"error": "Unauthorized"}), 401
     else:
-        print("[BOKUN_WEBHOOK] WARNING: BOKUN_WEBHOOK_TOKEN not set — skipping auth check")
+        print("[BOKUN_WEBHOOK] BOKUN_WEBHOOK_TOKEN not set — rejecting request for safety")
+        return jsonify({"error": "Webhook token not configured — set BOKUN_WEBHOOK_TOKEN env var"}), 503
 
     data = request.get_json(force=True, silent=True) or {}
 
