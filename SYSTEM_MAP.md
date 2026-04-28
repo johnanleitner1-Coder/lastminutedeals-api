@@ -1,6 +1,6 @@
 # Last Minute Deals HQ — Complete System Map
 
-**Last updated:** 2026-04-25 (v46 — Distribution channels: Telegram bot, blogger outreach, supplier follow-ups, directory submission copy. Previous: v45 — Tiered cancellation display + acknowledgment gates + autonomous booking blocks.)
+**Last updated:** 2026-04-28 (v47 — $0 slot filter: reject at ingestion, purge from Supabase, filter on all query paths. Previous: v46 — Distribution channels.)
 **Status key:** ✅ Verified working | ⚠️ Partially working / untested | ❌ Broken (code bug confirmed) | 🔲 Not yet built
 
 ---
@@ -135,6 +135,7 @@ START
   │    ├─ For each product:
   │    │    ├─ POST /availability (WITH octo/pricing header, date range: today → +8 days)
   │    │    ├─ Filter: status in {AVAILABLE, FREESALE, LIMITED}
+  │    │    ├─ Filter: price > 0 (reject $0/null — Bokun misconfigured pricing)
   │    │    ├─ Filter: starts within hours_ahead (default 168h)
   │    │    ├─ _resolve_product_identity() — 3-level resolution chain:
   │    │    │    ├─ Level 1: reference_supplier_map prefix match (city-level precision)
@@ -159,7 +160,8 @@ Step 3: compute_pricing.py
   Falls back to defaults when Sheets unavailable → writes our_price, our_markup to slot
 
 Step 4: sync_to_supabase.py
-  Upsert all slots to Supabase "slots" table (keyed on slot_id). Purge past slots.
+  Filter $0/null-priced slots before upsert. Purge existing $0 rows from Supabase.
+  Upsert remaining slots to Supabase "slots" table (keyed on slot_id). Purge past slots.
 
 ```
 

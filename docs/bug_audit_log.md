@@ -735,3 +735,25 @@ Full code audit targeting money-losing bugs. Supabase Disk IO warning investigat
 | **Running total** | **186** |
 
 ---
+
+## Session 36 Fixes — $0 Slot Filtering (2026-04-28, commit 425189e)
+
+~5,800 slots (25% of inventory) had `our_price: 0` or `null` because suppliers hadn't configured pricing in Bokun. These appeared in search results, tour pages, and MCP responses. Agents could find them but booking would fail at the price check.
+
+### HIGH
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 187 | `fetch_octo_slots.py` | **$0/null-priced slots ingested into pipeline** — `_extract_price()` returned `None` or `0` when Bokun had no pricing configured; slot was still written to `octo_slots.json` | Added price > 0 guard in `octo_availability_to_slot()` — returns `None` (rejected) |
+| 188 | `sync_to_supabase.py` | **$0 slots synced to Supabase and never purged** — no price filter before upsert, no cleanup of existing $0 rows | Filter $0/null before upsert + DELETE query purging existing `our_price=0` or `our_price IS NULL` rows |
+| 189 | `run_api_server.py` | **6 Supabase query paths served $0 slots** — `GET /slots`, `_load_slots_from_supabase` (internal), `_fetch_tour_slots` (SEO pages), `_get_live_supplier_directory` (supplier count), `_gyg_slots_by_product` (GYG), and both local file fallbacks | Added `("our_price", "gt.0")` to all 4 Supabase queries + `price <= 0` skip in both local fallbacks |
+| 190 | `run_mcp_server.py` | **Standalone MCP search served $0 slots** — no price filter in `search_slots` tool | Added `price <= 0` skip before results |
+
+### Bug Counts
+
+| Source | Count |
+|---|---|
+| Session 36: 4 high (zero-price slot filtering) | 4 |
+| **Running total** | **190** |
+
+---
