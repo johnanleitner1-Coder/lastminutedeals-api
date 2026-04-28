@@ -141,6 +141,12 @@ def main():
     if len(slots) < before:
         print(f"  Excluded {before - len(slots)} test-supplier slots from sync")
 
+    # Strip $0 / null-priced slots — not bookable, must never reach agents
+    before = len(slots)
+    slots = [s for s in slots if (s.get("our_price") or s.get("price") or 0) and float(s.get("our_price") or s.get("price") or 0) > 0]
+    if len(slots) < before:
+        print(f"  Excluded {before - len(slots)} zero-priced slots from sync")
+
     print(f"Syncing {len(slots)} slots to Supabase...")
 
     headers = get_headers()
@@ -154,6 +160,22 @@ def main():
     purged = delete_test_supplier_slots(url, headers)
     if purged:
         print(f"  Purged {purged} test-supplier slots from Supabase")
+
+    # Purge $0-priced slots already in Supabase
+    del_hdrs_zero = {**headers, "Prefer": "return=representation"}
+    resp_zero = requests.delete(
+        f"{url}/rest/v1/slots",
+        headers=del_hdrs_zero,
+        params=[("or", "(our_price.is.null,our_price.eq.0)")],
+        timeout=30,
+    )
+    if resp_zero.status_code in (200, 204):
+        try:
+            purged_zero = len(resp_zero.json())
+            if purged_zero:
+                print(f"  Purged {purged_zero} zero-priced slots from Supabase")
+        except Exception:
+            pass
 
     # Upsert in batches
     total = 0

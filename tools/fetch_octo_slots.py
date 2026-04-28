@@ -332,6 +332,11 @@ def octo_availability_to_slot(
     capacity  = avail.get("capacity")
     price     = _extract_price(avail.get("unitPricing") or [], avail.get("pricing"))
 
+    # Never ingest a slot with no price or $0 — these are misconfigured in Bokun
+    # and must not reach inventory where an agent could attempt to book them.
+    if not price or price <= 0:
+        return None
+
     product_id    = product.get("id", "")
     product_name  = product.get("internalName") or product.get("title") or product_id
 

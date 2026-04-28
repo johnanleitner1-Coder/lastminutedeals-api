@@ -1310,6 +1310,7 @@ def _get_live_supplier_directory() -> list[dict]:
                     params=[
                         ("select", "business_name,location_city,location_country"),
                         ("order",  "business_name.asc"),
+                        ("our_price", "gt.0"),
                         ("limit",  PAGE_SIZE),
                         ("offset", offset),
                     ],
@@ -1632,6 +1633,7 @@ def _load_slots_from_supabase(
             base_params: list[tuple] = [
                 ("order", "start_time.asc"),
                 ("start_time", f"gt.{now_iso}"),
+                ("our_price", "gt.0"),
             ]
             if hours_ahead:
                 base_params.append(("start_time", f"lte.{horizon_iso}"))
@@ -1689,6 +1691,8 @@ def _load_slots_from_supabase(
             if city and city.lower() not in (s.get("location_city") or "").lower():
                 continue
             p = float(s.get("our_price") or s.get("price") or 0)
+            if p <= 0:
+                continue
             if budget and p > budget:
                 continue
             result.append(s)
@@ -4075,6 +4079,7 @@ def _fetch_tour_slots(query: str, limit: int = 50) -> list[dict]:
                 ("order", "start_time.asc"),
                 ("start_time", f"gt.{now_iso}"),
                 ("start_time", f"lte.{horizon}"),
+                ("our_price", "gt.0"),
                 ("or", or_filter),
                 ("limit", limit),
             ],
@@ -4651,6 +4656,7 @@ def search_slots():
             base_params: list[tuple] = [
                 ("order", "start_time.asc"),
                 ("start_time", f"gt.{now_iso}"),
+                ("our_price", "gt.0"),
             ]
             if hours_ahead:
                 horizon_iso = (datetime.now(timezone.utc) + timedelta(hours=hours_ahead)).isoformat()
@@ -4704,8 +4710,10 @@ def search_slots():
         h = s.get("hours_until_start")
         if h is not None and h > hours_ahead:
             continue
-        p = s.get("our_price") or s.get("price") or 0
-        if max_price is not None and float(p) > max_price:
+        p = float(s.get("our_price") or s.get("price") or 0)
+        if p <= 0:
+            continue
+        if max_price is not None and p > max_price:
             continue
         result.append(_sanitize_slot(s))
         if len(result) >= limit:
@@ -7385,13 +7393,11 @@ def list_inbound_emails():
         r = requests.post(
             f"{sb_url}/storage/v1/object/list/bookings",
             headers={**_sb_storage_headers(), "Content-Type": "application/json"},
-            json={"prefix": "inbound_emails/", "limit": 500, "offset": 0},
-            timeout=10,
+            json={"prefix": "inbound_emails/", "limit": limit, "offset": 0,
+                  "sortBy": {"column": "name", "order": "desc"}},
+            timeout=20,
         )
-        files = sorted(
-            [f["name"] for f in r.json() if f.get("name")],
-            reverse=True,
-        )[:limit]
+        files = [f["name"] for f in r.json() if f.get("name")][:limit]
 
         emails = []
         for name in files:
@@ -7399,7 +7405,7 @@ def list_inbound_emails():
                 er = requests.get(
                     f"{sb_url}/storage/v1/object/bookings/inbound_emails/{name}",
                     headers=_sb_storage_headers(),
-                    timeout=8,
+                    timeout=10,
                 )
                 if er.status_code == 200:
                     emails.append(er.json())
@@ -8416,6 +8422,7 @@ def _gyg_slots_by_product(product_id: str, from_iso: str, to_iso: str) -> list[d
         ("booking_url", f'like.%"product_id": "{product_id}"%'),
         ("start_time", f"gte.{from_iso}"),
         ("start_time", f"lte.{to_iso}"),
+        ("our_price", "gt.0"),
         ("order", "start_time.asc"),
         ("limit", 1000),
     ]

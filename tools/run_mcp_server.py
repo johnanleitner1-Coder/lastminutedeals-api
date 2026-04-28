@@ -302,11 +302,14 @@ def search_slots(
             if city.lower() not in (s.get("location_city") or "").lower():
                 continue
 
+        # Exclude $0 / unpriced slots — not bookable
+        price = float(s.get("our_price") or s.get("price") or 0)
+        if price <= 0:
+            continue
+
         # Price filter
-        if max_price is not None:
-            price = s.get("our_price") or s.get("price")
-            if price is not None and float(price) > max_price:
-                continue
+        if max_price is not None and price > max_price:
+            continue
 
         results.append(s)
 
